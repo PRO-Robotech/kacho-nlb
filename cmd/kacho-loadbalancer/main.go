@@ -34,6 +34,9 @@ import (
 	"github.com/PRO-Robotech/kacho-corelib/observability"
 	"github.com/PRO-Robotech/kacho-corelib/operations"
 
+	operationpb "github.com/PRO-Robotech/kacho-proto/gen/go/kacho/cloud/operation"
+
+	"github.com/PRO-Robotech/kacho-nlb/internal/apps/kacho/api/operation"
 	"github.com/PRO-Robotech/kacho-nlb/internal/apps/kacho/config"
 	"github.com/PRO-Robotech/kacho-nlb/internal/clients"
 	// dto/type2pb init() регистрирует все DTO трансферы (domain ↔ proto) в реестре.
@@ -95,8 +98,8 @@ func runServe(configPath string) error {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer cancel()
 
-	// pgxpool. MaxConns/ConnLifetime тюнинг live в coredb.NewPool — для
-	// специфичных нагрузок можно передавать config через DSN-параметры.
+	// pgxpool. MaxConns / ConnLifetime tuning из cfg.Repository.Postgres
+	// расширяется через coredb.NewPool по мере необходимости (см. kacho-corelib/db).
 	pool, err := coredb.NewPool(ctx, cfg.Repository.Postgres.URL)
 	if err != nil {
 		return fmt.Errorf("open pgxpool: %w", err)
@@ -110,6 +113,9 @@ func runServe(configPath string) error {
 	defer repo.Close()
 
 	// Operations LRO repo (общая таблица operations в kacho_nlb schema).
+	// Используется всеми use-case'ами мутирующих RPC через worker'ы
+	// `operations.Run(ctx, opsRepo, opID, fn)` (kacho-corelib pattern) и
+	// напрямую — OperationService.Get/Cancel (см. ниже).
 	opsRepo := operations.NewRepo(pool, "kacho_nlb")
 
 	// Peer-gRPC clients (corlib client-builder; evgeniy §K.6).
@@ -119,16 +125,22 @@ func runServe(configPath string) error {
 	}
 	defer closeAll(peerConns, logger)
 
-	// gRPC servers (public :9090 + internal :9091). Handler-регистрация —
-	// зона ответственности use-case Wave'ов (KAC-152 и далее); сейчас
-	// серверы пусты, но `repo` / `opsRepo` / `peerConns` уже доступны для них.
+	// gRPC servers (public :9090 + internal :9091).
+	// OperationService зарегистрирован здесь как полный end-to-end путь (KAC-155).
+	// Per-resource handler'ы (load_balancer / listener / target_group) подключаются
+	// в Wave 6+ (KAC-151..154, KAC-156..158).
 	publicSrv := grpcsrv.NewServer()
 	internalSrv := grpcsrv.NewServer()
-	// Sentinel-use чтобы repo/opsRepo не считались "unused" в текущем wave
-	// (handler'ы их потребят при Wave 6/7). Композиционный root уже владеет
-	// и закрывает их — без этого defer-блока ресурсы текли бы.
+	// Sentinel-use — repo потребят handler'ы в Wave 6/7 (NLB / Listener / TG use-cases).
+	// Композиционный root уже владеет и закрывает его через defer выше.
 	_ = repo
-	_ = opsRepo
+
+	// OperationService (kacho.cloud.operation.OperationService): Get + Cancel.
+	// Public per proto annotation `(kacho.iam.authz.v1.permission) = "<exempt>"`
+	// — оба RPC доступны всем авторизованным subject'ам без per-RPC FGA Check.
+	// List-операций НЕТ на этом сервисе — per-resource history exposed через
+	// `<Resource>Service.ListOperations` (см. internal/apps/kacho/api/operation/handler.go).
+	operationpb.RegisterOperationServiceServer(publicSrv, operation.NewHandler(opsRepo))
 
 	publicListener, err := listenEndpoint(cfg.APIServer.Endpoint)
 	if err != nil {
