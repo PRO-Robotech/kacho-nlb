@@ -35,7 +35,9 @@ import (
 	"github.com/PRO-Robotech/kacho-corelib/operations"
 
 	operationpb "github.com/PRO-Robotech/kacho-proto/gen/go/kacho/cloud/operation"
+	lbv1 "github.com/PRO-Robotech/kacho-proto/gen/go/kacho/cloud/loadbalancer/v1"
 
+	"github.com/PRO-Robotech/kacho-nlb/internal/apps/kacho/api/listener"
 	"github.com/PRO-Robotech/kacho-nlb/internal/apps/kacho/api/operation"
 	"github.com/PRO-Robotech/kacho-nlb/internal/apps/kacho/config"
 	"github.com/PRO-Robotech/kacho-nlb/internal/apps/kacho/jobs"
@@ -150,11 +152,11 @@ func runServe(configPath string) error {
 		return fmt.Errorf("dial peers: %w", err)
 	}
 	defer closeAll(peerConns, logger)
-	// Sentinel-use peers: типизированные clients потребляются handler'ами в
-	// Wave 6/7 (NLB / Listener / TG use-cases). Композиционный root владеет
-	// gRPC-conn'ами и закрывает их через defer выше — peers держит ссылки на
-	// stub'ы поверх этих conn'ов, отдельного Close() не требуется.
-	_ = peers
+	// Sentinel-use peers: типизированные clients потребляются handler'ами
+	// (ListenerService — wired ниже; NLB / TG handlers — Wave 6.2 / 6.3).
+	// Композиционный root владеет gRPC-conn'ами и закрывает их через defer
+	// выше — peers держит ссылки на stub'ы поверх этих conn'ов, отдельного
+	// Close() не требуется.
 
 	// gRPC servers (public :9090 + internal :9091).
 	// OperationService зарегистрирован здесь как полный end-to-end путь (KAC-155).
@@ -162,9 +164,9 @@ func runServe(configPath string) error {
 	// в Wave 6+ (KAC-151..154, KAC-156..158).
 	publicSrv := grpcsrv.NewServer()
 	internalSrv := grpcsrv.NewServer()
-	// Sentinel-use — repo потребят handler'ы в Wave 6/7 (NLB / Listener / TG use-cases).
-	// Композиционный root уже владеет и закрывает его через defer выше.
-	_ = repo
+	// Sentinel-use — repo потребляется handler'ами (ListenerService — wired ниже;
+	// NLB/TG handlers — Wave 6.2 / 6.3). Композиционный root уже владеет и
+	// закрывает его через defer выше.
 
 	// OperationService (kacho.cloud.operation.OperationService): Get + Cancel.
 	// Public per proto annotation `(kacho.iam.authz.v1.permission) = "<exempt>"`
@@ -172,6 +174,21 @@ func runServe(configPath string) error {
 	// List-операций НЕТ на этом сервисе — per-resource history exposed через
 	// `<Resource>Service.ListOperations` (см. internal/apps/kacho/api/operation/handler.go).
 	operationpb.RegisterOperationServiceServer(publicSrv, operation.NewHandler(opsRepo))
+
+	// ListenerService (KAC-152): full Get/List/Create/Update/Delete/ListOperations.
+	// Peer-clients (vpc Address / InternalAddress / Subnet, iam HierarchyWriter)
+	// допускают nil — UseCase'ы Create/Delete возвращают Unavailable если
+	// peer-adapter не сконфигурирован, остальные RPC работают (Get/List/Update/
+	// ListOperations не зависят от peers).
+	lbv1.RegisterListenerServiceServer(publicSrv, listener.NewHandler(
+		repo,
+		opsRepo,
+		peers.Address,
+		peers.InternalAddress,
+		peers.Subnet,
+		peers.Hierarchy,
+		logger,
+	))
 
 	publicListener, err := listenEndpoint(cfg.APIServer.Endpoint)
 	if err != nil {
