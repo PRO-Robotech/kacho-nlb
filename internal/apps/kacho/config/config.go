@@ -43,6 +43,7 @@ type Config struct {
 	ExtAPI      ExtAPIConfig      `mapstructure:"extapi"`
 	Authz       AuthzConfig       `mapstructure:"authz"`
 	FGA         FGAConfig         `mapstructure:"fga"`
+	Jobs        JobsConfig        `mapstructure:"jobs"`
 }
 
 // Mode возвращает резолвленный enum-режим (после `Validate()`).
@@ -167,4 +168,18 @@ type FGAConfig struct {
 type FGATupleWriteConfig struct {
 	Timeout    time.Duration `mapstructure:"timeout"`     // default 2s
 	MaxRetries int           `mapstructure:"max-retries"` // default 3
+}
+
+// ─── Jobs (background workers) ───────────────────────────────────────────────
+
+// JobsConfig — конфигурация фоновых worker'ов (см. internal/apps/kacho/jobs).
+type JobsConfig struct {
+	TargetDrain TargetDrainConfig `mapstructure:"target-drain"`
+}
+
+// TargetDrainConfig — параметры Phase B 2-phase drain runner (KAC-159).
+type TargetDrainConfig struct {
+	// Interval — период между тиками drain-runner'а. Default 10s
+	// (см. RegisterDefaults). Должен быть > 0.
+	Interval time.Duration `mapstructure:"interval"`
 }

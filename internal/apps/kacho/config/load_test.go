@@ -90,6 +90,9 @@ func TestLoad_DefaultsApplied(t *testing.T) {
 	if cfg.Authz.Cache.Size != 10000 {
 		t.Errorf("default Authz.Cache.Size: got %d", cfg.Authz.Cache.Size)
 	}
+	if cfg.Jobs.TargetDrain.Interval != 10*time.Second {
+		t.Errorf("default Jobs.TargetDrain.Interval: got %v, want 10s", cfg.Jobs.TargetDrain.Interval)
+	}
 	if cfg.FGA.TupleWrite.Timeout != 2*time.Second {
 		t.Errorf("default FGA.TupleWrite.Timeout: got %v", cfg.FGA.TupleWrite.Timeout)
 	}
