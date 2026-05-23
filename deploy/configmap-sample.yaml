@@ -1,0 +1,103 @@
+# kacho-nlb — пример полного config.yaml (KAC-160 / design §6.9).
+#
+# Все ключи опциональны: defaults — в `internal/apps/kacho/config/defaults.go`
+# (evgeniy §J.3). Required (без default'а):
+#   - repository.postgres.url           — DSN до kacho_nlb БД.
+#   - authz.iam.addr                    — required только в mode=production.
+#
+# ENV-override любого поля через viper-делимитер `__`:
+#   KACHO_NLB_REPOSITORY__POSTGRES__URL=postgres://...
+#   KACHO_NLB_LOGGER__LEVEL=INFO
+#   KACHO_NLB_AUTHZ__IAM__ADDR=iam.kacho.svc.cluster.local:9091
+#
+# Полный документ-описание полей и mode-specific требований — `internal/apps/kacho/config/config.go`.
+
+# ─── Mode ───────────────────────────────────────────────────────────────────
+# dev — relaxed validation (TLS optional, breakglass allowed).
+# production — TLS required, authz.iam.addr required, breakglass forbidden.
+mode: dev
+
+# ─── Logger ─────────────────────────────────────────────────────────────────
+logger:
+  level: DEBUG               # FATAL|ERROR|WARN|INFO|DEBUG
+
+# ─── API server (gRPC public + internal) ────────────────────────────────────
+api-server:
+  endpoint: tcp://0.0.0.0:9090           # public — клиенты + UI через api-gateway
+  internal-endpoint: tcp://0.0.0.0:9091  # cluster-internal — peer-сервисы
+  graceful-shutdown: 10s
+  grpc-gw-enable: false                  # gateway = separate service (api-gateway)
+
+# ─── Metrics / Healthcheck ──────────────────────────────────────────────────
+metrics:
+  enable: true                # /metrics on :9101
+healthcheck:
+  enable: true                # gRPC health-check service registered
+
+# ─── Repository (PostgreSQL `kacho_nlb` schema) ─────────────────────────────
+repository:
+  type: POSTGRES              # only POSTGRES supported
+  postgres:
+    # REQUIRED. Сюда же смотрит `cmd/migrator` (DSN priority: --dsn > ENV >
+    # этот файл).
+    url: postgres://kacho:secret@pg.kacho.svc.cluster.local:5432/kacho_nlb?sslmode=disable&search_path=kacho_nlb,public
+    # max-conns: 0 → pgxpool default.
+    max-conns: 0
+    # conn-lifetime: 0 → pgxpool default.
+    conn-lifetime: 0s
+    # slave-url: optional read-replica DSN (для read-tx из CQRS Reader).
+    slave-url: ""
+
+# ─── Authn (transport TLS) ──────────────────────────────────────────────────
+authn:
+  type: none                  # none | tls
+  tls:
+    key-file: ""
+    cert-file: ""
+    client:
+      verify: skip            # skip | certs-required | verify
+      ca-files: []
+
+# ─── ExtAPI (peer gRPC clients: vpc / compute / iam) ────────────────────────
+extapi:
+  def-dial-duration: 10s      # дефолт, если в peer .dial-duration == 0s
+  vpc:
+    addr: ""                                                    # vpc.kacho.svc.cluster.local:9090 (public RPC)
+    internal-addr: vpc.kacho.svc.cluster.local:9091             # internal :9091 — основной для NLB
+    dial-duration: 0s
+    tls: false
+  compute:
+    addr: ""
+    internal-addr: compute.kacho.svc.cluster.local:9091
+    dial-duration: 0s
+    tls: false
+  iam:
+    addr: ""
+    internal-addr: iam.kacho.svc.cluster.local:9091             # ProjectService + InternalIAMService
+    dial-duration: 0s
+    tls: false
+
+# ─── Authz (FGA per-RPC Check + cache + listen-invalidator) ─────────────────
+authz:
+  iam:
+    addr: iam.kacho.svc.cluster.local:9091                      # required в production
+    dial-deadline: 3s
+    request-timeout: 500ms
+  cache:
+    enable: true              # positive-only LRU cache над Check (KAC-108)
+    ttl: 5s                   # NFR KAC-108: ≤ 10s — выдерживается с margin
+    size: 10000               # LRU capacity (entries)
+  listen-invalidator:
+    enable: false             # LISTEN kacho_iam_subjects (если iam-pool доступен)
+    channel: kacho_iam_subjects
+    iam-dsn: ""               # dedicated pgx conn к iam-DB (если listen-invalidator.enable=true)
+  breakglass: false           # dev-only; production validation rejects true
+
+# ─── FGA tuple write (D-11 sync hierarchy tuples) ───────────────────────────
+fga:
+  endpoint: ""                # OpenFGA HTTP/gRPC endpoint (если live FGA нужна)
+  store-id: ""
+  model-id: ""                # optional explicit authorization model id
+  tuple-write:
+    timeout: 2s
+    max-retries: 3
