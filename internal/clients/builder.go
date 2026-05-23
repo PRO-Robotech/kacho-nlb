@@ -9,10 +9,10 @@
 // (retries=3, dialTimeout=10s, KeepAlive 30s, userAgent="kacho-nlb").
 // Pattern скопирован с kacho-vpc/internal/clients/builder.go (KAC-97).
 //
-// Этот файл — building block. Конкретные peer-клиенты (vpc/compute/iam) —
-// тонкие обёртки поверх Build(), реализующие port-интерфейсы из service/
-// (workspace CLAUDE.md "Чистая архитектура"). TODO(KAC-151) — добавить
-// vpc_client.go / compute_client.go / iam_client.go.
+// Этот файл — building block. Конкретные peer-клиенты живут в подпакетах
+// `internal/clients/{iam,compute,vpc}` — тонкие обёртки поверх Build(),
+// реализующие port-интерфейсы из соответствующих use-case-пакетов
+// (workspace CLAUDE.md "Чистая архитектура"; KAC-151).
 package clients
 
 import (

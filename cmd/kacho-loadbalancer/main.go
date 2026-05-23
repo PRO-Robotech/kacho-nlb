@@ -40,6 +40,9 @@ import (
 	"github.com/PRO-Robotech/kacho-nlb/internal/apps/kacho/config"
 	"github.com/PRO-Robotech/kacho-nlb/internal/apps/kacho/jobs"
 	"github.com/PRO-Robotech/kacho-nlb/internal/clients"
+	computeclient "github.com/PRO-Robotech/kacho-nlb/internal/clients/compute"
+	iamclient "github.com/PRO-Robotech/kacho-nlb/internal/clients/iam"
+	vpcclient "github.com/PRO-Robotech/kacho-nlb/internal/clients/vpc"
 	// dto/type2pb init() регистрирует все DTO трансферы (domain ↔ proto) в реестре.
 	// Импортируется здесь (composition root), чтобы registry был полон до старта
 	// gRPC server'ов; handler'ы вызывают dto.Transfer(...) и предполагают, что
@@ -47,6 +50,25 @@ import (
 	_ "github.com/PRO-Robotech/kacho-nlb/internal/dto/type2pb"
 	kachopg "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho/pg"
 )
+
+// peerClients — composition root bundle типизированных адаптеров к peer-сервисам.
+// Use-case'ы Wave 6/7 принимают эти port-интерфейсы через конструкторы (Clean
+// Architecture: composition root — единственное место, где известны
+// конкретные реализации).
+type peerClients struct {
+	// IAM
+	Project   iamclient.ProjectClient
+	Check     iamclient.CheckClient
+	Hierarchy iamclient.HierarchyWriter
+	// Compute
+	Region   computeclient.RegionClient
+	Instance computeclient.InstanceClient
+	// VPC
+	Subnet           vpcclient.SubnetClient
+	NetworkInterface vpcclient.NetworkInterfaceClient
+	Address          vpcclient.AddressClient
+	InternalAddress  vpcclient.InternalAddressClient
+}
 
 func main() {
 	root := &cobra.Command{
@@ -120,11 +142,19 @@ func runServe(configPath string) error {
 	opsRepo := operations.NewRepo(pool, "kacho_nlb")
 
 	// Peer-gRPC clients (corlib client-builder; evgeniy §K.6).
-	peerConns, err := dialPeers(ctx, cfg, logger)
+	// Возвращается bundle conn'ов + типизированных adapter'ов; conn'ы
+	// закрываются по defer ниже. Use-case'ы Wave 6/7 получают clients
+	// через port-интерфейсы (`internal/apps/kacho/api/<resource>/ports.go`).
+	peerConns, peers, err := dialPeers(ctx, cfg, logger)
 	if err != nil {
 		return fmt.Errorf("dial peers: %w", err)
 	}
 	defer closeAll(peerConns, logger)
+	// Sentinel-use peers: типизированные clients потребляются handler'ами в
+	// Wave 6/7 (NLB / Listener / TG use-cases). Композиционный root владеет
+	// gRPC-conn'ами и закрывает их через defer выше — peers держит ссылки на
+	// stub'ы поверх этих conn'ов, отдельного Close() не требуется.
+	_ = peers
 
 	// gRPC servers (public :9090 + internal :9091).
 	// OperationService зарегистрирован здесь как полный end-to-end путь (KAC-155).
@@ -251,23 +281,39 @@ func listenEndpoint(endpoint string) (net.Listener, error) {
 	return net.Listen("tcp", addr)
 }
 
-// dialPeers открывает gRPC connections к vpc/compute/iam через corlib client-builder.
+// dialPeers открывает gRPC connections к vpc/compute/iam через corlib client-builder
+// и собирает типизированные adapter'ы (Clean Architecture outbound adapters).
+//
+// Возвращает:
+//   - []clients.Conn — для defer'нутого Close() в composition root.
+//   - *peerClients   — bundle типизированных port-интерфейсов для use-case'ов.
 //
 // Соединения открываются только если соответствующий addr задан в config;
-// иначе пропускается (graceful dev-startup без peer-сервисов). Use-case'ы,
-// которым нужен peer-client, получают conn через port-интерфейс
-// (`internal/apps/kacho/api/<resource>/ports.go`).
+// иначе adapter в peers остаётся nil (graceful dev-startup без peer-сервисов;
+// use-case'ы при отсутствующем adapter'е возвращают Unavailable).
 //
-// Внутреннее правило: NLB зовёт peer-сервисы по их **internal-addr** (:9091)
-// напрямую через cluster-internal listener, **не** через api-gateway —
-// см. design §1, edges section.
-func dialPeers(ctx context.Context, cfg *config.Config, logger *slog.Logger) ([]clients.Conn, error) {
+// Внутренняя топология:
+//   - kacho-iam: один conn на InternalAddr — ProjectService.Get живёт и
+//     на public, и (через scope-filter) на internal; InternalIAMService.{Check,
+//     WriteCreatorTuple} — только на internal. Используем internal listener.
+//   - kacho-compute: один conn на public Addr — RegionService / ZoneService /
+//     InstanceService — публичные read RPC.
+//   - kacho-vpc: ДВА conn'а. public (Addr) — AddressService / OperationService;
+//     internal (InternalAddr) — InternalAddressService.{Set,Clear}Reference,
+//     SubnetService / NetworkInterfaceService живут на public, но edge consumer
+//     (NLB) использует public Addr для них тоже.
+//
+// См. workspace CLAUDE.md «Запреты» #6: Internal.* НЕ публикуется на external
+// TLS endpoint.
+func dialPeers(
+	ctx context.Context, cfg *config.Config, logger *slog.Logger,
+) ([]clients.Conn, *peerClients, error) {
 	var conns []clients.Conn
-	dialOne := func(name, addr string, useTLS bool) error {
+	dialOne := func(name, addr string, useTLS bool) (clients.Conn, error) {
 		addr = strings.TrimSpace(addr)
 		if addr == "" {
 			logger.Info("peer not configured — skip", "peer", name)
-			return nil
+			return nil, nil
 		}
 		cc, err := clients.Build(ctx, clients.BuildOptions{
 			Endpoint:    addr,
@@ -275,35 +321,74 @@ func dialPeers(ctx context.Context, cfg *config.Config, logger *slog.Logger) ([]
 			DialTimeout: peerDialDuration(cfg),
 		})
 		if err != nil {
-			return fmt.Errorf("dial %s @ %q: %w", name, addr, err)
+			return nil, fmt.Errorf("dial %s @ %q: %w", name, addr, err)
 		}
 		conns = append(conns, cc)
 		logger.Info("peer connected", "peer", name, "addr", addr, "tls", useTLS)
-		return nil
+		return cc, nil
 	}
 
-	// kacho-nlb зовёт *Internal*-сервисы peer'ов (см. design §1 edges) —
-	// поэтому используется .InternalAddr. Если .InternalAddr пуст, fallback
-	// на .Addr; в production это будет ошибкой validate.
-	endpointOf := func(p config.ExtAPIEndpoint) string {
-		if p.InternalAddr != "" {
-			return p.InternalAddr
+	peers := &peerClients{}
+
+	// kacho-iam — один conn на internal listener.
+	iamAddr := firstNonEmpty(cfg.ExtAPI.IAM.InternalAddr, cfg.ExtAPI.IAM.Addr)
+	iamConn, err := dialOne("iam", iamAddr, cfg.ExtAPI.IAM.TLS)
+	if err != nil {
+		closeAll(conns, logger)
+		return nil, nil, err
+	}
+	if iamConn != nil {
+		peers.Project = iamclient.NewProjectClient(iamConn)
+		peers.Check = iamclient.NewCheckClient(iamConn)
+		peers.Hierarchy = iamclient.NewHierarchyWriter(iamConn)
+	}
+
+	// kacho-compute — один conn на public listener (Region/Zone/Instance — публичные).
+	computeAddr := firstNonEmpty(cfg.ExtAPI.Compute.Addr, cfg.ExtAPI.Compute.InternalAddr)
+	computeConn, err := dialOne("compute", computeAddr, cfg.ExtAPI.Compute.TLS)
+	if err != nil {
+		closeAll(conns, logger)
+		return nil, nil, err
+	}
+	if computeConn != nil {
+		peers.Region = computeclient.NewRegionClient(computeConn)
+		peers.Instance = computeclient.NewInstanceClient(computeConn)
+	}
+
+	// kacho-vpc — два conn'а: public (Address/Subnet/NIC/Operation) +
+	// internal (InternalAddressService).
+	vpcPublicAddr := firstNonEmpty(cfg.ExtAPI.VPC.Addr, cfg.ExtAPI.VPC.InternalAddr)
+	vpcPublicConn, err := dialOne("vpc-public", vpcPublicAddr, cfg.ExtAPI.VPC.TLS)
+	if err != nil {
+		closeAll(conns, logger)
+		return nil, nil, err
+	}
+	vpcInternalAddr := firstNonEmpty(cfg.ExtAPI.VPC.InternalAddr, cfg.ExtAPI.VPC.Addr)
+	vpcInternalConn, err := dialOne("vpc-internal", vpcInternalAddr, cfg.ExtAPI.VPC.TLS)
+	if err != nil {
+		closeAll(conns, logger)
+		return nil, nil, err
+	}
+	if vpcPublicConn != nil {
+		peers.Subnet = vpcclient.NewSubnetClient(vpcPublicConn)
+		peers.NetworkInterface = vpcclient.NewNetworkInterfaceClient(vpcPublicConn)
+		peers.Address = vpcclient.NewAddressClient(vpcPublicConn)
+	}
+	if vpcPublicConn != nil && vpcInternalConn != nil {
+		peers.InternalAddress = vpcclient.NewInternalAddressClient(vpcPublicConn, vpcInternalConn)
+	}
+
+	return conns, peers, nil
+}
+
+// firstNonEmpty — first non-empty string из аргументов; "" если все пусты.
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if strings.TrimSpace(v) != "" {
+			return v
 		}
-		return p.Addr
 	}
-	if err := dialOne("vpc", endpointOf(cfg.ExtAPI.VPC), cfg.ExtAPI.VPC.TLS); err != nil {
-		closeAll(conns, logger)
-		return nil, err
-	}
-	if err := dialOne("compute", endpointOf(cfg.ExtAPI.Compute), cfg.ExtAPI.Compute.TLS); err != nil {
-		closeAll(conns, logger)
-		return nil, err
-	}
-	if err := dialOne("iam", endpointOf(cfg.ExtAPI.IAM), cfg.ExtAPI.IAM.TLS); err != nil {
-		closeAll(conns, logger)
-		return nil, err
-	}
-	return conns, nil
+	return ""
 }
 
 // peerDialDuration — берёт DialDuration из per-peer если задан, иначе
