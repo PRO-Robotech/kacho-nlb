@@ -101,3 +101,11 @@ fga:
   tuple-write:
     timeout: 2s
     max-retries: 3
+
+# ─── Jobs (background workers) ──────────────────────────────────────────────
+jobs:
+  # target-drain: Phase B 2-phase drain runner (KAC-159).
+  # Период между tick'ами; на каждом tick'е DELETE expired DRAINING targets +
+  # emit `nlb_target_group:<tg_id> UPDATED` outbox row (DISTINCT per TG).
+  target-drain:
+    interval: 10s

@@ -126,6 +126,12 @@ func (c Config) Validate() error {
 		errs = multierr.Append(errs, fmt.Errorf("fga.tuple-write.max-retries must be >= 0, got %d", c.FGA.TupleWrite.MaxRetries))
 	}
 
+	// Jobs.target-drain (KAC-159 Phase B drain runner). Interval должен быть > 0;
+	// `0s` означало бы tight-loop, что нагрузит БД.
+	if c.Jobs.TargetDrain.Interval <= 0 {
+		errs = multierr.Append(errs, fmt.Errorf("jobs.target-drain.interval must be > 0, got %v", c.Jobs.TargetDrain.Interval))
+	}
+
 	return errs
 }
 

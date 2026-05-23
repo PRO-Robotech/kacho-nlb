@@ -62,4 +62,9 @@ func RegisterDefaults(v *viper.Viper) {
 	// FGA tuple-write
 	v.SetDefault("fga.tuple-write.timeout", "2s")
 	v.SetDefault("fga.tuple-write.max-retries", 3)
+
+	// Jobs (background workers)
+	// target-drain: Phase B 2-phase drain runner (KAC-159). 10s — компромисс
+	// между latency удаления expired targets и нагрузкой на БД.
+	v.SetDefault("jobs.target-drain.interval", "10s")
 }

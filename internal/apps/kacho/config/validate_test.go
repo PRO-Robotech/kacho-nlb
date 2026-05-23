@@ -52,6 +52,9 @@ func minimalValidConfig() Config {
 			Type:     "POSTGRES",
 			Postgres: PostgresConfig{URL: "postgres://u:p@h/d"},
 		},
+		Jobs: JobsConfig{
+			TargetDrain: TargetDrainConfig{Interval: 10 * time.Second},
+		},
 	}
 }
 
@@ -153,6 +156,26 @@ func TestValidate_AuthnTLSRequiresKeyAndCert(t *testing.T) {
 	err := cfg.Validate()
 	if err == nil || !strings.Contains(err.Error(), "authn.tls") {
 		t.Fatalf("expected authn.tls key/cert error, got %v", err)
+	}
+}
+
+// TestValidate_JobsTargetDrainIntervalZero — KAC-159: interval=0s rejected.
+func TestValidate_JobsTargetDrainIntervalZero(t *testing.T) {
+	cfg := minimalValidConfig()
+	cfg.Jobs.TargetDrain.Interval = 0
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "jobs.target-drain.interval") {
+		t.Fatalf("expected target-drain.interval error, got %v", err)
+	}
+}
+
+// TestValidate_JobsTargetDrainIntervalNegative — defense vs negative.
+func TestValidate_JobsTargetDrainIntervalNegative(t *testing.T) {
+	cfg := minimalValidConfig()
+	cfg.Jobs.TargetDrain.Interval = -5 * time.Second
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "jobs.target-drain.interval") {
+		t.Fatalf("expected target-drain.interval error, got %v", err)
 	}
 }
 
