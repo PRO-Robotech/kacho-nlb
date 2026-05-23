@@ -6,33 +6,58 @@
 //   - UseCase сам управляет TX: Writer().Commit() / Abort() (defer-style).
 //
 // Реализации:
-//   - internal/repo/kacho/pg/ — pgx5 + sqlc.
+//   - internal/repo/kacho/pg/ — pgx5 + pgxpool на master/slave.
 //
-// TODO(KAC-150): полные интерфейсы Reader/Writer + per-resource ifaces + outbox.
+// Pagination — общий объект, разделяемый между всеми per-resource Reader'ами.
 package kacho
 
 import "context"
 
-// Repository — фабрика TX-aware Reader/Writer.
+// Pagination — постраничная навигация. Cursor-based: PageToken — opaque
+// base64-encoded (created_at, id) snapshot, PageSize — page-size (0 →
+// default 50; max 1000, см. corelib/validate.PageSize).
+type Pagination struct {
+	PageToken string
+	PageSize  int64
+}
+
+// Repository — фабрика TX-aware Reader/Writer. Skill evgeniy §6 G.1.
+//
+// Reader(ctx) открывает read-only TX на slave-pool'е (если настроен) либо на
+// master (fallback). Caller обязан вызвать Close().
+//
+// Writer(ctx) открывает RW TX на master. Caller обязан вызвать либо Commit(),
+// либо Abort() (Abort идемпотентен — безопасно через defer сразу после открытия).
 type Repository interface {
 	Reader(ctx context.Context) (RepositoryReader, error)
 	Writer(ctx context.Context) (RepositoryWriter, error)
-	Close() error
+	Close()
 }
 
-// RepositoryReader — read-only TX-снапшот.
-//
-// TODO(KAC-150): методы per-resource (LoadBalancers(), Listeners(), TargetGroups(), Operations()).
+// RepositoryReader — read-only TX-снапшот. Все per-resource reader'ы получают
+// pgx.Tx через этот объект и читают одну и ту же snapshot-version.
 type RepositoryReader interface {
+	LoadBalancers() LoadBalancerReaderIface
+	Listeners() ListenerReaderIface
+	TargetGroups() TargetGroupReaderIface
+	AttachedTargetGroups() AttachedTargetGroupReaderIface
+	// Close завершает read-TX (rollback). Идемпотентно.
 	Close() error
 }
 
-// RepositoryWriter — write-TX. Все мутации + outbox-emit идут в одной TX,
-// чтобы LISTEN/NOTIFY consumer'ы не видели событий о несуществующих строках.
-//
-// TODO(KAC-150): методы per-resource Writer + Outbox() + Operations().
+// RepositoryWriter — write-TX. Writer видит свои writes (G.2 — writer extends
+// reader). Outbox-emit живёт здесь же — DML + outbox atomicity гарантируется
+// одной pgx.Tx (skill evgeniy §6 G.5).
 type RepositoryWriter interface {
-	RepositoryReader
+	LoadBalancers() LoadBalancerWriterIface
+	Listeners() ListenerWriterIface
+	TargetGroups() TargetGroupWriterIface
+	AttachedTargetGroups() AttachedTargetGroupWriterIface
+	// Outbox — emit события в `nlb_outbox` в той же tx-области writer'а.
+	Outbox() OutboxEmitter
+	// Commit финализирует tx. После Commit вызов Abort — no-op.
 	Commit() error
+	// Abort откатывает tx. Идемпотентен — безопасно через `defer w.Abort()`
+	// сразу после открытия writer'а.
 	Abort()
 }

@@ -1,4 +1,5 @@
-// Package listener — port-интерфейсы repo для Listener.
+// Package listener — doc-only stub-пакет.
 //
-// TODO(KAC-150): CQRS Reader / Writer ifaces.
+// Port-интерфейсы CQRS-репо для Listener живут в leaf-пакете
+// `internal/repo/kacho`. См. doc-комментарий в loadbalancer/iface.go.
 package listener
