@@ -1,5 +1,5 @@
-// Package targetgroup — port-интерфейсы repo для TargetGroup + Target.
+// Package targetgroup — doc-only stub-пакет.
 //
-// TODO(KAC-150): CQRS Reader / Writer + AddTargets (ON CONFLICT DO NOTHING) +
-// 2-phase RemoveTargets (Phase A mark DRAINING).
+// Port-интерфейсы CQRS-репо для TargetGroup живут в leaf-пакете
+// `internal/repo/kacho`. См. doc-комментарий в loadbalancer/iface.go.
 package targetgroup
