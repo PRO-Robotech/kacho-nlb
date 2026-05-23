@@ -39,6 +39,12 @@ import (
 	"github.com/PRO-Robotech/kacho-nlb/internal/apps/kacho/api/operation"
 	"github.com/PRO-Robotech/kacho-nlb/internal/apps/kacho/config"
 	"github.com/PRO-Robotech/kacho-nlb/internal/clients"
+	// dto/type2pb init() регистрирует все DTO трансферы (domain ↔ proto) в реестре.
+	// Импортируется здесь (composition root), чтобы registry был полон до старта
+	// gRPC server'ов; handler'ы вызывают dto.Transfer(...) и предполагают, что
+	// каждая зарегистрированная пара уже в map'е.
+	_ "github.com/PRO-Robotech/kacho-nlb/internal/dto/type2pb"
+	kachopg "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho/pg"
 )
 
 func main() {
@@ -100,6 +106,12 @@ func runServe(configPath string) error {
 	}
 	defer pool.Close()
 
+	// CQRS-Repository (KAC-149). master = slave (single-pool dev). Use-case'ы,
+	// зарегистрированные на handler-слое в следующих Wave'ах, получают этот
+	// repo через port-интерфейсы (`internal/repo/kacho.Repository`).
+	repo := kachopg.New(pool, nil)
+	defer repo.Close()
+
 	// Operations LRO repo (общая таблица operations в kacho_nlb schema).
 	// Используется всеми use-case'ами мутирующих RPC через worker'ы
 	// `operations.Run(ctx, opsRepo, opID, fn)` (kacho-corelib pattern) и
@@ -107,9 +119,6 @@ func runServe(configPath string) error {
 	opsRepo := operations.NewRepo(pool, "kacho_nlb")
 
 	// Peer-gRPC clients (corlib client-builder; evgeniy §K.6).
-	// TODO(KAC-151): после реализации vpc_client / compute_client / iam_client
-	// — здесь создаются типизированные клиенты, реализующие port-интерфейсы
-	// из internal/apps/kacho/api/<resource>/.
 	peerConns, err := dialPeers(ctx, cfg, logger)
 	if err != nil {
 		return fmt.Errorf("dial peers: %w", err)
@@ -117,11 +126,14 @@ func runServe(configPath string) error {
 	defer closeAll(peerConns, logger)
 
 	// gRPC servers (public :9090 + internal :9091).
+	// OperationService зарегистрирован здесь как полный end-to-end путь (KAC-155).
 	// Per-resource handler'ы (load_balancer / listener / target_group) подключаются
-	// в follow-up'ах (KAC-153..KAC-157, KAC-158..KAC-160); OperationService —
-	// зарегистрирован здесь как полный end-to-end путь (KAC-155).
+	// в Wave 6+ (KAC-151..154, KAC-156..158).
 	publicSrv := grpcsrv.NewServer()
 	internalSrv := grpcsrv.NewServer()
+	// Sentinel-use — repo потребят handler'ы в Wave 6/7 (NLB / Listener / TG use-cases).
+	// Композиционный root уже владеет и закрывает его через defer выше.
+	_ = repo
 
 	// OperationService (kacho.cloud.operation.OperationService): Get + Cancel.
 	// Public per proto annotation `(kacho.iam.authz.v1.permission) = "<exempt>"`
@@ -229,10 +241,10 @@ func listenEndpoint(endpoint string) (net.Listener, error) {
 
 // dialPeers открывает gRPC connections к vpc/compute/iam через corlib client-builder.
 //
-// Текущая реализация — stub: соединения открываются только если соответствующий
-// addr задан в config; иначе пропускается (graceful dev-startup без peer-сервисов).
-// TODO(KAC-151): после реализации typed peer-clients (vpc_client.go etc.) здесь
-// заворачиваются в port-интерфейсы и пробрасываются в use-cases.
+// Соединения открываются только если соответствующий addr задан в config;
+// иначе пропускается (graceful dev-startup без peer-сервисов). Use-case'ы,
+// которым нужен peer-client, получают conn через port-интерфейс
+// (`internal/apps/kacho/api/<resource>/ports.go`).
 //
 // Внутреннее правило: NLB зовёт peer-сервисы по их **internal-addr** (:9091)
 // напрямую через cluster-internal listener, **не** через api-gateway —

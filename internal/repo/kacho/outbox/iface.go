@@ -1,5 +1,6 @@
-// Package outbox — port-интерфейс outbox-эмита (LISTEN/NOTIFY на канале `nlb_outbox`).
+// Package outbox — doc-only stub-пакет.
 //
-// TODO(KAC-150): Emit(ctx, event) в той же TX, что и мутация ресурса; trigger
-// `nlb_outbox_notify_trg` шлёт `pg_notify('nlb_outbox', sequence_no::text)`.
+// Port-интерфейс OutboxEmitter живёт в leaf-пакете `internal/repo/kacho`
+// (см. iface.go и outbox_emitter.go). Trigger `nlb_outbox_notify_trg`
+// шлёт `pg_notify('nlb_outbox', sequence_no::text)` на каждый INSERT.
 package outbox
