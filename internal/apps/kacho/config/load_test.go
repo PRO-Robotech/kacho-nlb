@@ -1,0 +1,164 @@
+// load_test.go — KAC-160; парсинг YAML, defaults, ENV-override, validation
+// (RED-first: эти тесты были написаны до реализации load/validate; см.
+// `internal/apps/kacho/config/{load,validate,defaults}.go`).
+package config
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+)
+
+// writeYAML — helper: пишет YAML-снэппет во временный файл, возвращает path.
+func writeYAML(t *testing.T, body string) string {
+	t.Helper()
+	dir := t.TempDir()
+	p := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
+		t.Fatalf("write tmp YAML: %v", err)
+	}
+	return p
+}
+
+const minimalValidYAML = `
+mode: dev
+logger:
+  level: INFO
+api-server:
+  endpoint: tcp://0.0.0.0:9090
+  internal-endpoint: tcp://0.0.0.0:9091
+  graceful-shutdown: 10s
+repository:
+  type: POSTGRES
+  postgres:
+    url: postgres://kacho:secret@db.example/kacho_nlb?sslmode=disable
+`
+
+func TestLoad_MinimalYAML(t *testing.T) {
+	cfg, err := Load(writeYAML(t, minimalValidYAML))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Mode() != ModeDev {
+		t.Errorf("Mode: got %v, want ModeDev", cfg.Mode())
+	}
+	if cfg.Logger.Level != "INFO" {
+		t.Errorf("Logger.Level: got %q, want INFO", cfg.Logger.Level)
+	}
+	if cfg.APIServer.GracefulShutdown != 10*time.Second {
+		t.Errorf("APIServer.GracefulShutdown: got %v, want 10s", cfg.APIServer.GracefulShutdown)
+	}
+	if cfg.Repository.Postgres.URL == "" {
+		t.Error("Repository.Postgres.URL: empty (defaults must not blank required fields)")
+	}
+}
+
+func TestLoad_DefaultsApplied(t *testing.T) {
+	// path == "" → только defaults + ENV (ENV для required url задан ниже).
+	t.Setenv("KACHO_NLB_REPOSITORY__POSTGRES__URL", "postgres://u:p@h/d")
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	// Дефолты из RegisterDefaults:
+	if cfg.Mode() != ModeDev {
+		t.Errorf("default Mode: got %v, want ModeDev", cfg.Mode())
+	}
+	if cfg.Logger.Level != "DEBUG" {
+		t.Errorf("default Logger.Level: got %q, want DEBUG", cfg.Logger.Level)
+	}
+	if cfg.APIServer.Endpoint != "tcp://0.0.0.0:9090" {
+		t.Errorf("default APIServer.Endpoint: got %q", cfg.APIServer.Endpoint)
+	}
+	if cfg.APIServer.InternalEndpoint != "tcp://0.0.0.0:9091" {
+		t.Errorf("default APIServer.InternalEndpoint: got %q", cfg.APIServer.InternalEndpoint)
+	}
+	if cfg.APIServer.GracefulShutdown != 10*time.Second {
+		t.Errorf("default APIServer.GracefulShutdown: got %v", cfg.APIServer.GracefulShutdown)
+	}
+	if !cfg.Metrics.Enable {
+		t.Error("default Metrics.Enable: got false, want true")
+	}
+	if !cfg.Healthcheck.Enable {
+		t.Error("default Healthcheck.Enable: got false, want true")
+	}
+	if cfg.Authz.Cache.TTL != 5*time.Second {
+		t.Errorf("default Authz.Cache.TTL: got %v, want 5s", cfg.Authz.Cache.TTL)
+	}
+	if cfg.Authz.Cache.Size != 10000 {
+		t.Errorf("default Authz.Cache.Size: got %d", cfg.Authz.Cache.Size)
+	}
+	if cfg.FGA.TupleWrite.Timeout != 2*time.Second {
+		t.Errorf("default FGA.TupleWrite.Timeout: got %v", cfg.FGA.TupleWrite.Timeout)
+	}
+}
+
+func TestLoad_EnvOverride(t *testing.T) {
+	// ENV: KACHO_NLB_REPOSITORY__POSTGRES__URL → repository.postgres.url
+	t.Setenv("KACHO_NLB_REPOSITORY__POSTGRES__URL", "postgres://envuser:envpass@envhost/kacho_nlb")
+	t.Setenv("KACHO_NLB_LOGGER__LEVEL", "WARN")
+	t.Setenv("KACHO_NLB_AUTHZ__IAM__ADDR", "iam.kacho.svc:9091")
+
+	cfg, err := Load("") // только defaults + ENV
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := cfg.Repository.Postgres.URL; got != "postgres://envuser:envpass@envhost/kacho_nlb" {
+		t.Errorf("Repository.Postgres.URL from ENV: got %q", got)
+	}
+	if got := cfg.Logger.Level; got != "WARN" {
+		t.Errorf("Logger.Level from ENV: got %q", got)
+	}
+	if got := cfg.Authz.IAM.Addr; got != "iam.kacho.svc:9091" {
+		t.Errorf("Authz.IAM.Addr from ENV: got %q", got)
+	}
+}
+
+func TestLoad_YAMLPlusEnvPrecedence(t *testing.T) {
+	// viper: ENV > config-file. Поднимем YAML с url=postgres://yaml/...,
+	// затем поверх ENV перекроет.
+	yaml := `
+mode: dev
+logger:
+  level: INFO
+api-server:
+  endpoint: tcp://0.0.0.0:9090
+  internal-endpoint: tcp://0.0.0.0:9091
+  graceful-shutdown: 10s
+repository:
+  type: POSTGRES
+  postgres:
+    url: postgres://yaml@host/db
+`
+	t.Setenv("KACHO_NLB_REPOSITORY__POSTGRES__URL", "postgres://env@host/db")
+	cfg, err := Load(writeYAML(t, yaml))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := cfg.Repository.Postgres.URL; got != "postgres://env@host/db" {
+		t.Errorf("ENV must override YAML: got %q", got)
+	}
+}
+
+func TestLoad_MissingRequired_Postgres(t *testing.T) {
+	// Никакого YAML, никакого ENV для url — Validate должен пожаловаться.
+	cfg, err := Load("")
+	if err == nil {
+		t.Fatalf("expected validation error for missing repository.postgres.url, got cfg=%+v", cfg)
+	}
+	if !strings.Contains(err.Error(), "repository.postgres.url") {
+		t.Errorf("error must mention repository.postgres.url, got: %v", err)
+	}
+}
+
+func TestLoad_ConfigFileMissing(t *testing.T) {
+	_, err := Load("/nonexistent/path/config.yaml")
+	if err == nil {
+		t.Fatal("expected error for missing config file, got nil")
+	}
+	if !strings.Contains(err.Error(), "does not exist") {
+		t.Errorf("error must mention 'does not exist', got: %v", err)
+	}
+}
