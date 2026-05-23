@@ -1,0 +1,88 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+# kacho-nlb — polyrepo: go.mod has `replace github.com/PRO-Robotech/kacho-{corelib,proto} => ../...`
+# и Dockerfile COPY ../kacho-corelib и т.п. → CI должен воспроизвести local layout
+# (kacho-workspace/project/{kacho-nlb, kacho-corelib, kacho-proto}). actions/checkout не пускает
+# path вне $GITHUB_WORKSPACE, поэтому main-репо в подкаталог `kacho-nlb/`, siblings рядом.
+# kacho-proto / kacho-corelib чекаутятся без `ref:` (→ main): loadbalancer proto-stubs уже
+# смёржены в kacho-proto/main; NLB id-prefixes (KAC-144) — в kacho-corelib/main.
+# Если появится незакрытая upstream-зависимость — временно вернуть `ref: feat/...` и убрать после merge.
+# См. workspace CLAUDE.md «Кросс-репо…».
+
+defaults:
+  run:
+    working-directory: kacho-nlb
+
+jobs:
+  build-vet-test:
+    name: build + vet + test (unit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with: { path: kacho-nlb }
+      - uses: actions/checkout@v6
+        with: { repository: PRO-Robotech/kacho-corelib, ref: main, path: kacho-corelib }
+      - uses: actions/checkout@v6
+        with: { repository: PRO-Robotech/kacho-proto, ref: main, path: kacho-proto }
+      - uses: actions/setup-go@v6
+        with: { go-version-file: kacho-nlb/go.mod, cache-dependency-path: kacho-nlb/go.sum }
+      - run: go mod download
+      - run: go build ./...
+      - run: go vet ./...
+      - run: go test -race -short -count=1 -timeout 5m ./...
+
+  lint:
+    name: golangci-lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with: { path: kacho-nlb }
+      - uses: actions/checkout@v6
+        with: { repository: PRO-Robotech/kacho-corelib, ref: main, path: kacho-corelib }
+      - uses: actions/checkout@v6
+        with: { repository: PRO-Robotech/kacho-proto, ref: main, path: kacho-proto }
+      - uses: actions/setup-go@v6
+        with: { go-version-file: kacho-nlb/go.mod, cache-dependency-path: kacho-nlb/go.sum }
+      - uses: golangci/golangci-lint-action@v7
+        with:
+          working-directory: kacho-nlb
+          args: --timeout 5m
+
+  govuln:
+    name: govulncheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with: { path: kacho-nlb }
+      - uses: actions/checkout@v6
+        with: { repository: PRO-Robotech/kacho-corelib, ref: main, path: kacho-corelib }
+      - uses: actions/checkout@v6
+        with: { repository: PRO-Robotech/kacho-proto, ref: main, path: kacho-proto }
+      - uses: actions/setup-go@v6
+        with: { go-version-file: kacho-nlb/go.mod, cache-dependency-path: kacho-nlb/go.sum }
+      - run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          "$(go env GOPATH)/bin/govulncheck" ./...
+        continue-on-error: true
+
+  integration:
+    name: integration (testcontainers Postgres)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with: { path: kacho-nlb }
+      - uses: actions/checkout@v6
+        with: { repository: PRO-Robotech/kacho-corelib, ref: main, path: kacho-corelib }
+      - uses: actions/checkout@v6
+        with: { repository: PRO-Robotech/kacho-proto, ref: main, path: kacho-proto }
+      - uses: actions/setup-go@v6
+        with: { go-version-file: kacho-nlb/go.mod, cache-dependency-path: kacho-nlb/go.sum }
+      - run: go mod download
+      - run: go test ./internal/repo/... -race -count=1 -timeout 300s

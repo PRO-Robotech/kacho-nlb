@@ -1,0 +1,19 @@
+name: continuous-fuzz
+
+on:
+  schedule:
+    - cron: '0 4 * * *'  # daily 04:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# TODO(KAC-167): continuous fuzz — corpus в internal/fuzz/ (filter/parse, update_mask,
+# health-check JSONB decode, target identity oneof). Структурно — копия
+# kacho-compute/.github/workflows/continuous-fuzz.yml.
+
+jobs:
+  noop:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "TODO(KAC-167): wire go test -fuzz after internal/fuzz/ corpus is seeded"

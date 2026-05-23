@@ -1,0 +1,19 @@
+name: security-scan
+
+on:
+  schedule:
+    - cron: '0 6 * * 1'  # weekly Mon 06:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+
+# TODO(KAC-169): trivy / gosec / govulncheck weekly scan. Структурно — копия
+# kacho-compute/.github/workflows/security-scan.yml.
+
+jobs:
+  noop:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "TODO(KAC-169): wire trivy/gosec/govulncheck weekly scan"

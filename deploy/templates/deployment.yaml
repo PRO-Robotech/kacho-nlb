@@ -1,0 +1,28 @@
+# TODO(KAC-169): full Deployment manifest with initContainer (migrator) +
+# main container (kacho-loadbalancer serve). Шаблон — копия kacho-compute/deploy/templates/deployment.yaml
+# с адаптацией под два бинаря (initContainer: migrator up, main: kacho-loadbalancer serve)
+# и env-биндинг под viper-delimiter `__` (KACHO_NLB_REPOSITORY__POSTGRES__URL и т.д.).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Values.name }}
+spec:
+  replicas: {{ .Values.replicas }}
+  selector:
+    matchLabels:
+      app: {{ .Values.name }}
+  template:
+    metadata:
+      labels:
+        app: {{ .Values.name }}
+    spec:
+      # TODO(KAC-169): initContainer migrator + main container + probes + env-from-secrets.
+      containers:
+        - name: {{ .Values.name }}
+          image: {{ .Values.image }}
+          imagePullPolicy: {{ .Values.imagePullPolicy }}
+          ports:
+            - name: grpc
+              containerPort: {{ .Values.ports.grpc }}
+            - name: igrpc
+              containerPort: {{ .Values.ports.internalGrpc }}

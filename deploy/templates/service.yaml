@@ -1,0 +1,15 @@
+# TODO(KAC-169): two Services — public (:9090) + internal (:9091).
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Values.name }}
+spec:
+  selector:
+    app: {{ .Values.name }}
+  ports:
+    - name: grpc
+      port: {{ .Values.ports.grpc }}
+      targetPort: grpc
+    - name: igrpc
+      port: {{ .Values.ports.internalGrpc }}
+      targetPort: igrpc

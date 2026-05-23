@@ -1,0 +1,6 @@
+apiVersion: v2
+name: kacho-nlb
+description: L4 Network Load Balancer control-plane (KAC-141)
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

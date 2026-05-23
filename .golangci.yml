@@ -1,0 +1,42 @@
+# golangci-lint config (v2 schema) — стабильный минимум.
+# Структурно совпадает с kacho-compute/.golangci.yml; module-name отличается.
+version: "2"
+
+run:
+  timeout: 3m
+  tests: true
+
+linters:
+  default: none
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - misspell
+    - revive
+    - bodyclose
+    - copyloopvar
+
+  settings:
+    revive:
+      rules:
+        - name: var-naming
+          # acronym-fixes (Ip→IP, Smtp→SMTP, Id→ID) ломают proto-mirror naming
+          # в domain/. Поля обязаны совпадать с proto, не trivially переименуешь.
+        - name: package-comments
+          disabled: true   # CLAUDE.md: "Default to writing no comments"
+        - name: exported
+          disabled: true
+
+  exclusions:
+    rules:
+      - path: internal/domain/
+        linters: [revive]
+      - path: internal/dto/
+        linters: [revive]
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

@@ -1,0 +1,10 @@
+.git
+.github
+bin
+dist
+coverage.out
+tests/newman/out
+tests/k6/*.summary.json
+.idea
+.vscode
+.DS_Store

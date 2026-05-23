@@ -1,0 +1,37 @@
+name: nlb
+replicas: 1
+image: kacho-nlb:dev
+imagePullPolicy: IfNotPresent
+ports:
+  grpc: 9090
+  internalGrpc: 9091
+
+db:
+  host: kacho-umbrella-pg-nlb
+  port: "5432"
+  user: nlb
+  name: kacho_nlb
+  passwordSecretName: kacho-umbrella-pg-nlb
+  passwordSecretKey: password
+
+iamAddr: "kacho-iam.kacho.svc.cluster.local:9090"
+iamInternalAddr: "kacho-iam.kacho.svc.cluster.local:9091"
+vpcAddr: "vpc.kacho.svc.cluster.local:9090"
+vpcInternalAddr: "vpc.kacho.svc.cluster.local:9091"
+computeAddr: "compute.kacho.svc.cluster.local:9090"
+
+# TODO(KAC-169): finalize values + templates after design §7 stabilizes.
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 1000m
+    memory: 512Mi
+
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 3
+  targetCPUUtilizationPercentage: 70

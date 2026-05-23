@@ -1,0 +1,17 @@
+name: newman-e2e
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+# TODO(KAC-167): newman E2E regression — все coverage'ы (NLB/LST/TGR/TGT/OP/AZD).
+# Зависит от поднятого kacho-deploy стенда (kind + helm + Postgres + vpc + compute + iam + api-gateway).
+
+jobs:
+  noop:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "TODO(KAC-167): wire python3 tests/newman/scripts/gen.py + run.sh after kacho-deploy nlb support lands"

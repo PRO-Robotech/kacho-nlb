@@ -1,0 +1,20 @@
+name: docker-build
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+# TODO(KAC-169): docker-build job (multi-stage Dockerfile + push to docker.io/prorobotech
+# per workspace memory feedback-deploy-images-dockerhub-prorobotech). Структурно — копия
+# kacho-compute/.github/workflows/docker-build.yml; tag schema: KAC-<N>-<sha>.
+
+jobs:
+  noop:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "TODO(KAC-169): wire docker build + push (docker.io/prorobotech/kacho-nlb)"
