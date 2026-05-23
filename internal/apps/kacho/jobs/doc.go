@@ -1,12 +1,21 @@
-// Package jobs — фоновые workers сервиса.
+// Package jobs — фоновые workers сервиса kacho-nlb.
 //
-// TODO(KAC-167):
-//   - outbox_drainer.go — потребитель nlb_outbox через kacho-corelib/outbox/drainer.
-//   - fga_tuple_writer.go — обработчик resource-lifecycle event'ов из outbox →
-//     iam.InternalIAMService.WriteCreatorTuple / DeleteTuples (at-least-once).
-//   - target_drain_runner.go — Phase B 2-phase drain (period 10s, DELETE
-//     FROM targets WHERE status='DRAINING' AND drain_started_at < now() -
-//     tg.deregistration_delay_seconds).
+// Запускаются параллельно с gRPC-серверами через
+// H-BF/corlib/pkg/parallel.ExecAbstract (composition root в
+// cmd/kacho-loadbalancer/main.go).
 //
-// Запускаются параллельно с gRPC-серверами через H-BF/corlib/pkg/parallel.ExecAbstract.
+// Реализованные:
+//
+//   - target_drain_runner.go — Phase B 2-phase drain (KAC-159). Периодически
+//     (interval из cfg.Jobs.TargetDrain.Interval, default 10s) делает
+//     `DELETE FROM kacho_nlb.targets WHERE status='DRAINING' AND
+//     drain_started_at < now() - tg.deregistration_delay_seconds` + INSERT
+//     DISTINCT outbox `nlb_target_group:<tg_id> UPDATED`. Логирует каждый
+//     tick (deleted/tgs/took_ms). Transient errors → log + continue;
+//     ctx cancel → штатное завершение.
+//
+// Запланированные (отдельные tracking-issues, не в текущем PR):
+//
+//   - outbox_drainer (kacho-corelib/outbox consumer для D-13 lifecycle stream).
+//   - fga_tuple_writer (обработчик resource-lifecycle событий → iam FGA tuples).
 package jobs
