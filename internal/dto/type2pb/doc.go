@@ -1,13 +1,16 @@
-// Package type2pb — register'ы трансферов domain → proto через init().
+// Package type2pb — реализации DTO трансферов domain/repo → proto (evgeniy §3.C).
 //
-// TODO(KAC-150): per-resource файлы (loadbalancer.go / listener.go / target_group.go /
-// operation.go / timestamp.go) + RegTransfer в init() каждого файла.
+// Per-resource файлы:
 //
-// Тип-сет ограничивает компилятором допустимые пары:
+//	time.go            — time.Time → *timestamppb.Timestamp (truncate to seconds)
+//	loadbalancer.go    — LoadBalancerRecord → *lbv1.NetworkLoadBalancer
+//	listener.go        — ListenerRecord → *lbv1.Listener
+//	target_group.go    — TargetGroupRecord → *lbv1.TargetGroup (incl. inline Targets)
+//	target.go          — TargetRecord → *lbv1.Target (4-way identity oneof)
+//	health_check.go    — domain.HealthCheck → *lbv1.HealthCheck
+//	operation.go       — *opv1.Operation → *opv1.Operation (identity pass-through;
+//	                     зарегистрирован чтобы tests/handlers могли uniform-вызывать
+//	                     dto.Transfer для всех output-типов)
 //
-//	type types2ProtoVariants interface {
-//	    Perform() error
-//	    *dto.DTO[domain.LoadBalancer, *lbv1.NetworkLoadBalancer] |
-//	    *dto.DTO[domain.Listener, *lbv1.Listener] | ...
-//	}
+// init() каждого файла регистрирует трансфер в dto.RegTransfer.
 package type2pb

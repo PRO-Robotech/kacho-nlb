@@ -1,7 +1,10 @@
-// Package dto — мост domain ↔ DB-row (DTO[domain → row] / DTO[row → domain]).
+// Package dto — мост domain ↔ DB-row (LabelsToJSONB / HealthCheckToJSONB / ...).
 //
-// Использует generic DTO Interface из internal/dto/base.go (evgeniy §3.C).
+// Используется pg-impl-репозиторием kacho-nlb (`internal/repo/kacho/pg`) для
+// сериализации labels (jsonb) и health_check (jsonb) при INSERT/UPDATE, и для
+// обратной десериализации при SELECT.
 //
-// TODO(KAC-150): per-resource transfers для loadbalancers / listeners / target_groups
-// / targets / attached_target_groups + JSONB → HealthCheck.
+// Domain-пакет ничего не знает про JSONB-сериализацию (workspace CLAUDE.md
+// «Чистая архитектура»); этот пакет — единственное место, где доменные типы
+// превращаются в JSONB-tape и обратно.
 package dto

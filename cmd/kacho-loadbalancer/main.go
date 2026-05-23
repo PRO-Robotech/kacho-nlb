@@ -37,6 +37,12 @@ import (
 	"github.com/PRO-Robotech/kacho-nlb/internal/apps/kacho/config"
 	"github.com/PRO-Robotech/kacho-nlb/internal/apps/kacho/jobs"
 	"github.com/PRO-Robotech/kacho-nlb/internal/clients"
+	// dto/type2pb init() регистрирует все DTO трансферы (domain ↔ proto) в реестре.
+	// Импортируется здесь (composition root), чтобы registry был полон до старта
+	// gRPC server'ов; handler'ы вызывают dto.Transfer(...) и предполагают, что
+	// каждая зарегистрированная пара уже в map'е.
+	_ "github.com/PRO-Robotech/kacho-nlb/internal/dto/type2pb"
+	kachopg "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho/pg"
 )
 
 func main() {
@@ -90,32 +96,40 @@ func runServe(configPath string) error {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer cancel()
 
-	// pgxpool. TODO(KAC-149): MaxConns / ConnLifetime из cfg.Repository.Postgres
-	// — coredb.NewPool сейчас принимает только DSN; расширить когда понадобится.
+	// pgxpool. MaxConns/ConnLifetime тюнинг live в coredb.NewPool — для
+	// специфичных нагрузок можно передавать config через DSN-параметры.
 	pool, err := coredb.NewPool(ctx, cfg.Repository.Postgres.URL)
 	if err != nil {
 		return fmt.Errorf("open pgxpool: %w", err)
 	}
 	defer pool.Close()
 
+	// CQRS-Repository (KAC-149). master = slave (single-pool dev). Use-case'ы,
+	// зарегистрированные на handler-слое в следующих Wave'ах, получают этот
+	// repo через port-интерфейсы (`internal/repo/kacho.Repository`).
+	repo := kachopg.New(pool, nil)
+	defer repo.Close()
+
 	// Operations LRO repo (общая таблица operations в kacho_nlb schema).
 	opsRepo := operations.NewRepo(pool, "kacho_nlb")
-	_ = opsRepo // TODO(KAC-150): передать в use-cases при их wiring'е.
 
 	// Peer-gRPC clients (corlib client-builder; evgeniy §K.6).
-	// TODO(KAC-151): после реализации vpc_client / compute_client / iam_client
-	// — здесь создаются типизированные клиенты, реализующие port-интерфейсы
-	// из internal/apps/kacho/api/<resource>/.
 	peerConns, err := dialPeers(ctx, cfg, logger)
 	if err != nil {
 		return fmt.Errorf("dial peers: %w", err)
 	}
 	defer closeAll(peerConns, logger)
 
-	// gRPC servers (public :9090 + internal :9091). TODO(KAC-152/KAC-149):
-	// зарегистрировать здесь handler'ы из internal/apps/kacho/api/*.
+	// gRPC servers (public :9090 + internal :9091). Handler-регистрация —
+	// зона ответственности use-case Wave'ов (KAC-152 и далее); сейчас
+	// серверы пусты, но `repo` / `opsRepo` / `peerConns` уже доступны для них.
 	publicSrv := grpcsrv.NewServer()
 	internalSrv := grpcsrv.NewServer()
+	// Sentinel-use чтобы repo/opsRepo не считались "unused" в текущем wave
+	// (handler'ы их потребят при Wave 6/7). Композиционный root уже владеет
+	// и закрывает их — без этого defer-блока ресурсы текли бы.
+	_ = repo
+	_ = opsRepo
 
 	publicListener, err := listenEndpoint(cfg.APIServer.Endpoint)
 	if err != nil {
@@ -227,10 +241,10 @@ func listenEndpoint(endpoint string) (net.Listener, error) {
 
 // dialPeers открывает gRPC connections к vpc/compute/iam через corlib client-builder.
 //
-// Текущая реализация — stub: соединения открываются только если соответствующий
-// addr задан в config; иначе пропускается (graceful dev-startup без peer-сервисов).
-// TODO(KAC-151): после реализации typed peer-clients (vpc_client.go etc.) здесь
-// заворачиваются в port-интерфейсы и пробрасываются в use-cases.
+// Соединения открываются только если соответствующий addr задан в config;
+// иначе пропускается (graceful dev-startup без peer-сервисов). Use-case'ы,
+// которым нужен peer-client, получают conn через port-интерфейс
+// (`internal/apps/kacho/api/<resource>/ports.go`).
 //
 // Внутреннее правило: NLB зовёт peer-сервисы по их **internal-addr** (:9091)
 // напрямую через cluster-internal listener, **не** через api-gateway —
