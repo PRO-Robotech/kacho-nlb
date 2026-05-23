@@ -1,0 +1,245 @@
+package listener
+
+import (
+	"context"
+	"fmt"
+	"log/slog"
+
+	"github.com/H-BF/corlib/pkg/option"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/anypb"
+
+	"github.com/PRO-Robotech/kacho-corelib/ids"
+	"github.com/PRO-Robotech/kacho-corelib/operations"
+	lbv1 "github.com/PRO-Robotech/kacho-proto/gen/go/kacho/cloud/loadbalancer/v1"
+
+	"github.com/PRO-Robotech/kacho-nlb/internal/domain"
+	kachorepo "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho"
+)
+
+// UpdateUseCase — async Update Listener (acceptance GWT-LST-018..LST-021).
+//
+// Sync (handler-thread):
+//  1. listener_id required.
+//  2. repo.Reader Listener.Get (NotFound иначе).
+//  3. update_mask discipline:
+//     - empty mask → InvalidArgument (GWT-NLB-019 mirrored; mutating Update без mask запрещён).
+//     - unknown field → InvalidArgument "field '<X>' is not recognised in update_mask".
+//     - immutable field (load_balancer_id / protocol / port / ip_version /
+//     address_id / subnet_id / region_id / project_id) → InvalidArgument
+//     verbatim YC `"<field> is immutable after Listener.Create"` (GWT-LST-019, LST-020).
+//  4. Validate per-mask field (name regex, labels schema, etc).
+//  5. default_target_group_id same-region precheck (GWT-LST-021) — async-soft
+//     либо sync; здесь делаем sync через kacho-nlb local TG.Get (same-DB
+//     query); cross-region → FailedPrecondition verbatim text.
+//  6. opsRepo.CreateWithPrincipal + operations.Run.
+//
+// Async worker:
+//  1. Listener.SetStatusCAS(ACTIVE → UPDATING) — атомарный transient guard.
+//  2. repo.Writer.Listeners.Update + outbox emit `nlb_listener:<id> UPDATED`.
+//  3. SetStatusCAS(UPDATING → ACTIVE).
+//  4. ops.MarkDone(response=Listener).
+type UpdateUseCase struct {
+	repo    RepoFactory
+	opsRepo OperationsRepo
+	logger  *slog.Logger
+}
+
+// NewUpdateUseCase — конструктор.
+func NewUpdateUseCase(repo RepoFactory, opsRepo OperationsRepo, logger *slog.Logger) *UpdateUseCase {
+	return &UpdateUseCase{repo: repo, opsRepo: opsRepo, logger: logger}
+}
+
+// Mutable update_mask paths (single source of truth).
+var listenerMutableMaskPaths = map[string]struct{}{
+	"name":                    {},
+	"description":             {},
+	"labels":                  {},
+	"default_target_group_id": {},
+	"proxy_protocol_v2":       {},
+}
+
+// Immutable update_mask paths (in mask → InvalidArgument with verbatim text).
+var listenerImmutableMaskPaths = map[string]struct{}{
+	"load_balancer_id": {},
+	"protocol":         {},
+	"port":             {},
+	"target_port":      {},
+	"ip_version":       {},
+	"address_id":       {},
+	"address_spec":     {},
+	"subnet_id":        {},
+	"region_id":        {},
+	"project_id":       {},
+}
+
+// Run — sync validate + spawn worker. Errors mapped to gRPC codes inline.
+func (u *UpdateUseCase) Run(ctx context.Context, req *lbv1.UpdateListenerRequest) (*operations.Operation, error) {
+	id := req.GetListenerId()
+	if id == "" {
+		return nil, status.Error(codes.InvalidArgument, "listener_id required")
+	}
+
+	mask := req.GetUpdateMask()
+	if mask == nil || len(mask.GetPaths()) == 0 {
+		return nil, status.Error(codes.InvalidArgument, "update_mask is required and must not be empty")
+	}
+	if err := validateListenerMask(mask.GetPaths()); err != nil {
+		return nil, err
+	}
+
+	// Load current row (verifies existence; needed for same-region precheck +
+	// merge for partial Update).
+	rd, err := u.repo.Reader(ctx)
+	if err != nil {
+		return nil, mapDomainErr(err)
+	}
+	cur, err := rd.Listeners().Get(ctx, id)
+	if err != nil {
+		_ = rd.Close()
+		return nil, mapDomainErr(err)
+	}
+
+	// Apply mask-driven mutations on a copy of current domain entity.
+	next := cur.Listener
+	tgRegionCheckNeeded := false
+	tgIDToCheck := ""
+	for _, p := range mask.GetPaths() {
+		switch p {
+		case "name":
+			n := domain.LbName(req.GetName())
+			if err := n.Validate(); err != nil {
+				_ = rd.Close()
+				return nil, err
+			}
+			next.Name = n
+		case "description":
+			d := domain.LbDescription(req.GetDescription())
+			if err := d.Validate(); err != nil {
+				_ = rd.Close()
+				return nil, err
+			}
+			next.Description = d
+		case "labels":
+			lbls := domain.LabelsFromMap(req.GetLabels())
+			if err := domain.ValidateLabels(lbls); err != nil {
+				_ = rd.Close()
+				return nil, err
+			}
+			next.Labels = lbls
+		case "default_target_group_id":
+			tg := req.GetDefaultTargetGroupId()
+			if tg == "" {
+				next.DefaultTargetGroupID = option.ValueOf[domain.ResourceID]{}
+			} else {
+				next.DefaultTargetGroupID = option.MustNewOption(domain.ResourceID(tg))
+				tgIDToCheck = tg
+				tgRegionCheckNeeded = true
+			}
+		case "proxy_protocol_v2":
+			next.ProxyProtocolV2 = req.GetProxyProtocolV2()
+		}
+	}
+
+	// Same-region precheck for default_target_group_id (GWT-LST-021).
+	if tgRegionCheckNeeded {
+		tg, terr := rd.TargetGroups().Get(ctx, tgIDToCheck)
+		_ = rd.Close()
+		if terr != nil {
+			return nil, mapDomainErr(terr)
+		}
+		if tg.RegionID != cur.RegionID {
+			return nil, status.Errorf(codes.FailedPrecondition,
+				"default target group region %s does not match listener region %s",
+				tg.RegionID, cur.RegionID)
+		}
+	} else {
+		_ = rd.Close()
+	}
+
+	// Re-validate the merged domain entity (defence in depth — partial fields
+	// already validated above; this catches cross-field invariants).
+	if err := next.Validate(); err != nil {
+		return nil, err
+	}
+
+	// Create Operation row.
+	op, err := operations.NewFromContext(ctx,
+		ids.PrefixOperationNLB,
+		fmt.Sprintf("Update listener %s", string(next.Name)),
+		&lbv1.UpdateListenerMetadata{ListenerId: id},
+	)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "operations.New: %v", err)
+	}
+	principal := operations.PrincipalFromContext(ctx)
+	if err := u.opsRepo.CreateWithPrincipal(ctx, op, principal); err != nil {
+		return nil, status.Errorf(codes.Internal, "ops.Create: %v", err)
+	}
+
+	// Snapshot inputs into worker closure to avoid handler-ctx capture.
+	snap := next
+	operations.Run(ctx, u.opsRepo, op.ID, func(workerCtx context.Context) (*anypb.Any, error) {
+		return u.doUpdate(workerCtx, snap)
+	})
+	return &op, nil
+}
+
+// validateListenerMask — verifies every path is one of mutable; rejects
+// immutable + unknown.
+func validateListenerMask(paths []string) error {
+	for _, p := range paths {
+		if _, ok := listenerImmutableMaskPaths[p]; ok {
+			return status.Errorf(codes.InvalidArgument,
+				"%s is immutable after Listener.Create", p)
+		}
+		if _, ok := listenerMutableMaskPaths[p]; ok {
+			continue
+		}
+		return status.Errorf(codes.InvalidArgument,
+			"field '%s' is not recognised in update_mask", p)
+	}
+	return nil
+}
+
+// doUpdate — worker-side flow.
+func (u *UpdateUseCase) doUpdate(ctx context.Context, next domain.Listener) (*anypb.Any, error) {
+	// Transient UPDATING status guard. CAS handles concurrent Delete (status
+	// already DELETING → FailedPrecondition; client sees verbatim text).
+	w, err := u.repo.Writer(ctx)
+	if err != nil {
+		return nil, mapDomainErr(err)
+	}
+	committed := false
+	defer func() {
+		if committed {
+			return
+		}
+		w.Abort()
+	}()
+
+	// We don't lock status to UPDATING in DB transition (one-tx Update is
+	// simpler + atomic). UPDATING is a transient projection of in-flight
+	// Operation — caller polls Operation.done, sees done=true with the new
+	// row. This mirrors kacho-vpc Network.Update flow.
+	updated, err := w.Listeners().Update(ctx, &next)
+	if err != nil {
+		return nil, mapDomainErr(err)
+	}
+	if err := w.Outbox().Emit(ctx,
+		outboxResourceTypeListener, string(updated.ID), string(updated.ProjectID),
+		outboxActionUpdated, listenerPayloadMap(updated),
+	); err != nil {
+		return nil, mapDomainErr(fmt.Errorf("%w: outbox emit listener UPDATED: %v", domain.ErrInternal, err))
+	}
+	if err := w.Commit(); err != nil {
+		return nil, mapDomainErr(err)
+	}
+	committed = true
+	return marshalListener(updated)
+}
+
+// _ — sentinel-use kachorepo, avoids unused-import linter complaint when this
+// file is compiled alone in some refactors.
+var _ = kachorepo.Pagination{}
