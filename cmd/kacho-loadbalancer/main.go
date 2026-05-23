@@ -25,7 +25,6 @@ import (
 	"time"
 
 	"github.com/H-BF/corlib/pkg/parallel"
-	"github.com/jackc/pgx/v5/pgxpool"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/spf13/cobra"
 	"google.golang.org/grpc"
@@ -36,6 +35,7 @@ import (
 	"github.com/PRO-Robotech/kacho-corelib/operations"
 
 	"github.com/PRO-Robotech/kacho-nlb/internal/apps/kacho/config"
+	"github.com/PRO-Robotech/kacho-nlb/internal/apps/kacho/jobs"
 	"github.com/PRO-Robotech/kacho-nlb/internal/clients"
 )
 
@@ -131,6 +131,11 @@ func runServe(configPath string) error {
 		"internal", internalListener.Addr().String(),
 	)
 
+	// Background jobs (KAC-159): Phase B 2-phase target drain-runner.
+	// Запускается параллельно с gRPC-серверами как 4-й task. Cancel ctx →
+	// штатное завершение Run() → task возвращает nil.
+	drainRunner := jobs.NewTargetDrainRunner(pool, logger, cfg.Jobs.TargetDrain.Interval)
+
 	// Параллельные tasks через corlib parallel.ExecAbstract (evgeniy §K.4):
 	//   - public gRPC server
 	//   - internal gRPC server
@@ -194,6 +199,12 @@ func runServe(configPath string) error {
 					"err", werr, "active", operations.Active())
 			}
 			return nil
+		},
+		// task 3 — Phase B 2-phase target drain-runner (KAC-159).
+		// Tick-loop по `cfg.Jobs.TargetDrain.Interval`; ctx cancel → штатный
+		// exit; transient errors → log + continue (не abort task'а).
+		func() error {
+			return drainRunner.Run(ctx)
 		},
 	}
 	// maxConcurrency = len(tasks)-1: основной goroutine исполняет task[0],
@@ -286,7 +297,3 @@ func closeAll(conns []clients.Conn, logger *slog.Logger) {
 	}
 }
 
-// pgxpoolUnused — sentinel чтобы pgxpool import не считался unused.
-// pgxpool используется coredb.NewPool, поэтому ничего тут не делаем; но
-// import нужен для type-resolution. Удаляется при wire'инге KAC-149.
-var _ *pgxpool.Pool = nil
