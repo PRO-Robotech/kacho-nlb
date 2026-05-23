@@ -29,7 +29,7 @@ func (p *postgresDialect) Up(ctx context.Context, dsn string, fsys fs.FS, dir st
 	if err != nil {
 		return err
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	if err := setupGoose(fsys, p.Spec()); err != nil {
 		return err
@@ -49,7 +49,7 @@ func (p *postgresDialect) Down(ctx context.Context, dsn string, fsys fs.FS, dir 
 	if err != nil {
 		return err
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	if err := setupGoose(fsys, p.Spec()); err != nil {
 		return err
@@ -69,7 +69,7 @@ func (p *postgresDialect) Status(ctx context.Context, dsn string, fsys fs.FS, di
 	if err != nil {
 		return err
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	if err := setupGoose(fsys, p.Spec()); err != nil {
 		return err
