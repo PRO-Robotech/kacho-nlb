@@ -121,7 +121,6 @@ func TestTarget_ExternalIP_Bogon(t *testing.T) {
 		{"broadcast 255.255.255.255 rejected", "255.255.255.255", true},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			tg := domain.Target{

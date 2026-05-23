@@ -43,7 +43,6 @@ func TestTargetGroup_Validate_DeregistrationDelay(t *testing.T) {
 		{"3601 rejected", 3601, true},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			tg := validTG()
@@ -69,7 +68,6 @@ func TestTargetGroup_Validate_SlowStart(t *testing.T) {
 		{"901 rejected", 901, true},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			tg := validTG()

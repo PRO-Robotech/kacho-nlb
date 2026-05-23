@@ -24,7 +24,6 @@ func TestSentinels_IdentityViaIs(t *testing.T) {
 		{"ErrUnavailable", domain.ErrUnavailable},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			wrapped := fmt.Errorf("repo layer: %w", tc.sentinel)

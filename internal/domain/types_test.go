@@ -29,7 +29,6 @@ func TestLbName_Validate(t *testing.T) {
 		{"ends with hyphen rejected", "edge-", true},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			err := tc.value.Validate()
@@ -56,7 +55,6 @@ func TestLbDescription_Validate(t *testing.T) {
 		{"257 multi-byte runes rejected", domain.LbDescription(strings.Repeat("ё", 257)), true},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			err := tc.value.Validate()
@@ -83,7 +81,6 @@ func TestLbLabelKey_Validate(t *testing.T) {
 		{"starts with digit rejected", "1env", true},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			err := tc.value.Validate()
@@ -107,7 +104,6 @@ func TestLbLabelVal_Validate(t *testing.T) {
 		{"64 bytes rejected", domain.LbLabelVal(strings.Repeat("x", 64)), true},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			err := tc.value.Validate()
@@ -183,7 +179,6 @@ func TestLbPort_Validate(t *testing.T) {
 		{"65536 rejected", 65536, true},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			err := tc.value.Validate()
@@ -208,7 +203,6 @@ func TestLbProto_Validate(t *testing.T) {
 		{"empty rejected", "", true},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			err := tc.value.Validate()
@@ -233,7 +227,6 @@ func TestIPVersion_Validate(t *testing.T) {
 		{"unknown rejected", "IPV5", true},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			err := tc.value.Validate()
@@ -260,7 +253,6 @@ func TestIPAddress_Validate(t *testing.T) {
 		{"truncated rejected", "10.0.0", true},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			err := tc.value.Validate()
@@ -285,7 +277,6 @@ func TestLbWeight_Validate(t *testing.T) {
 		{"1001 rejected", 1001, true},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			err := tc.value.Validate()

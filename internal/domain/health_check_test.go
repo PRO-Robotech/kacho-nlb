@@ -94,7 +94,6 @@ func TestHealthCheck_Validate_Interval(t *testing.T) {
 		{"601s rejected (TGR-005)", domain.LbDuration(601 * time.Second), true},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			hc := validHC()
@@ -154,7 +153,6 @@ func TestHealthCheck_Validate_Thresholds(t *testing.T) {
 		{"healthy=11 rejected", 2, 11, true},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			hc := validHC()

@@ -93,7 +93,6 @@ func TestNewDefaultHealthCheck(t *testing.T) {
 		domain.HealthCheckProtoTCP, domain.HealthCheckProtoHTTP,
 		domain.HealthCheckProtoHTTPS, domain.HealthCheckProtoGRPC,
 	} {
-		proto := proto
 		t.Run(string(proto), func(t *testing.T) {
 			t.Parallel()
 			hc := domain.NewDefaultHealthCheck("hc-x", proto, 8080)
@@ -127,7 +126,6 @@ func TestTruncateID(t *testing.T) {
 		{"", ""},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(string(tc.in), func(t *testing.T) {
 			t.Parallel()
 			if got := domain.TruncateID(tc.in); got != tc.want {

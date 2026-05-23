@@ -44,7 +44,6 @@ func TestListener_Validate_PortBoundary(t *testing.T) {
 		{"port=65536 rejected", 65536, true},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			l := validListener()

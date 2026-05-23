@@ -19,7 +19,6 @@ func TestLBType_Validate(t *testing.T) {
 		{"unknown rejected", "PUBLIC", true},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			err := tc.value.Validate()
