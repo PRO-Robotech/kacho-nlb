@@ -25,7 +25,6 @@ import (
 	"time"
 
 	"github.com/H-BF/corlib/pkg/parallel"
-	"github.com/jackc/pgx/v5/pgxpool"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/spf13/cobra"
 	"google.golang.org/grpc"
@@ -35,6 +34,9 @@ import (
 	"github.com/PRO-Robotech/kacho-corelib/observability"
 	"github.com/PRO-Robotech/kacho-corelib/operations"
 
+	operationpb "github.com/PRO-Robotech/kacho-proto/gen/go/kacho/cloud/operation"
+
+	"github.com/PRO-Robotech/kacho-nlb/internal/apps/kacho/api/operation"
 	"github.com/PRO-Robotech/kacho-nlb/internal/apps/kacho/config"
 	"github.com/PRO-Robotech/kacho-nlb/internal/clients"
 )
@@ -90,8 +92,8 @@ func runServe(configPath string) error {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer cancel()
 
-	// pgxpool. TODO(KAC-149): MaxConns / ConnLifetime из cfg.Repository.Postgres
-	// — coredb.NewPool сейчас принимает только DSN; расширить когда понадобится.
+	// pgxpool. MaxConns / ConnLifetime tuning из cfg.Repository.Postgres
+	// расширяется через coredb.NewPool по мере необходимости (см. kacho-corelib/db).
 	pool, err := coredb.NewPool(ctx, cfg.Repository.Postgres.URL)
 	if err != nil {
 		return fmt.Errorf("open pgxpool: %w", err)
@@ -99,8 +101,10 @@ func runServe(configPath string) error {
 	defer pool.Close()
 
 	// Operations LRO repo (общая таблица operations в kacho_nlb schema).
+	// Используется всеми use-case'ами мутирующих RPC через worker'ы
+	// `operations.Run(ctx, opsRepo, opID, fn)` (kacho-corelib pattern) и
+	// напрямую — OperationService.Get/Cancel (см. ниже).
 	opsRepo := operations.NewRepo(pool, "kacho_nlb")
-	_ = opsRepo // TODO(KAC-150): передать в use-cases при их wiring'е.
 
 	// Peer-gRPC clients (corlib client-builder; evgeniy §K.6).
 	// TODO(KAC-151): после реализации vpc_client / compute_client / iam_client
@@ -112,10 +116,19 @@ func runServe(configPath string) error {
 	}
 	defer closeAll(peerConns, logger)
 
-	// gRPC servers (public :9090 + internal :9091). TODO(KAC-152/KAC-149):
-	// зарегистрировать здесь handler'ы из internal/apps/kacho/api/*.
+	// gRPC servers (public :9090 + internal :9091).
+	// Per-resource handler'ы (load_balancer / listener / target_group) подключаются
+	// в follow-up'ах (KAC-153..KAC-157, KAC-158..KAC-160); OperationService —
+	// зарегистрирован здесь как полный end-to-end путь (KAC-155).
 	publicSrv := grpcsrv.NewServer()
 	internalSrv := grpcsrv.NewServer()
+
+	// OperationService (kacho.cloud.operation.OperationService): Get + Cancel.
+	// Public per proto annotation `(kacho.iam.authz.v1.permission) = "<exempt>"`
+	// — оба RPC доступны всем авторизованным subject'ам без per-RPC FGA Check.
+	// List-операций НЕТ на этом сервисе — per-resource history exposed через
+	// `<Resource>Service.ListOperations` (см. internal/apps/kacho/api/operation/handler.go).
+	operationpb.RegisterOperationServiceServer(publicSrv, operation.NewHandler(opsRepo))
 
 	publicListener, err := listenEndpoint(cfg.APIServer.Endpoint)
 	if err != nil {
@@ -286,7 +299,3 @@ func closeAll(conns []clients.Conn, logger *slog.Logger) {
 	}
 }
 
-// pgxpoolUnused — sentinel чтобы pgxpool import не считался unused.
-// pgxpool используется coredb.NewPool, поэтому ничего тут не делаем; но
-// import нужен для type-resolution. Удаляется при wire'инге KAC-149.
-var _ *pgxpool.Pool = nil
