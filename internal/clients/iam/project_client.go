@@ -8,6 +8,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/PRO-Robotech/kacho-corelib/auth"
 	"github.com/PRO-Robotech/kacho-corelib/retry"
 	iampb "github.com/PRO-Robotech/kacho-proto/gen/go/kacho/cloud/iam/v1"
 
@@ -71,6 +72,11 @@ func (c *projectClient) Get(ctx context.Context, projectID string) (*Project, er
 	if projectID == "" {
 		return nil, fmt.Errorf("%w: project_id is empty", domain.ErrInvalidArg)
 	}
+
+	// KAC-178 §2: propagate Principal в outgoing MD, чтобы iam-side ProjectService.Get
+	// passes its per-RPC authz Check (viewer@project) для реального user'а, а не
+	// SystemPrincipal()=user:bootstrap fallback'а.
+	ctx = auth.PropagateOutgoing(ctx)
 
 	var resp *iampb.Project
 	err := retry.OnUnavailable(ctx, func(ctx context.Context) error {

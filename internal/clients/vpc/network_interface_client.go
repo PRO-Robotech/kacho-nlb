@@ -8,6 +8,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/PRO-Robotech/kacho-corelib/auth"
 	"github.com/PRO-Robotech/kacho-corelib/retry"
 	vpcpb "github.com/PRO-Robotech/kacho-proto/gen/go/kacho/cloud/vpc/v1"
 
@@ -66,6 +67,8 @@ func (c *networkInterfaceClient) Get(ctx context.Context, nicID string) (*Networ
 	if nicID == "" {
 		return nil, fmt.Errorf("%w: nic_id is empty", domain.ErrInvalidArg)
 	}
+
+	ctx = auth.PropagateOutgoing(ctx)
 
 	var resp *vpcpb.NetworkInterface
 	if err := retry.OnUnavailable(ctx, func(ctx context.Context) error {

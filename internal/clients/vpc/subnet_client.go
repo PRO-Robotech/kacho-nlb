@@ -8,6 +8,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/PRO-Robotech/kacho-corelib/auth"
 	"github.com/PRO-Robotech/kacho-corelib/retry"
 	vpcpb "github.com/PRO-Robotech/kacho-proto/gen/go/kacho/cloud/vpc/v1"
 
@@ -67,6 +68,8 @@ func (c *subnetClient) Get(ctx context.Context, subnetID string) (*Subnet, error
 	if subnetID == "" {
 		return nil, fmt.Errorf("%w: subnet_id is empty", domain.ErrInvalidArg)
 	}
+
+	ctx = auth.PropagateOutgoing(ctx)
 
 	var resp *vpcpb.Subnet
 	if err := retry.OnUnavailable(ctx, func(ctx context.Context) error {
