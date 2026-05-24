@@ -1,0 +1,367 @@
+name: newman-e2e
+
+# KAC-127 — self-contained Newman E2E authz gate.
+#
+# This workflow brings up a real kind + helm umbrella stack (Postgres + Ory +
+# OpenFGA + api-gateway + iam + vpc + compute) INSIDE this repo's own CI, seeds
+# the shared authz fixtures and runs the kacho-iam Newman authz matrices through
+# the api-gateway REST endpoint.
+#
+# It REPLACES the former `newman-trigger.yml`, which fired a cross-repo
+# `repository_dispatch` at kacho-deploy and required a hand-set
+# `WORKFLOW_DISPATCH_TOKEN` PAT. Without that secret the trigger job was
+# silently skipped, so Newman never actually ran on a PR. This self-contained
+# variant needs NO secrets: it builds + runs the whole stack in one job on a
+# local kind cluster, so the authz matrix is a real blocking gate here.
+#
+# The two suites it gates (kacho-iam/tests/newman/cases/):
+#   - authz-deny        — 6-subject default-deny matrix (288 cases)
+#   - authz-sa-apitoken — ServiceAccount + API-token models 5-6 (30 cases)
+#
+# It is intentionally a SEPARATE workflow from the per-service fast `ci.yaml`
+# (unit + lint + scan) because a full kind bring-up takes 15-30 min — it must
+# not slow the fast feedback loop.
+#
+# Sibling repos are checked out at `ref: main` (KAC-127 merged — the epic pin is
+# gone). The repo under test is checked out at its PR/push ref.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: newman-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  newman-e2e:
+    name: newman E2E (kind + helm umbrella)
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      # The repo under test — checked out at the PR/push ref under test.
+      - uses: actions/checkout@v4
+        with: { path: kacho-nlb }
+
+      # Siblings are needed both as Go build context (Dockerfile COPY ../kacho-*)
+      # and as helm sub-chart sources (umbrella Chart.yaml file:// deps). The
+      # authz fixtures bootstrap lives in kacho-workspace. KAC-127 is merged, so
+      # every sibling is pinned to `main`.
+      - uses: actions/checkout@v4
+        with: { repository: PRO-Robotech/kacho-deploy, ref: main, path: kacho-deploy }
+      - uses: actions/checkout@v4
+        with: { repository: PRO-Robotech/kacho-corelib, ref: main, path: kacho-corelib }
+      - uses: actions/checkout@v4
+        with: { repository: PRO-Robotech/kacho-proto, ref: main, path: kacho-proto }
+      - uses: actions/checkout@v4
+        with: { repository: PRO-Robotech/kacho-vpc, ref: main, path: kacho-vpc }
+      - uses: actions/checkout@v4
+        with: { repository: PRO-Robotech/kacho-iam, ref: main, path: kacho-iam }
+      - uses: actions/checkout@v4
+        with: { repository: PRO-Robotech/kacho-api-gateway, ref: main, path: kacho-api-gateway }
+      - uses: actions/checkout@v4
+        with: { repository: PRO-Robotech/kacho-compute, ref: main, path: kacho-compute }
+      # kacho-workspace carries the shared authz-fixtures bootstrap
+      # (tests/authz-fixtures/setup.sh + setup-jwt.py + patch-env.py).
+      - uses: actions/checkout@v4
+        with: { repository: PRO-Robotech/kacho-workspace, ref: main, path: kacho-workspace }
+      # kacho-ui is a private repo; best-effort checkout (parity with ci.yaml).
+      - uses: actions/checkout@v4
+        continue-on-error: true
+        with: { repository: PRO-Robotech/kacho-ui, ref: main, path: kacho-ui }
+      - name: stub kacho-ui/deploy if checkout was skipped (private repo)
+        working-directory: ${{ github.workspace }}
+        run: |
+          if [ ! -f kacho-ui/deploy/Chart.yaml ]; then
+            mkdir -p kacho-ui/deploy/templates
+            cat >kacho-ui/deploy/Chart.yaml <<'EOF'
+          apiVersion: v2
+          name: ui
+          version: 1.0.0
+          description: stub for CI (real chart in private repo PRO-Robotech/kacho-ui)
+          EOF
+            : >kacho-ui/deploy/values.yaml
+          fi
+
+      - uses: actions/setup-node@v4
+        with: { node-version: '20' }
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - run: npm install -g newman
+
+      # grpcurl — the authz fixture bootstrap upserts test users via the
+      # InternalUserService.UpsertFromIdentity gRPC RPC (no REST mapping, KAC-125).
+      - name: install grpcurl
+        run: |
+          set -euo pipefail
+          GRPCURL_VERSION=1.9.1
+          curl -fsSL -o /tmp/grpcurl.tar.gz \
+            "https://github.com/fullstorydev/grpcurl/releases/download/v${GRPCURL_VERSION}/grpcurl_${GRPCURL_VERSION}_linux_x86_64.tar.gz"
+          sudo tar -xzf /tmp/grpcurl.tar.gz -C /usr/local/bin grpcurl
+          grpcurl --version
+
+      # Build every kacho-* :dev image. Go services build with context = the
+      # workspace root (Dockerfile COPY kacho-corelib / kacho-proto / kacho-<svc>).
+      - name: build service images
+        working-directory: ${{ github.workspace }}
+        run: |
+          set -euo pipefail
+          for svc in vpc iam compute api-gateway nlb; do
+            echo "=== build kacho-$svc:dev ==="
+            docker build -f "kacho-$svc/Dockerfile" -t "kacho-$svc:dev" .
+          done
+          if [ -f kacho-ui/Dockerfile ]; then
+            echo "=== build kacho-ui:dev ==="
+            docker build -t kacho-ui:dev kacho-ui
+          fi
+
+      - uses: helm/kind-action@v1
+        with:
+          config: kacho-deploy/kind/kind-config.yaml
+          cluster_name: kacho
+
+      - name: load images into kind
+        run: |
+          set -euo pipefail
+          for img in kacho-vpc:dev kacho-iam:dev kacho-compute:dev kacho-api-gateway:dev kacho-nlb:dev; do
+            kind load docker-image "$img" --name kacho
+          done
+          docker image inspect kacho-ui:dev >/dev/null 2>&1 \
+            && kind load docker-image kacho-ui:dev --name kacho || true
+
+      - uses: azure/setup-helm@v4
+
+      - name: helm install umbrella
+        working-directory: kacho-deploy
+        run: |
+          set -euo pipefail
+          # gen-tls-cert.sh writes the api-gateway-tls secret into namespace
+          # kacho — create it first.
+          kubectl create namespace kacho --dry-run=client -o yaml | kubectl apply -f -
+          ./scripts/gen-tls-cert.sh || true
+          cd helm/umbrella
+          helm dep update
+          # --wait is intentionally NOT used here: the openfga-bootstrap-job is a
+          # post-install hook that runs AFTER the release converges, and it then
+          # rolling-restarts iam/vpc/compute/api-gateway to pick up the real
+          # OpenFGA store/model id. `helm --wait` would block on the pre-restart
+          # generation. The explicit rollout waits below sequence it correctly.
+          helm upgrade --install kacho-umbrella . -n kacho --create-namespace \
+            -f values.dev.yaml --timeout 20m
+
+      # Phase 1 — wait for the data-plane Deployments + Postgres to converge.
+      - name: wait for core deployments
+        run: |
+          set -euo pipefail
+          echo "=== waiting for Postgres statefulsets ==="
+          for sts in pg-iam pg-vpc pg-compute pg-nlb pg-openfga; do
+            kubectl -n kacho rollout status "statefulset/kacho-umbrella-${sts}" --timeout=6m || true
+          done
+          echo "=== waiting for service Deployments (first generation) ==="
+          for dep in api-gateway kacho-iam vpc compute kacho-nlb; do
+            kubectl -n kacho rollout status "deploy/${dep}" --timeout=8m || true
+          done
+          kubectl -n kacho get pods -o wide || true
+
+      # Phase 2 — wait for the post-install openfga-bootstrap Job to finish. It
+      # writes the real store/model id Secrets and bumps the rolling-restart
+      # annotation on the consumer Deployments.
+      - name: wait for openfga-bootstrap job
+        run: |
+          set -euo pipefail
+          echo "=== waiting for Job/openfga-bootstrap ==="
+          ok=""
+          for i in $(seq 1 60); do
+            if kubectl -n kacho get job openfga-bootstrap >/dev/null 2>&1; then
+              if kubectl -n kacho wait --for=condition=complete job/openfga-bootstrap --timeout=20s >/dev/null 2>&1; then
+                echo "openfga-bootstrap complete"; ok=1; break
+              fi
+              if kubectl -n kacho get job openfga-bootstrap -o jsonpath='{.status.failed}' 2>/dev/null | grep -q '[1-9]'; then
+                echo "openfga-bootstrap reported failures; dumping logs"
+                kubectl -n kacho logs job/openfga-bootstrap --tail=100 || true
+              fi
+            fi
+            echo "waiting for openfga-bootstrap ($i/60)..."; sleep 10
+          done
+          echo "=== openfga-bootstrap logs ==="
+          kubectl -n kacho logs job/openfga-bootstrap --tail=200 || true
+          [ -n "$ok" ] || echo "WARN: openfga-bootstrap did not reach complete — continuing, rollout wait below will surface the real state"
+
+      # Phase 3 — wait for the bootstrap-triggered rolling restart to settle so
+      # the authz suites run against a stack that has the real FGA store/model id.
+      - name: wait for post-bootstrap rollout
+        run: |
+          set -euo pipefail
+          for dep in kacho-iam api-gateway vpc compute kacho-nlb; do
+            echo "=== rollout status (post-bootstrap): $dep ==="
+            kubectl -n kacho rollout status "deploy/${dep}" --timeout=8m || true
+          done
+          kubectl -n kacho get pods -o wide || true
+
+      # Seed the shared authz fixtures and run the kacho-iam authz Newman
+      # suites — both in ONE step.
+      #
+      # Why one step + port-forward (not the ingress): the api-gateway ingress
+      # is annotated `backend-protocol: GRPC`, so nginx speaks HTTP/2-gRPC to
+      # the backend and answers plain HTTP/1.1 REST POSTs with a 308 redirect
+      # (the api-gateway's own cmux port multiplexes REST + gRPC and serves
+      # REST/1.1 fine — only the GRPC-annotated ingress mangles it). Local dev
+      # already reaches the gateway via `kubectl port-forward` for exactly this
+      # reason; CI does the same. Both the api-gateway and kacho-iam-internal
+      # port-forwards must live in the SAME `run:` block as their consumers —
+      # each GitHub Actions step is a fresh shell, so a port-forward
+      # backgrounded in an earlier step is already dead.
+      - name: bootstrap fixtures + run kacho-iam authz newman suites
+        run: |
+          set -euo pipefail
+          kubectl -n kacho port-forward svc/api-gateway 18080:8080 \
+            >/tmp/api-gateway-pf.log 2>&1 &
+          AGW_PF=$!
+          kubectl -n kacho port-forward svc/kacho-iam-internal 19091:9091 \
+            >/tmp/iam-internal-pf.log 2>&1 &
+          IAM_PF=$!
+          trap 'kill "$AGW_PF" "$IAM_PF" 2>/dev/null || true' EXIT
+          for i in $(seq 1 30); do
+            up=1
+            bash -c 'echo > /dev/tcp/127.0.0.1/18080' 2>/dev/null || up=0
+            bash -c 'echo > /dev/tcp/127.0.0.1/19091' 2>/dev/null || up=0
+            [ "$up" = 1 ] && { echo "port-forwards up (:18080 api-gateway, :19091 iam-internal)"; break; }
+            echo "waiting for port-forwards ($i/30)..."; sleep 2
+          done
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:18080/healthz >/dev/null 2>&1; then
+              echo "api-gateway healthz OK"; break
+            fi
+            echo "waiting for api-gateway healthz ($i/30)..."; sleep 5
+          done
+
+          # --- fixtures ---------------------------------------------------
+          # setup.sh patches env files under $WORKSPACE_DIR/project/kacho-*;
+          # the CI layout puts the sibling checkouts directly under
+          # $GITHUB_WORKSPACE — symlink a `project/` view so patch-env.py
+          # finds them.
+          cd "${GITHUB_WORKSPACE}/kacho-workspace"
+          mkdir -p project
+          for s in kacho-iam kacho-vpc kacho-compute kacho-nlb; do
+            [ -e "project/$s" ] || ln -s "${GITHUB_WORKSPACE}/$s" "project/$s"
+          done
+          BASE_URL=http://localhost:18080 \
+          IAM_INTERNAL_GRPC=localhost:19091 \
+          VERBOSE=true \
+          bash tests/authz-fixtures/setup.sh
+          echo "=== authz-fixtures.json ==="
+          cat tests/authz-fixtures/out/authz-fixtures.json
+
+          # --- newman -----------------------------------------------------
+          # First: kacho-iam authz matrix (288 cases authz-deny + 30 cases
+          # authz-sa-apitoken) — validates that nlb correctly wires the FGA
+          # Check interceptor end-to-end with iam-issued tokens.
+          cd "${GITHUB_WORKSPACE}/kacho-iam"
+          python3 tests/newman/scripts/gen.py
+          tests/newman/scripts/run.sh --env-var baseUrl=http://localhost:18080
+
+          # Second: kacho-nlb full RPC × class matrix (~320 cases across
+          # load-balancer / listener / target-group / targets / operation /
+          # authz-deny). Requires deployed stack + seeded fixtures (subnet,
+          # instance, nic, external_address — written into .seeded-ids.env
+          # by kacho-deploy ci-up seed; for local CI we reuse the iam
+          # fixtures since nlb cases use only existingProjectId/RegionId).
+          cd "${GITHUB_WORKSPACE}/kacho-nlb"
+          python3 tests/newman/scripts/gen.py
+          tests/newman/scripts/run.sh --env-var baseUrl=http://localhost:18080
+
+      - name: dump stack logs
+        # `always()` (not `failure()`): newman exits 0 even with failed
+        # assertions — the suite-green verdict is the LATER `assert authz
+        # suites green` step. At this point in the job no step has failed yet,
+        # so `failure()` would skip the dump exactly when the authz matrix is
+        # red. Always dump so the per-resource FGA `no path` diagnostics
+        # (vpc write-side tuple traces, openfga Secrets) are captured.
+        if: always()
+        run: |
+          kubectl -n kacho get pods -o wide || true
+          kubectl -n kacho get events --sort-by=.lastTimestamp | tail -40 || true
+          for d in api-gateway kacho-iam vpc compute kacho-nlb; do
+            echo "=== logs: $d ==="
+            kubectl -n kacho logs "deploy/$d" --tail=200 || true
+            echo "=== describe: $d ==="
+            kubectl -n kacho describe deploy "$d" | tail -40 || true
+          done
+          # The fixture (AccessBinding/Account/... Operations) runs at the very
+          # start of the test step; by the time this dump runs the newman suite
+          # has pushed those lines past --tail=200. Grep the FULL kacho-iam log
+          # for async-operation failures so a masked `internal worker error`
+          # (op-worker hides non-gRPC errors) is still diagnosable.
+          echo "=== kacho-iam: operation / authz failures (full log grep) ==="
+          kubectl -n kacho logs "deploy/kacho-iam" --tail=-1 2>/dev/null \
+            | grep -iE 'operation failed|level":"ERROR|panic|tuple-write failed|authz' \
+            | tail -80 || true
+          # kacho-vpc write-side FGA: each Network/Subnet/... Create publishes a
+          # `vpc_<type>:<id>#project@project:<pid>` hierarchy tuple from its
+          # Operation worker. The fixture's seed-network Creates run at the start
+          # of the test step → past --tail=200; grep the full vpc log so a
+          # nil/disabled FGA writer or a failed tuple-write stays diagnosable.
+          echo "=== kacho-vpc: write-side FGA traces (full log grep) ==="
+          kubectl -n kacho logs "deploy/vpc" --tail=-1 2>/dev/null \
+            | grep -iE 'fga|tuple|openfga|write-side|store_id|model_id|authz|level":"ERROR|operation failed|panic' \
+            | tail -80 || true
+          echo "=== openfga store/model secrets (keys only) ==="
+          kubectl -n kacho get secret kacho-iam-openfga-store openfga-model-id \
+            -o jsonpath='{range .items[*]}{.metadata.name}{": "}{.data}{"\n"}{end}' 2>/dev/null || true
+          echo "=== openfga-bootstrap job logs ==="
+          kubectl -n kacho logs job/openfga-bootstrap --tail=200 || true
+          echo "=== port-forward logs ==="
+          cat /tmp/api-gateway-pf.log 2>/dev/null || true
+          cat /tmp/iam-internal-pf.log 2>/dev/null || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: newman-reports
+          path: |
+            kacho-iam/tests/newman/out/*.json
+            kacho-iam/tests/newman/out/*.cli
+            kacho-iam/tests/newman/out/summary.txt
+            kacho-nlb/tests/newman/out/*.json
+            kacho-nlb/tests/newman/out/*.cli
+            kacho-nlb/tests/newman/out/summary.txt
+            kacho-workspace/tests/authz-fixtures/out/authz-fixtures.json
+          if-no-files-found: ignore
+
+      # Fail the job if any suite recorded a failed assertion (summary.txt
+      # column FAILED). All suites — kacho-iam authz matrix AND kacho-nlb
+      # full RPC matrix — must be 0-failed.
+      - name: assert authz suites green
+        if: always()
+        run: |
+          set -euo pipefail
+          rc=0
+          seen=0
+          for f in kacho-iam/tests/newman/out/summary.txt kacho-nlb/tests/newman/out/summary.txt; do
+            if [ ! -f "$f" ]; then
+              echo "no summary.txt at $f — newman did not run for this suite"
+              rc=1
+              continue
+            fi
+            echo "=== newman summary: $f ==="
+            cat "$f"
+            # summary.txt columns: RESOURCE ASSERT FAILED REQUESTS (header on NR==1).
+            while read -r res assert failed requests; do
+              seen=$((seen+1))
+              if [ "${failed:-0}" -gt 0 ] 2>/dev/null; then
+                echo "$res: $failed FAILED assertions"; rc=1
+              else
+                echo "$res: OK ($assert assertions)"
+              fi
+            done < <(awk 'NR>1 && NF>=4' "$f")
+          done
+          if [ "$seen" -lt 2 ]; then
+            echo "expected 2 authz suites (authz-deny + authz-sa-apitoken), saw $seen"; rc=1
+          fi
+          exit $rc
