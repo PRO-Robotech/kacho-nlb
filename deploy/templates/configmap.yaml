@@ -1,0 +1,91 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "kacho-nlb.configMapName" . }}
+  namespace: {{ .Values.namespace | default .Release.Namespace }}
+  labels:
+    {{- include "kacho-nlb.labels" . | nindent 4 }}
+data:
+  config.yaml: |
+    mode: {{ .Values.config.mode | quote }}
+
+    logger:
+      level: {{ .Values.config.logger.level | quote }}
+
+    api-server:
+      endpoint: tcp://0.0.0.0:{{ .Values.ports.grpc }}
+      internal-endpoint: tcp://0.0.0.0:{{ .Values.ports.internalGrpc }}
+      graceful-shutdown: {{ .Values.config.apiServer.gracefulShutdown }}
+      grpc-gw-enable: {{ .Values.config.apiServer.grpcGwEnable }}
+
+    metrics:
+      enable: true
+    healthcheck:
+      enable: true
+
+    repository:
+      type: POSTGRES
+      postgres:
+        url: {{ include "kacho-nlb.dbDSN" . | quote }}
+        max-conns: 0
+        conn-lifetime: 0s
+        slave-url: ""
+
+    authn:
+      type: {{ .Values.config.authn.type | quote }}
+      {{- with .Values.config.authn.tls }}
+      tls:
+        key-file: {{ .keyFile | quote }}
+        cert-file: {{ .certFile | quote }}
+        client:
+          verify: {{ .client.verify | quote }}
+          ca-files:
+            {{- range .client.caFiles }}
+            - {{ . | quote }}
+            {{- end }}
+      {{- end }}
+
+    extapi:
+      def-dial-duration: 10s
+      vpc:
+        addr: {{ .Values.peers.vpc.addr | quote }}
+        internal-addr: {{ .Values.peers.vpc.internalAddr | quote }}
+        dial-duration: {{ .Values.peers.vpc.dialDuration }}
+        tls: {{ .Values.peers.vpc.tls }}
+      compute:
+        addr: {{ .Values.peers.compute.addr | quote }}
+        internal-addr: {{ .Values.peers.compute.internalAddr | quote }}
+        dial-duration: {{ .Values.peers.compute.dialDuration }}
+        tls: {{ .Values.peers.compute.tls }}
+      iam:
+        addr: {{ .Values.peers.iam.addr | quote }}
+        internal-addr: {{ .Values.peers.iam.internalAddr | quote }}
+        dial-duration: {{ .Values.peers.iam.dialDuration }}
+        tls: {{ .Values.peers.iam.tls }}
+
+    authz:
+      iam:
+        addr: {{ .Values.authz.iam.addr | quote }}
+        dial-deadline: {{ .Values.authz.iam.dialDeadline }}
+        request-timeout: {{ .Values.authz.iam.requestTimeout }}
+      cache:
+        enable: {{ .Values.config.authz.cache.enable }}
+        ttl: {{ .Values.config.authz.cache.ttl }}
+        size: {{ .Values.config.authz.cache.size }}
+      listen-invalidator:
+        enable: {{ .Values.config.authz.listenInvalidator.enable }}
+        channel: {{ .Values.config.authz.listenInvalidator.channel | quote }}
+        iam-dsn: {{ .Values.config.authz.listenInvalidator.iamDsn | quote }}
+      breakglass: {{ .Values.config.authz.breakglass }}
+
+    fga:
+      endpoint: {{ .Values.config.fga.endpoint | quote }}
+      store-id: {{ .Values.config.fga.storeId | quote }}
+      model-id: {{ .Values.config.fga.modelId | quote }}
+      tuple-write:
+        timeout: {{ .Values.config.fga.tupleWrite.timeout }}
+        max-retries: {{ .Values.config.fga.tupleWrite.maxRetries }}
+
+    jobs:
+      target-drain:
+        interval: {{ .Values.config.jobs.targetDrain.interval }}

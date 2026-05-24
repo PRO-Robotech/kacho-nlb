@@ -14,6 +14,7 @@ import (
 	lbv1 "github.com/PRO-Robotech/kacho-proto/gen/go/kacho/cloud/loadbalancer/v1"
 
 	"github.com/PRO-Robotech/kacho-nlb/internal/domain"
+	"github.com/PRO-Robotech/kacho-nlb/internal/fgawrite"
 	kachorepo "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho"
 	kachopg "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho/pg"
 )
@@ -196,30 +197,22 @@ func (u *CreateTargetGroupUseCase) assertNameUnique(ctx context.Context, project
 	return nil
 }
 
-// emitHierarchyTuples — D-11 sync hierarchy writes. nil writer = no-op.
-// Failure → log only (TG row already committed; subscriber D-13 backfills).
+// emitHierarchyTuples — D-11 sync hierarchy writes. Delegates to the shared
+// `internal/fgawrite` helper (best-effort, non-fatal: TG row already committed;
+// subscriber D-13 backfills any tuple-write hiccups).
 func (u *CreateTargetGroupUseCase) emitHierarchyTuples(
 	ctx context.Context, tg *kachorepo.TargetGroupRecord, principal operations.Principal,
 ) {
-	if u.fgaWriter == nil {
+	if tg == nil {
 		return
 	}
 	logger := loggerOrDiscard(u.logger).With(
 		"tg_id", string(tg.ID),
 		"project_id", string(tg.ProjectID),
 	)
-	// project → object (hierarchy).
-	if err := u.fgaWriter.RewriteProjectTuple(ctx,
-		fgaObjectTypeTargetGroup, string(tg.ID), "", string(tg.ProjectID),
-	); err != nil {
-		logger.Warn("tg create: hierarchy project tuple write failed", "err", err)
-	}
-	// creator → object (owner) — only if authenticated.
-	if subj := subjectFromCtx(principal); subj != "" {
-		obj := fgaObjectTypeTargetGroup + ":" + string(tg.ID)
-		if err := u.fgaWriter.WriteCreatorTuple(ctx, subj, fgaRelationOwner, obj); err != nil {
-			logger.Warn("tg create: hierarchy creator tuple write failed",
-				"subject", subj, "err", err)
-		}
-	}
+	fgawrite.EmitProjectRewrite(ctx, u.fgaWriter, logger,
+		fgawrite.ObjectTypeTargetGroup, string(tg.ID), "", string(tg.ProjectID))
+	fgawrite.EmitCreator(ctx, u.fgaWriter, logger,
+		fgawrite.SubjectFromPrincipal(principal),
+		fgawrite.RelationOwner, fgawrite.ObjectTypeTargetGroup, string(tg.ID))
 }

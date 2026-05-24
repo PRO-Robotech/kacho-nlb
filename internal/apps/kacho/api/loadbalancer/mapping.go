@@ -116,12 +116,4 @@ func errInvalidArg(field, msg string) error {
 	return status.Errorf(codes.InvalidArgument, "%s: %s", field, msg)
 }
 
-// subjectFromCtx — FGA subject string из Principal в ctx. "" если system/no-auth
-// (use-case fall-back'нёт на legacy unfiltered behaviour либо пропустит D-11).
-func subjectFromCtx(p operations.Principal) string {
-	if p.Type == "" || p.ID == "" || p.Type == "system" {
-		return ""
-	}
-	return p.Type + ":" + p.ID
-}
 

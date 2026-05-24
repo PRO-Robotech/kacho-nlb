@@ -17,6 +17,7 @@ import (
 
 	vpcclient "github.com/PRO-Robotech/kacho-nlb/internal/clients/vpc"
 	"github.com/PRO-Robotech/kacho-nlb/internal/domain"
+	"github.com/PRO-Robotech/kacho-nlb/internal/fgawrite"
 	kachorepo "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho"
 )
 
@@ -74,11 +75,11 @@ func TestCreateListener_GWT_LST_001_AutoExternal_HappyPath(t *testing.T) {
 	require.Len(t, suite.fga.creatorCalls, 2)
 	creator := suite.fga.creatorCalls[0]
 	require.Equal(t, "user:test-actor", creator.Subject)
-	require.Equal(t, fgaRelationOwner, creator.Relation)
-	require.Contains(t, creator.Object, fgaObjectTypeListener+":")
+	require.Equal(t, fgawrite.RelationOwner, creator.Relation)
+	require.Contains(t, creator.Object, fgawrite.ObjectTypeListener+":")
 	parent := suite.fga.creatorCalls[1]
-	require.Equal(t, fgaObjectTypeLoadBalancer+":"+string(suite.lb.ID), parent.Subject)
-	require.Equal(t, fgaRelationLoadBalancer, parent.Relation)
+	require.Equal(t, fgawrite.ObjectTypeLoadBalancer+":"+string(suite.lb.ID), parent.Subject)
+	require.Equal(t, fgawrite.RelationLoadBalancer, parent.Relation)
 }
 
 // TestCreateListener_GWT_LST_002_BYO_HappyPath — BYO address_id: AddressService.Get

@@ -1,27 +1,134 @@
-name: nlb
+# ─── Workload identity / image ────────────────────────────────────────────────
+name: kacho-nlb
+namespace: kacho
 replicas: 1
-image: kacho-nlb:dev
-imagePullPolicy: IfNotPresent
+
+image:
+  repository: docker.io/prorobotech/kacho-nlb
+  tag: ""          # defaults to .Chart.AppVersion via _helpers.tpl
+  pullPolicy: IfNotPresent
+imagePullSecrets: []   # e.g. [{ name: registry-creds }]
+
+# Override labels merged into all generated objects.
+extraLabels: {}
+# Annotations merged into the Deployment pod template.
+podAnnotations: {}
+
+# ─── Ports ────────────────────────────────────────────────────────────────────
 ports:
-  grpc: 9090
-  internalGrpc: 9091
+  grpc: 9090            # public gRPC (clients → api-gateway → here)
+  internalGrpc: 9091    # cluster-internal gRPC (peer services + Watch)
+  metrics: 9101         # Prometheus /metrics
 
+# ─── Service account / RBAC ───────────────────────────────────────────────────
+serviceAccount:
+  # Set false to skip creating a SA and bind to an existing one via .name.
+  create: true
+  # If unset, defaults to .Values.name.
+  name: ""
+  annotations: {}
+
+rbac:
+  # Minimal RBAC: kacho-nlb only reads its own ConfigMap + Secret. Disabled by
+  # default because most clusters give SAs read-access automatically; flip to
+  # true for strict pod-security clusters.
+  create: false
+
+# ─── Pod-level security ──────────────────────────────────────────────────────
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: ["ALL"]
+
+# ─── Config (mounted at /etc/kacho-nlb/config.yaml) ───────────────────────────
+config:
+  mode: production            # dev | production (controls config-validation strictness)
+  logger:
+    level: INFO               # FATAL | ERROR | WARN | INFO | DEBUG
+  apiServer:
+    gracefulShutdown: 10s
+    grpcGwEnable: false       # gRPC-gateway lives in kacho-api-gateway
+  authn:
+    type: none                # none | tls
+    # When type=tls fill these:
+    # tls:
+    #   keyFile: /etc/kacho-nlb/tls/tls.key
+    #   certFile: /etc/kacho-nlb/tls/tls.crt
+    #   client:
+    #     verify: skip        # skip | certs-required | verify
+    #     caFiles: []
+  authz:
+    cache:
+      enable: true
+      ttl: 5s
+      size: 10000
+    listenInvalidator:
+      enable: false
+      channel: kacho_iam_subjects
+      iamDsn: ""              # required when listenInvalidator.enable=true
+    breakglass: false         # production validation forbids true
+  fga:
+    endpoint: ""              # OpenFGA HTTP/gRPC endpoint (empty → tuple-write disabled)
+    storeId: ""
+    modelId: ""
+    tupleWrite:
+      timeout: 2s
+      maxRetries: 3
+  jobs:
+    targetDrain:
+      interval: 10s
+
+# ─── Database (PostgreSQL `kacho_nlb` schema) ─────────────────────────────────
 db:
-  host: kacho-umbrella-pg-nlb
-  port: "5432"
-  user: nlb
+  host: kacho-pg-nlb
+  port: 5432
+  user: kacho_nlb
   name: kacho_nlb
-  passwordSecretName: kacho-umbrella-pg-nlb
-  passwordSecretKey: password
+  # `sslmode` and `search_path` are appended automatically in the helper.
+  sslmode: disable
+  # Either set `existingSecret` to bind an out-of-chart Secret, or let the chart
+  # create one from `password` (the latter is dev-only — do NOT commit a real
+  # password to values.yaml).
+  existingSecret: ""
+  existingSecretKey: password
+  password: ""                # ignored when existingSecret is set
 
-iamAddr: "kacho-iam.kacho.svc.cluster.local:9090"
-iamInternalAddr: "kacho-iam.kacho.svc.cluster.local:9091"
-vpcAddr: "vpc.kacho.svc.cluster.local:9090"
-vpcInternalAddr: "vpc.kacho.svc.cluster.local:9091"
-computeAddr: "compute.kacho.svc.cluster.local:9090"
+# ─── Peer services (gRPC) ─────────────────────────────────────────────────────
+peers:
+  iam:
+    addr: ""                                                  # ProjectService (public)
+    internalAddr: kacho-iam.kacho.svc.cluster.local:9091      # InternalIAMService + ProjectService
+    tls: false
+    dialDuration: 10s
+  vpc:
+    addr: kacho-vpc.kacho.svc.cluster.local:9090              # AddressService / SubnetService
+    internalAddr: kacho-vpc.kacho.svc.cluster.local:9091      # InternalAddressService
+    tls: false
+    dialDuration: 10s
+  compute:
+    addr: kacho-compute.kacho.svc.cluster.local:9090          # RegionService / InstanceService
+    internalAddr: ""
+    tls: false
+    dialDuration: 10s
 
-# TODO(KAC-169): finalize values + templates after design §7 stabilizes.
+# Authz gRPC endpoint — usually kacho-iam internal listener. Required when
+# config.mode = production.
+authz:
+  iam:
+    addr: kacho-iam.kacho.svc.cluster.local:9091
+    dialDeadline: 3s
+    requestTimeout: 500ms
 
+# ─── Resource requests/limits + probes ────────────────────────────────────────
 resources:
   requests:
     cpu: 100m
@@ -30,8 +137,53 @@ resources:
     cpu: 1000m
     memory: 512Mi
 
+probes:
+  readiness:
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    timeoutSeconds: 3
+    failureThreshold: 3
+  liveness:
+    initialDelaySeconds: 15
+    periodSeconds: 30
+    timeoutSeconds: 5
+    failureThreshold: 3
+
+# ─── Migrator init-container ─────────────────────────────────────────────────
+migrator:
+  enable: true
+  # By default reuses .Values.image; override only when migrator ships as a
+  # separate image.
+  image:
+    repository: ""
+    tag: ""
+
+# ─── Autoscaling (HPA) ───────────────────────────────────────────────────────
 autoscaling:
   enabled: false
   minReplicas: 1
-  maxReplicas: 3
+  maxReplicas: 5
   targetCPUUtilizationPercentage: 70
+
+# ─── NetworkPolicy ───────────────────────────────────────────────────────────
+networkPolicy:
+  enable: true
+  # Selector that matches kacho-api-gateway pods (allowed to reach :9090).
+  apiGatewayPodSelector:
+    matchLabels:
+      app: kacho-api-gateway
+  # Selector(s) matching peer services allowed to reach :9091 (internal).
+  internalPodSelector:
+    matchLabels:
+      kacho.io/peer: "true"
+  # Allow Prometheus to scrape :9101.
+  metricsPodSelector:
+    matchLabels:
+      app.kubernetes.io/name: prometheus
+
+# ─── ServiceMonitor (Prometheus Operator) ────────────────────────────────────
+serviceMonitor:
+  enable: false
+  interval: 30s
+  scrapeTimeout: 10s
+  labels: {}                  # extra labels for the ServiceMonitor object

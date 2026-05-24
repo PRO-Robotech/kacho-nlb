@@ -15,6 +15,7 @@ import (
 	lbv1 "github.com/PRO-Robotech/kacho-proto/gen/go/kacho/cloud/loadbalancer/v1"
 
 	"github.com/PRO-Robotech/kacho-nlb/internal/domain"
+	"github.com/PRO-Robotech/kacho-nlb/internal/fgawrite"
 	kachorepo "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho"
 	kachopg "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho/pg"
 )
@@ -211,29 +212,23 @@ func (u *CreateLoadBalancerUseCase) assertNameUnique(ctx context.Context, projec
 	return nil
 }
 
-// emitHierarchyTuples — D-11 sync write tuple-ов. nil writer = no-op (dev mode).
-// Failure → log only (row already committed; subscriber D-13 backfills).
+// emitHierarchyTuples — D-11 sync write tuple-ов. Delegates to the shared
+// `internal/fgawrite` helper (best-effort, non-fatal: row already committed;
+// subscriber D-13 backfills any tuple-write hiccups).
 func (u *CreateLoadBalancerUseCase) emitHierarchyTuples(
 	ctx context.Context, lb *kachorepo.LoadBalancerRecord, principal operations.Principal,
 ) {
-	if u.fgaWriter == nil {
+	if lb == nil {
 		return
 	}
-	object := fmt.Sprintf("nlb_load_balancer:%s", lb.ID)
+	logger := u.logger.With("lb_id", string(lb.ID), "project_id", string(lb.ProjectID))
 	// project → object (hierarchy).
-	if err := u.fgaWriter.RewriteProjectTuple(ctx,
-		"nlb_load_balancer", string(lb.ID), "", string(lb.ProjectID),
-	); err != nil {
-		u.logger.Warn("nlb create: hierarchy project tuple write failed",
-			"lb_id", lb.ID, "project_id", lb.ProjectID, "err", err)
-	}
+	fgawrite.EmitProjectRewrite(ctx, u.fgaWriter, logger,
+		fgawrite.ObjectTypeLoadBalancer, string(lb.ID), "", string(lb.ProjectID))
 	// creator → object (owner).
-	if subj := subjectFromCtx(principal); subj != "" {
-		if err := u.fgaWriter.WriteCreatorTuple(ctx, subj, "owner", object); err != nil {
-			u.logger.Warn("nlb create: hierarchy creator tuple write failed",
-				"lb_id", lb.ID, "subject", subj, "err", err)
-		}
-	}
+	fgawrite.EmitCreator(ctx, u.fgaWriter, logger,
+		fgawrite.SubjectFromPrincipal(principal),
+		fgawrite.RelationOwner, fgawrite.ObjectTypeLoadBalancer, string(lb.ID))
 }
 
 // ---- Helpers ----

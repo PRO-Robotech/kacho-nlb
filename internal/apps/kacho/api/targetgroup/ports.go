@@ -45,9 +45,6 @@ type SubnetClient = vpcclient.SubnetClient
 // sync hierarchy tuple emit после Create / Move worker commit.
 type HierarchyWriter = iamclient.HierarchyWriter
 
-// FGA object-types (design §6.1, parity с listener/load_balancer).
-const (
-	fgaObjectTypeTargetGroup = "nlb_target_group"
-	fgaRelationOwner         = "owner"
-	fgaRelationProject       = "project"
-)
+// FGA object-types / relations — moved to `internal/fgawrite` (single source of
+// truth, kacho-nlb-wide). Use `fgawrite.ObjectTypeTargetGroup`,
+// `fgawrite.RelationOwner`, `fgawrite.RelationProject`.

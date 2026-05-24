@@ -7,6 +7,7 @@ import (
 
 	iamclient "github.com/PRO-Robotech/kacho-nlb/internal/clients/iam"
 	vpcclient "github.com/PRO-Robotech/kacho-nlb/internal/clients/vpc"
+	"github.com/PRO-Robotech/kacho-nlb/internal/fgawrite"
 	kachorepo "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho"
 )
 
@@ -52,12 +53,9 @@ func addressOwner(listenerID string) vpcclient.AddressOwner {
 // `used_by` (design §4.2 «owner="nlb_listener:<id>"`).
 const addressOwnerKindNLBListener = "nlb_listener"
 
-// fgaObjectTypeListener / fgaObjectTypeLoadBalancer — FGA object type strings
-// (design §6.1).
-const (
-	fgaObjectTypeListener     = "nlb_listener"
-	fgaObjectTypeLoadBalancer = "nlb_load_balancer"
-)
+// FGA object-type strings — moved to `internal/fgawrite` (single source of
+// truth, kacho-nlb-wide). Use `fgawrite.ObjectTypeListener` /
+// `fgawrite.ObjectTypeLoadBalancer`.
 
 // outboxResourceTypeListener / outboxResourceTypeLoadBalancer — resource_type
 // в `nlb_outbox` (design §3.9; ограничено CHECK CONSTRAINT в миграции 0001).
@@ -74,12 +72,8 @@ const (
 	outboxActionFailed  = "FAILED"
 )
 
-// fgaRelationOwner / fgaRelationLoadBalancer — predicate FGA-relations
-// для creator / parent tuples (design §6.1 — Listener inherits from LB).
-const (
-	fgaRelationOwner        = "owner"
-	fgaRelationLoadBalancer = "load_balancer"
-)
+// FGA relation strings — moved to `internal/fgawrite`. Use
+// `fgawrite.RelationOwner` / `fgawrite.RelationLoadBalancer`.
 
 // permissionsCtxAccessor — port для извлечения acting subject FGA-id из ctx.
 // На E0 (без auth-interceptor) возвращает "" → creator tuple не пишется
@@ -95,11 +89,9 @@ type permissionsCtxAccessor interface {
 // иначе "" — anonymous/system, creator tuple не пишется.
 type principalSubjectAccessor struct{}
 
-// SubjectFromContext — см. permissionsCtxAccessor.
+// SubjectFromContext — см. permissionsCtxAccessor. Delegates to
+// `fgawrite.SubjectFromPrincipal` so the subject-string format stays in one
+// place across LB/Listener/TG.
 func (principalSubjectAccessor) SubjectFromContext(ctx context.Context) string {
-	p := operations.PrincipalFromContext(ctx)
-	if p.Type == "" || p.ID == "" || p.Type == "system" {
-		return ""
-	}
-	return p.Type + ":" + p.ID
+	return fgawrite.SubjectFromPrincipal(operations.PrincipalFromContext(ctx))
 }

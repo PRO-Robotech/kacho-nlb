@@ -1,28 +1,118 @@
-# TODO(KAC-169): full Deployment manifest with initContainer (migrator) +
-# main container (kacho-loadbalancer serve). Шаблон — копия kacho-compute/deploy/templates/deployment.yaml
-# с адаптацией под два бинаря (initContainer: migrator up, main: kacho-loadbalancer serve)
-# и env-биндинг под viper-delimiter `__` (KACHO_NLB_REPOSITORY__POSTGRES__URL и т.д.).
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ .Values.name }}
+  name: {{ include "kacho-nlb.fullname" . }}
+  namespace: {{ .Values.namespace | default .Release.Namespace }}
+  labels:
+    {{- include "kacho-nlb.labels" . | nindent 4 }}
 spec:
+  {{- if not .Values.autoscaling.enabled }}
   replicas: {{ .Values.replicas }}
+  {{- end }}
   selector:
     matchLabels:
-      app: {{ .Values.name }}
+      {{- include "kacho-nlb.selectorLabels" . | nindent 6 }}
   template:
     metadata:
       labels:
-        app: {{ .Values.name }}
+        {{- include "kacho-nlb.selectorLabels" . | nindent 8 }}
+      annotations:
+        # Roll pods when ConfigMap content changes.
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
     spec:
-      # TODO(KAC-169): initContainer migrator + main container + probes + env-from-secrets.
+      serviceAccountName: {{ include "kacho-nlb.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+
+      {{- if .Values.migrator.enable }}
+      initContainers:
+        # Run goose migrations to head before the main container starts.
+        # Single-shot; pod hangs / restarts on non-zero exit (intentional —
+        # never start a kacho-nlb pod against a stale schema).
+        - name: migrate
+          image: {{ include "kacho-nlb.migratorImage" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["/usr/local/bin/migrator"]
+          args: ["--config", "/etc/kacho-nlb/config.yaml", "up"]
+          env:
+            - name: KACHO_NLB_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "kacho-nlb.dbSecretName" . }}
+                  key: {{ include "kacho-nlb.dbSecretKey" . }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/kacho-nlb
+              readOnly: true
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 128Mi
+      {{- end }}
+
       containers:
         - name: {{ .Values.name }}
-          image: {{ .Values.image }}
-          imagePullPolicy: {{ .Values.imagePullPolicy }}
+          image: {{ include "kacho-nlb.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["/usr/local/bin/kacho-loadbalancer", "serve"]
+          args: ["--config", "/etc/kacho-nlb/config.yaml"]
+          env:
+            - name: KACHO_NLB_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "kacho-nlb.dbSecretName" . }}
+                  key: {{ include "kacho-nlb.dbSecretKey" . }}
           ports:
             - name: grpc
               containerPort: {{ .Values.ports.grpc }}
+              protocol: TCP
             - name: igrpc
               containerPort: {{ .Values.ports.internalGrpc }}
+              protocol: TCP
+            - name: metrics
+              containerPort: {{ .Values.ports.metrics }}
+              protocol: TCP
+          readinessProbe:
+            tcpSocket:
+              port: grpc
+            initialDelaySeconds: {{ .Values.probes.readiness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.probes.readiness.periodSeconds }}
+            timeoutSeconds: {{ .Values.probes.readiness.timeoutSeconds }}
+            failureThreshold: {{ .Values.probes.readiness.failureThreshold }}
+          livenessProbe:
+            tcpSocket:
+              port: grpc
+            initialDelaySeconds: {{ .Values.probes.liveness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.probes.liveness.periodSeconds }}
+            timeoutSeconds: {{ .Values.probes.liveness.timeoutSeconds }}
+            failureThreshold: {{ .Values.probes.liveness.failureThreshold }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/kacho-nlb
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "kacho-nlb.configMapName" . }}
+        # /tmp must be writable for short-lived buffers even with readOnlyRootFilesystem.
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi

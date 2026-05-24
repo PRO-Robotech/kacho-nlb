@@ -13,6 +13,7 @@ import (
 	"github.com/PRO-Robotech/kacho-corelib/operations"
 	lbv1 "github.com/PRO-Robotech/kacho-proto/gen/go/kacho/cloud/loadbalancer/v1"
 
+	"github.com/PRO-Robotech/kacho-nlb/internal/fgawrite"
 	kachopg "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho/pg"
 )
 
@@ -157,13 +158,8 @@ func (u *MoveTargetGroupUseCase) doMove(ctx context.Context, id, srcProject, dst
 		return nil, mapDomainErr(err)
 	}
 
-	if u.fgaWriter != nil {
-		if err := u.fgaWriter.RewriteProjectTuple(ctx,
-			fgaObjectTypeTargetGroup, id, srcProject, dstProject,
-		); err != nil {
-			loggerOrDiscard(u.logger).Warn("tg move: hierarchy rewrite failed",
-				"tg_id", id, "src", srcProject, "dst", dstProject, "err", err)
-		}
-	}
+	fgawrite.EmitProjectRewrite(ctx, u.fgaWriter,
+		loggerOrDiscard(u.logger).With("tg_id", id),
+		fgawrite.ObjectTypeTargetGroup, id, srcProject, dstProject)
 	return marshalTargetGroup(moved)
 }

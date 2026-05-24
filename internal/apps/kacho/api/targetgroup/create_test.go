@@ -14,6 +14,7 @@ import (
 
 	lbv1 "github.com/PRO-Robotech/kacho-proto/gen/go/kacho/cloud/loadbalancer/v1"
 
+	"github.com/PRO-Robotech/kacho-nlb/internal/fgawrite"
 	kachopg "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho/pg"
 )
 
@@ -249,5 +250,5 @@ func TestCreate_EmitsHierarchyTuples(t *testing.T) {
 	require.NotEmpty(t, fga.rewriteCalls, "project tuple write expected")
 	require.NotEmpty(t, fga.creatorCalls, "creator tuple write expected")
 	require.Contains(t, fga.creatorCalls[0], "user:alice")
-	require.Contains(t, fga.creatorCalls[0], fgaRelationOwner)
+	require.Contains(t, fga.creatorCalls[0], fgawrite.RelationOwner)
 }
