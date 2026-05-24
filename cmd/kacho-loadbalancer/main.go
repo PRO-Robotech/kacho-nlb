@@ -40,6 +40,7 @@ import (
 	lbhandler "github.com/PRO-Robotech/kacho-nlb/internal/apps/kacho/api/loadbalancer"
 	"github.com/PRO-Robotech/kacho-nlb/internal/apps/kacho/api/listener"
 	"github.com/PRO-Robotech/kacho-nlb/internal/apps/kacho/api/operation"
+	"github.com/PRO-Robotech/kacho-nlb/internal/apps/kacho/api/targetgroup"
 	"github.com/PRO-Robotech/kacho-nlb/internal/apps/kacho/config"
 	"github.com/PRO-Robotech/kacho-nlb/internal/apps/kacho/jobs"
 	"github.com/PRO-Robotech/kacho-nlb/internal/clients"
@@ -195,6 +196,19 @@ func runServe(configPath string) error {
 		peers.Hierarchy,
 		logger,
 	))
+
+	// TargetGroupService (KAC-153 + KAC-154): 9 публичных RPC: Get/List/Create/
+	// Update/Delete/Move/AddTargets/RemoveTargets/ListOperations. Phase B drain
+	// (DELETE expired DRAINING targets) выполняется отдельным background-runner'ом
+	// (см. drainRunner ниже). Зарегистрирован ТОЛЬКО на publicSrv.
+	tgHandler := targetgroup.NewHandler(
+		repo, opsRepo,
+		peers.Project, peers.Region,
+		peers.Instance, peers.NetworkInterface, peers.Subnet,
+		peers.Hierarchy,
+		logger,
+	)
+	lbv1.RegisterTargetGroupServiceServer(publicSrv, tgHandler)
 
 	publicListener, err := listenEndpoint(cfg.APIServer.Endpoint)
 	if err != nil {

@@ -1,4 +1,177 @@
 package targetgroup
 
-// TODO(KAC-162): UpdateTargetGroupUseCase + UpdateMask discipline; HC-changes immutable
-// в текущей фазе (design §2.2).
+import (
+	"context"
+	"fmt"
+	"log/slog"
+
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/anypb"
+
+	"github.com/PRO-Robotech/kacho-corelib/ids"
+	"github.com/PRO-Robotech/kacho-corelib/operations"
+	lbv1 "github.com/PRO-Robotech/kacho-proto/gen/go/kacho/cloud/loadbalancer/v1"
+
+	"github.com/PRO-Robotech/kacho-nlb/internal/domain"
+	kachopg "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho/pg"
+)
+
+// UpdateTargetGroupUseCase — UpdateMask discipline + async update
+// (acceptance GWT-TGR-018..GWT-TGR-020).
+//
+// Mutable: name / description / labels / health_check / deregistration_delay_seconds /
+// slow_start_seconds. Immutable: project_id / region_id (mask → InvalidArgument).
+// Targets — отдельная семантика через AddTargets/RemoveTargets; mask=["targets"]
+// → InvalidArgument verbatim (GWT-TGR-020).
+type UpdateTargetGroupUseCase struct {
+	repo    Repo
+	opsRepo OpsRepo
+	logger  *slog.Logger
+}
+
+// NewUpdateTargetGroupUseCase конструктор.
+func NewUpdateTargetGroupUseCase(repo Repo, opsRepo OpsRepo, logger *slog.Logger) *UpdateTargetGroupUseCase {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	return &UpdateTargetGroupUseCase{repo: repo, opsRepo: opsRepo, logger: logger}
+}
+
+// knownUpdateFieldsTG — whitelist update_mask fields.
+var knownUpdateFieldsTG = map[string]bool{
+	"name":                         true,
+	"description":                  true,
+	"labels":                       true,
+	"health_check":                 true,
+	"deregistration_delay_seconds": true,
+	"slow_start_seconds":           true,
+}
+
+// immutableUpdateFieldsTG — hard-immutable, verbatim error text.
+var immutableUpdateFieldsTG = map[string]string{
+	"project_id": "project_id is immutable; use TargetGroupService.Move",
+	"region_id":  "region_id is immutable after TargetGroup.Create",
+}
+
+// Execute — sync mask validation + read existing → apply diff → ops insert + worker.
+func (u *UpdateTargetGroupUseCase) Execute(
+	ctx context.Context, req *lbv1.UpdateTargetGroupRequest,
+) (*operations.Operation, error) {
+	id := req.GetTargetGroupId()
+	if id == "" {
+		return nil, errInvalidArg("target_group_id", "required")
+	}
+	mask := req.GetUpdateMask().GetPaths()
+	for _, p := range mask {
+		// GWT-TGR-020: targets via mask запрещён — отдельный verbatim text.
+		if p == "targets" {
+			return nil, status.Error(codes.InvalidArgument,
+				"targets must be modified via AddTargets / RemoveTargets")
+		}
+		if msg, ok := immutableUpdateFieldsTG[p]; ok {
+			return nil, status.Errorf(codes.InvalidArgument, "%s", msg)
+		}
+		if !knownUpdateFieldsTG[p] {
+			return nil, status.Errorf(codes.InvalidArgument, "unknown update_mask field: %s", p)
+		}
+	}
+
+	// Read current state.
+	rd, err := u.repo.Reader(ctx)
+	if err != nil {
+		return nil, mapDomainErr(err)
+	}
+	cur, err := rd.TargetGroups().Get(ctx, id)
+	_ = rd.Close()
+	if err != nil {
+		return nil, mapDomainErr(err)
+	}
+
+	updated := applyUpdateMaskTG(cur.TargetGroup, req, mask)
+	if err := updated.Validate(); err != nil {
+		return nil, mapDomainErr(err)
+	}
+
+	// Operation row.
+	op, err := operations.NewFromContext(ctx,
+		ids.PrefixOperationNLB,
+		fmt.Sprintf("Update TargetGroup %s", id),
+		&lbv1.UpdateTargetGroupMetadata{TargetGroupId: id},
+	)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "build operation: %v", err)
+	}
+	principal := operations.PrincipalFromContext(ctx)
+	if err := u.opsRepo.CreateWithPrincipal(ctx, op, principal); err != nil {
+		return nil, status.Errorf(codes.Internal, "operation persist: %v", err)
+	}
+
+	operations.Run(ctx, u.opsRepo, op.ID, func(workerCtx context.Context) (*anypb.Any, error) {
+		return u.doUpdate(workerCtx, updated)
+	})
+	return &op, nil
+}
+
+// doUpdate — worker: Writer-TX → Update + outbox UPDATED → Commit.
+func (u *UpdateTargetGroupUseCase) doUpdate(ctx context.Context, tg domain.TargetGroup) (*anypb.Any, error) {
+	w, err := u.repo.Writer(ctx)
+	if err != nil {
+		return nil, mapDomainErr(err)
+	}
+	defer w.Abort()
+
+	updated, err := w.TargetGroups().Update(ctx, &tg)
+	if err != nil {
+		return nil, mapDomainErr(err)
+	}
+	if err := w.Outbox().Emit(ctx,
+		kachopg.OutboxResourceTargetGroup, string(updated.ID), string(updated.ProjectID),
+		kachopg.OutboxActionUpdated, tgOutboxPayload(updated),
+	); err != nil {
+		return nil, mapDomainErr(err)
+	}
+	if err := w.Commit(); err != nil {
+		return nil, mapDomainErr(err)
+	}
+	return marshalTargetGroup(updated)
+}
+
+// applyUpdateMaskTG — наложить mask на текущий TG. Empty mask → full PATCH:
+// mutable полностью перезаписываются из req; immutable silent-ignored
+// (verbatim YC; explicit immutable field в mask уже отлавливается выше).
+func applyUpdateMaskTG(
+	cur domain.TargetGroup, req *lbv1.UpdateTargetGroupRequest, mask []string,
+) domain.TargetGroup {
+	apply := func(field string) bool {
+		if len(mask) == 0 {
+			return true
+		}
+		for _, p := range mask {
+			if p == field {
+				return true
+			}
+		}
+		return false
+	}
+	out := cur
+	if apply("name") {
+		out.Name = domain.LbName(req.GetName())
+	}
+	if apply("description") {
+		out.Description = domain.LbDescription(req.GetDescription())
+	}
+	if apply("labels") {
+		out.Labels = domain.LabelsFromMap(req.GetLabels())
+	}
+	if apply("health_check") && req.GetHealthCheck() != nil {
+		out.HealthCheck = healthCheckFromPb(req.GetHealthCheck())
+	}
+	if apply("deregistration_delay_seconds") {
+		out.DeregistrationDelaySeconds = req.GetDeregistrationDelaySeconds()
+	}
+	if apply("slow_start_seconds") {
+		out.SlowStartSeconds = req.GetSlowStartSeconds()
+	}
+	return out
+}
