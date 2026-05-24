@@ -57,7 +57,7 @@ func TestObjectTypeConstants(t *testing.T) {
 
 func TestRelationConstants(t *testing.T) {
 	t.Parallel()
-	require.Equal(t, "owner", RelationOwner)
+	require.Equal(t, "admin", RelationOwner)
 	require.Equal(t, "project", RelationProject)
 	require.Equal(t, "load_balancer", RelationLoadBalancer)
 }
