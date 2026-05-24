@@ -1,0 +1,25 @@
+{
+  "_comment": "Default field values merged under scenario runtime overrides. Override wins. Edit to tune defaults without touching JS.",
+  "defaults": {
+    "createNLB": {
+      "type": "EXTERNAL",
+      "deletion_protection": false,
+      "allow_zonal_shift": false,
+      "labels": { "env": "loadtest", "owner": "k6" }
+    },
+    "createListener": {
+      "protocol": "TCP",
+      "port": 80,
+      "target_port": 8080,
+      "ip_version": "IPV4",
+      "proxy_protocol_v2": false,
+      "labels": { "env": "loadtest" }
+    },
+    "createTG": {
+      "deregistration_delay_seconds": 30,
+      "slow_start_seconds": 0,
+      "labels": { "env": "loadtest" }
+    },
+    "attachTG": {}
+  }
+}
