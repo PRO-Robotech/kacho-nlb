@@ -9,6 +9,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/PRO-Robotech/kacho-corelib/auth"
 	"github.com/PRO-Robotech/kacho-corelib/authz"
 	"github.com/PRO-Robotech/kacho-corelib/retry"
 	iampb "github.com/PRO-Robotech/kacho-proto/gen/go/kacho/cloud/iam/v1"
@@ -67,6 +68,10 @@ func (c *checkClient) Check(ctx context.Context, subjectID, relation, object str
 	case object == "":
 		return false, fmt.Errorf("%w: object is empty", domain.ErrInvalidArg)
 	}
+
+	// KAC-178 §1 follow-up (W1.4): outgoing ctx wrap with auth.PropagateOutgoing
+	// so iam-side UnaryPrincipalExtract sees real caller (not SystemPrincipal()).
+	ctx = auth.PropagateOutgoing(ctx)
 
 	var resp *iampb.CheckResponse
 	err := retry.OnUnavailable(ctx, func(ctx context.Context) error {
