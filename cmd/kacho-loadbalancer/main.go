@@ -38,6 +38,7 @@ import (
 	lbv1 "github.com/PRO-Robotech/kacho-proto/gen/go/kacho/cloud/loadbalancer/v1"
 
 	lbhandler "github.com/PRO-Robotech/kacho-nlb/internal/apps/kacho/api/loadbalancer"
+	"github.com/PRO-Robotech/kacho-nlb/internal/apps/kacho/api/listener"
 	"github.com/PRO-Robotech/kacho-nlb/internal/apps/kacho/api/operation"
 	"github.com/PRO-Robotech/kacho-nlb/internal/apps/kacho/config"
 	"github.com/PRO-Robotech/kacho-nlb/internal/apps/kacho/jobs"
@@ -152,10 +153,10 @@ func runServe(configPath string) error {
 		return fmt.Errorf("dial peers: %w", err)
 	}
 	defer closeAll(peerConns, logger)
-	// peers — типизированные clients потребляются handler'ами (NLB / Listener /
-	// TG). Композиционный root владеет gRPC-conn'ами и закрывает их через defer
-	// выше — peers держит ссылки на stub'ы поверх этих conn'ов, отдельного
-	// Close() не требуется. Listener / TG handler'ы — Wave 7 (KAC-156..158).
+	// peers — типизированные clients потребляются handler'ами (NLB / Listener
+	// — wired ниже; TG handler — Wave 7). Композиционный root владеет gRPC-conn'ами
+	// и закрывает их через defer выше — peers держит ссылки на stub'ы поверх этих
+	// conn'ов, отдельного Close() не требуется.
 
 	// gRPC servers (public :9090 + internal :9091).
 	// OperationService зарегистрирован здесь как полный end-to-end путь (KAC-155).
@@ -171,17 +172,29 @@ func runServe(configPath string) error {
 	// `<Resource>Service.ListOperations` (см. internal/apps/kacho/api/operation/handler.go).
 	operationpb.RegisterOperationServiceServer(publicSrv, operation.NewHandler(opsRepo))
 
-	// NetworkLoadBalancerService (KAC-151 Wave 6). 12 публичных RPC: Get/List/
-	// Create/Update/Delete/Start/Stop/Move/AttachTargetGroup/DetachTargetGroup/
+	// NetworkLoadBalancerService (KAC-151). 12 публичных RPC: Get/List/Create/
+	// Update/Delete/Start/Stop/Move/AttachTargetGroup/DetachTargetGroup/
 	// GetTargetStates/ListOperations. Зарегистрирован ТОЛЬКО на publicSrv —
-	// workspace CLAUDE.md «Запреты» #6 (Internal.* живут на internalSrv;
-	// здесь ничего internal-only нет).
+	// workspace CLAUDE.md «Запреты» #6 (Internal.* живут на internalSrv).
 	lbHandler := lbhandler.NewHandler(
 		repo, opsRepo,
 		peers.Project, peers.Region, peers.Hierarchy,
 		logger,
 	)
 	lbv1.RegisterNetworkLoadBalancerServiceServer(publicSrv, lbHandler)
+
+	// ListenerService (KAC-152): Get/List/Create/Update/Delete/ListOperations.
+	// Peer-clients (vpc Address / InternalAddress / Subnet, iam HierarchyWriter)
+	// допускают nil — Create/Delete вернут Unavailable если peer не сконфигурирован.
+	lbv1.RegisterListenerServiceServer(publicSrv, listener.NewHandler(
+		repo,
+		opsRepo,
+		peers.Address,
+		peers.InternalAddress,
+		peers.Subnet,
+		peers.Hierarchy,
+		logger,
+	))
 
 	publicListener, err := listenEndpoint(cfg.APIServer.Endpoint)
 	if err != nil {

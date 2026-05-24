@@ -22,9 +22,16 @@ const (
 
 // Address — projection ресурса kacho-vpc.Address, ограниченная полями
 // необходимыми consumer'ам NLB (Listener BYO attach + Get on Listener.Delete).
+//
+// Name — output-only поле, заполняется adapter'ом из `vpc.Address.name`.
+// NLB Delete worker использует его для эвристики "BYO vs auto-alloc" (auto-
+// alloc Address всегда создан с детерминированным именем `nlb-listener-<short-id>`;
+// BYO Address имеет любое другое имя, заданное tenant'ом). Без этого поля Delete-
+// branch было бы неотличимо.
 type Address struct {
 	ID        string
 	ProjectID string
+	Name      string
 	Value     string // IP в строковой форме (resolved)
 	Family    string // AddressFamilyIPv4 | AddressFamilyIPv6
 	External  bool
@@ -88,6 +95,7 @@ func (c *addressClient) Get(ctx context.Context, addressID string) (*Address, er
 	addr := &Address{
 		ID:        resp.GetId(),
 		ProjectID: resp.GetProjectId(),
+		Name:      resp.GetName(),
 	}
 	switch {
 	case resp.GetExternalIpv4Address() != nil:
