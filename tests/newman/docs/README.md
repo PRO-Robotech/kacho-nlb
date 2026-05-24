@@ -1,11 +1,16 @@
-# kacho-nlb newman regression — TODO
+# `docs/` — newman regression documentation
 
-Декларативный генератор: `cases/*.py` (источник истины) → `scripts/gen.py` →
-`collections/*.postman_collection.json` (не править руками) → `scripts/run.sh`
-выполняет newman.
+| File | Purpose |
+|---|---|
+| `TAXONOMY.md` | Case-id grammar, test classes, priorities, folder layout |
+| `CASES-INDEX.md` | Catalogue of every unique case pattern — enforced by `validate-cases.py` |
+| `TEST-PLAN.md` | RPC × class coverage matrix; design-invariant coverage table |
+| `PRODUCT-REQUIREMENTS.md` | Normative `REQ-*` specifications mapped to cases and GWT scenarios |
+| `RESULTS.md` | Latest per-suite pass/fail counters; updated after every CI run |
 
-Case-id prefixes: `NLB-*` / `LST-*` / `TGR-*` / `TGT-*` / `OP-*` / `AZD-*`.
+When adding a new case or changing the contract:
 
-TODO(KAC-167): копировать инфраструктуру из `../../kacho-compute/tests/newman/`
-(scripts/{gen.py,run.sh}, environments/local.postman_environment.json, docs/...)
-и адаптировать под NLB resource-set.
+1. If it introduces a **new pattern** → add a row to `CASES-INDEX.md` (and a `REQ-*` in `PRODUCT-REQUIREMENTS.md` if applicable).
+2. If it's an **instance of an existing pattern** → tag the `id=...` line in
+   the case file with `# index: <pattern-ref>` (no catalogue change needed).
+3. `validate-cases.py` enforces both rules and prevents duplicate case-ids.

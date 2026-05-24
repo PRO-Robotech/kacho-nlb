@@ -45,3 +45,19 @@ migrate-status:
 .PHONY: run
 run: build-api
 	bin/$(BINARY_API) serve
+
+# ---- Newman regression -----------------------------------------------------
+
+.PHONY: gen-newman test-newman test-newman-incremental validate-newman
+
+gen-newman:
+	cd tests/newman && python3 scripts/gen.py
+
+validate-newman:
+	cd tests/newman && python3 scripts/validate-cases.py
+
+test-newman: gen-newman
+	cd tests/newman && ./scripts/run.sh
+
+test-newman-incremental: gen-newman
+	cd tests/newman && ./scripts/run-incremental.sh
