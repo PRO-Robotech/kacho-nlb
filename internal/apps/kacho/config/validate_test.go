@@ -55,6 +55,7 @@ func minimalValidConfig() Config {
 		Jobs: JobsConfig{
 			TargetDrain: TargetDrainConfig{Interval: 10 * time.Second},
 		},
+		InternalLifecycle: InternalLifecycleConfig{MaxStreams: 32},
 	}
 }
 
@@ -176,6 +177,27 @@ func TestValidate_JobsTargetDrainIntervalNegative(t *testing.T) {
 	err := cfg.Validate()
 	if err == nil || !strings.Contains(err.Error(), "jobs.target-drain.interval") {
 		t.Fatalf("expected target-drain.interval error, got %v", err)
+	}
+}
+
+// TestValidate_InternalLifecycleMaxStreamsZero — KAC-157: max-streams=0 rejected
+// (нулевой лимит = kacho-iam не сможет подключиться).
+func TestValidate_InternalLifecycleMaxStreamsZero(t *testing.T) {
+	cfg := minimalValidConfig()
+	cfg.InternalLifecycle.MaxStreams = 0
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "internal-lifecycle.max-streams") {
+		t.Fatalf("expected internal-lifecycle.max-streams error, got %v", err)
+	}
+}
+
+// TestValidate_InternalLifecycleMaxStreamsNegative — defense vs negative.
+func TestValidate_InternalLifecycleMaxStreamsNegative(t *testing.T) {
+	cfg := minimalValidConfig()
+	cfg.InternalLifecycle.MaxStreams = -1
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "internal-lifecycle.max-streams") {
+		t.Fatalf("expected internal-lifecycle.max-streams error, got %v", err)
 	}
 }
 

@@ -67,4 +67,10 @@ func RegisterDefaults(v *viper.Viper) {
 	// target-drain: Phase B 2-phase drain runner (KAC-159). 10s — компромисс
 	// между latency удаления expired targets и нагрузкой на БД.
 	v.SetDefault("jobs.target-drain.interval", "10s")
+
+	// InternalLifecycle (KAC-157, D-13 stream к kacho-iam).
+	// 32 одновременных стрима — достаточно для одного-двух iam-pod'ов (по
+	// одному стриму на pod, обычно), с запасом на дублирование при rollout
+	// и admin-tooling. Каждый стрим = +1 dedicated pgx.Conn к Postgres.
+	v.SetDefault("internal-lifecycle.max-streams", 32)
 }
