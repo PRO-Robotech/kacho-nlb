@@ -460,17 +460,30 @@ func dialPeers(
 
 	peers := &peerClients{}
 
-	// kacho-iam — один conn на internal listener.
-	iamAddr := firstNonEmpty(cfg.ExtAPI.IAM.InternalAddr, cfg.ExtAPI.IAM.Addr)
-	iamConn, err := dialOne("iam", iamAddr, cfg.ExtAPI.IAM.TLS)
+	// kacho-iam — два conn'а:
+	//   - PUBLIC (9090): ProjectService.Get — публичный RPC.
+	//   - INTERNAL (9091): InternalIAMService.{Check,WriteCreatorTuple} —
+	//     internal-only admin RPC, registered только на internal listener.
+	// KAC-178 §2 follow-up: до этого split'а оба клиента шли на INTERNAL,
+	// что для ProjectService давало Unimplemented → "project lookup failed".
+	iamPublicAddr := firstNonEmpty(cfg.ExtAPI.IAM.Addr, cfg.ExtAPI.IAM.InternalAddr)
+	iamPublicConn, err := dialOne("iam-public", iamPublicAddr, cfg.ExtAPI.IAM.TLS)
 	if err != nil {
 		closeAll(conns, logger)
 		return nil, nil, err
 	}
-	if iamConn != nil {
-		peers.Project = iamclient.NewProjectClient(iamConn)
-		peers.Check = iamclient.NewCheckClient(iamConn)
-		peers.Hierarchy = iamclient.NewHierarchyWriter(iamConn)
+	iamInternalAddr := firstNonEmpty(cfg.ExtAPI.IAM.InternalAddr, cfg.ExtAPI.IAM.Addr)
+	iamInternalConn, err := dialOne("iam-internal", iamInternalAddr, cfg.ExtAPI.IAM.TLS)
+	if err != nil {
+		closeAll(conns, logger)
+		return nil, nil, err
+	}
+	if iamPublicConn != nil {
+		peers.Project = iamclient.NewProjectClient(iamPublicConn)
+	}
+	if iamInternalConn != nil {
+		peers.Check = iamclient.NewCheckClient(iamInternalConn)
+		peers.Hierarchy = iamclient.NewHierarchyWriter(iamInternalConn)
 	}
 
 	// kacho-compute — один conn на public listener (Region/Zone/Instance — публичные).
