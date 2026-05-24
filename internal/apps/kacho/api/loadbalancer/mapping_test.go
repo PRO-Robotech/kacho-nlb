@@ -67,13 +67,6 @@ func TestOperationToProto(t *testing.T) {
 	require.Equal(t, "usr-x", pb.GetPrincipalId())
 }
 
-func TestSubjectFromCtx(t *testing.T) {
-	t.Parallel()
-	require.Equal(t, "user:usr-x", subjectFromCtx(operations.Principal{Type: "user", ID: "usr-x"}))
-	require.Equal(t, "", subjectFromCtx(operations.Principal{Type: "system", ID: "bootstrap"}))
-	require.Equal(t, "", subjectFromCtx(operations.Principal{}))
-}
-
 func TestPeerErrToStatus(t *testing.T) {
 	t.Parallel()
 	cases := []struct {

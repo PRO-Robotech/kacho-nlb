@@ -13,6 +13,7 @@ import (
 	"github.com/PRO-Robotech/kacho-corelib/operations"
 	lbv1 "github.com/PRO-Robotech/kacho-proto/gen/go/kacho/cloud/loadbalancer/v1"
 
+	"github.com/PRO-Robotech/kacho-nlb/internal/fgawrite"
 	kachopg "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho/pg"
 )
 
@@ -149,14 +150,9 @@ func (u *MoveLoadBalancerUseCase) doMove(ctx context.Context, id, srcProject, ds
 	}
 
 	// FGA rewrite (best-effort).
-	if u.fgaWriter != nil {
-		if err := u.fgaWriter.RewriteProjectTuple(ctx,
-			"nlb_load_balancer", id, srcProject, dstProject,
-		); err != nil {
-			u.logger.Warn("nlb move: hierarchy rewrite failed",
-				"lb_id", id, "src", srcProject, "dst", dstProject, "err", err)
-		}
-	}
+	fgawrite.EmitProjectRewrite(ctx, u.fgaWriter,
+		u.logger.With("lb_id", id),
+		fgawrite.ObjectTypeLoadBalancer, id, srcProject, dstProject)
 
 	pb, err := lbRecordToProto(moved)
 	if err != nil {

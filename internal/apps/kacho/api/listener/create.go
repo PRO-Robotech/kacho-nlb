@@ -15,8 +15,9 @@ import (
 	"github.com/PRO-Robotech/kacho-corelib/operations"
 	lbv1 "github.com/PRO-Robotech/kacho-proto/gen/go/kacho/cloud/loadbalancer/v1"
 
-	"github.com/PRO-Robotech/kacho-nlb/internal/domain"
 	vpcclient "github.com/PRO-Robotech/kacho-nlb/internal/clients/vpc"
+	"github.com/PRO-Robotech/kacho-nlb/internal/domain"
+	"github.com/PRO-Robotech/kacho-nlb/internal/fgawrite"
 )
 
 // CreateUseCase инициирует создание Listener'а (acceptance GWT-LST-001..LST-015).
@@ -474,38 +475,28 @@ func (u *CreateUseCase) compensateVIP(ctx context.Context, listenerID domain.Res
 	logger.Info("listener.Create compensation FreeIP ok")
 }
 
-// emitHierarchyTuples — best-effort D-11 sync:
+// emitHierarchyTuples — best-effort D-11 sync emit:
 //
-//	nlb_listener:<id> #owner @<subject>                        (creator)
-//	nlb_listener:<id> #load_balancer @nlb_load_balancer:<lb_id>  (parent)
+//	nlb_listener:<id> #owner @<subject>                          (creator)
+//	nlb_listener:<id> #load_balancer @nlb_load_balancer:<lb_id>  (parent-link)
 //
-// nil hierarchyWriter or empty subject → tuple skipped (dev mode / unauthenticated).
+// Delegates to the shared `internal/fgawrite` helper (single source of truth
+// for FGA emission across LB/Listener/TG). nil hierarchyWriter or empty
+// subject → tuple skipped (dev mode / unauthenticated); failure → logged,
+// listener row already durable.
 func (u *CreateUseCase) emitHierarchyTuples(ctx context.Context, listenerID, lbID domain.ResourceID, subject string) {
-	if u.hierarchyWriter == nil {
-		return
-	}
 	logger := loggerOrDiscard(u.logger).With(
 		"listener_id", string(listenerID),
 		"lb_id", string(lbID),
 	)
-	if subject != "" {
-		obj := fgaObjectTypeListener + ":" + string(listenerID)
-		if err := u.hierarchyWriter.WriteCreatorTuple(ctx, subject, fgaRelationOwner, obj); err != nil {
-			logger.Warn("listener creator-tuple write failed", "err", err, "subject", subject)
-		}
-	} else {
-		logger.Debug("listener creator-tuple skipped (no subject)")
-	}
-	// Parent-link tuple: <subject> = nlb_load_balancer:<lb_id>; relation =
-	// load_balancer; object = nlb_listener:<id>. Используем WriteCreatorTuple,
-	// потому что Internal IAMService.WriteCreatorTuple — единственный универсальный
-	// tuple-writer (текущее ограничение proto-поверхности; см. iam/hierarchy_client.go
-	// doc).
-	parentSubject := fgaObjectTypeLoadBalancer + ":" + string(lbID)
-	parentObj := fgaObjectTypeListener + ":" + string(listenerID)
-	if err := u.hierarchyWriter.WriteCreatorTuple(ctx, parentSubject, fgaRelationLoadBalancer, parentObj); err != nil {
-		logger.Warn("listener parent-link tuple write failed", "err", err)
-	}
+	// Creator tuple (skipped silently if subject == "").
+	fgawrite.EmitCreator(ctx, u.hierarchyWriter, logger,
+		subject, fgawrite.RelationOwner, fgawrite.ObjectTypeListener, string(listenerID))
+	// Parent-link tuple: nlb_load_balancer:<lb_id> #load_balancer @nlb_listener:<id>.
+	fgawrite.EmitParentLink(ctx, u.hierarchyWriter, logger,
+		fgawrite.ObjectTypeLoadBalancer, string(lbID),
+		fgawrite.RelationLoadBalancer,
+		fgawrite.ObjectTypeListener, string(listenerID))
 }
 
 // familyForIPVersion → vpcclient.AddressFamilyIPv4/IPv6.

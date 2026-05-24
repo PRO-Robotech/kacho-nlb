@@ -142,14 +142,6 @@ func tgRecordToProto(rec *kachorepo.TargetGroupRecord) (*lbv1.TargetGroup, error
 	return dst, nil
 }
 
-// subjectFromCtx — FGA-subject из Principal в ctx. "" если system/no-auth.
-func subjectFromCtx(p operations.Principal) string {
-	if p.Type == "" || p.ID == "" || p.Type == "system" {
-		return ""
-	}
-	return p.Type + ":" + p.ID
-}
-
 // errsIs — internal alias на `errors.Is` (хелпер для удобства внутри пакета,
 // чтобы избежать дополнительного import-блока в add_targets.go).
 func errsIs(err, target error) bool {
