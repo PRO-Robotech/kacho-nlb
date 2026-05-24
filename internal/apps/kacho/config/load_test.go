@@ -96,6 +96,9 @@ func TestLoad_DefaultsApplied(t *testing.T) {
 	if cfg.FGA.TupleWrite.Timeout != 2*time.Second {
 		t.Errorf("default FGA.TupleWrite.Timeout: got %v", cfg.FGA.TupleWrite.Timeout)
 	}
+	if cfg.InternalLifecycle.MaxStreams != 32 {
+		t.Errorf("default InternalLifecycle.MaxStreams: got %d, want 32", cfg.InternalLifecycle.MaxStreams)
+	}
 }
 
 func TestLoad_EnvOverride(t *testing.T) {
