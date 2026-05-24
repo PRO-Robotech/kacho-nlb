@@ -29,6 +29,7 @@ import (
 	"github.com/spf13/cobra"
 	"google.golang.org/grpc"
 
+	"github.com/PRO-Robotech/kacho-corelib/authz"
 	coredb "github.com/PRO-Robotech/kacho-corelib/db"
 	"github.com/PRO-Robotech/kacho-corelib/grpcsrv"
 	"github.com/PRO-Robotech/kacho-corelib/observability"
@@ -43,6 +44,7 @@ import (
 	"github.com/PRO-Robotech/kacho-nlb/internal/apps/kacho/api/targetgroup"
 	"github.com/PRO-Robotech/kacho-nlb/internal/apps/kacho/config"
 	"github.com/PRO-Robotech/kacho-nlb/internal/apps/kacho/jobs"
+	"github.com/PRO-Robotech/kacho-nlb/internal/check"
 	"github.com/PRO-Robotech/kacho-nlb/internal/clients"
 	computeclient "github.com/PRO-Robotech/kacho-nlb/internal/clients/compute"
 	iamclient "github.com/PRO-Robotech/kacho-nlb/internal/clients/iam"
@@ -159,12 +161,51 @@ func runServe(configPath string) error {
 	// и закрывает их через defer выше — peers держит ссылки на stub'ы поверх этих
 	// conn'ов, отдельного Close() не требуется.
 
+	// FGA Check interceptor (KAC-156). Per-RPC Check через
+	// `iam.InternalIAMService.Check` + positive-cache (TTL 5s) +
+	// pg_notify-driven invalidation (kacho_iam_subjects).
+	//
+	// В dev-mode (без peer.iam) caller передаёт Breakglass=true в config'е —
+	// взамен Check'ов выдаёт WARN allow для аутентифицированных principal'ов.
+	// Anonymous всё равно denied (KAC-122 CRIT-6/7 fix). Production-mode
+	// config-validation rejects breakglass=true (см. config/validate.go).
+	//
+	// authzCache отдаётся отдельно (а не только через interceptor) чтобы
+	// ListenInvalidator (task 4 ниже) делил с interceptor'ом один экземпляр —
+	// pg_notify-driven invalidations применяются к тому же cache.
+	authzIntr, authzCache, err := check.NewInterceptor(check.Options{
+		ServiceName:         "kacho-nlb",
+		IAMCheck:            peers.Check,
+		Breakglass:          cfg.Authz.Breakglass,
+		Logger:              logger,
+		CheckTimeout:        cfg.Authz.IAM.RequestTimeout,
+		CacheTTL:            cfg.Authz.Cache.TTL,
+		CacheSize:           cfg.Authz.Cache.Size,
+		DenyRateLimitPerSec: 100, // I10 default; tunable в будущем config-поле.
+	})
+	if err != nil {
+		return fmt.Errorf("build authz interceptor: %w", err)
+	}
+
 	// gRPC servers (public :9090 + internal :9091).
 	// OperationService зарегистрирован здесь как полный end-to-end путь (KAC-155).
 	// Per-resource handler'ы (load_balancer / listener / target_group) подключаются
 	// в Wave 6+ (KAC-151..154, KAC-156..158).
-	publicSrv := grpcsrv.NewServer()
-	internalSrv := grpcsrv.NewServer()
+	//
+	// authzIntr applied to BOTH public + internal listeners — внешние clients
+	// (через api-gateway) и cluster-internal callers (admin-tooling / другие
+	// kacho-services) идут через тот же permission_map. Internal RPC
+	// (InternalResourceLifecycleService) автоматически распознаются
+	// interceptor'ом по methodIsInternal heuristic и пропускаются
+	// (DecisionInternal). См. authz/types.go::methodIsInternal.
+	publicSrv := grpcsrv.NewServer(
+		grpc.ChainUnaryInterceptor(authzIntr.Unary()),
+		grpc.ChainStreamInterceptor(authzIntr.Stream()),
+	)
+	internalSrv := grpcsrv.NewServer(
+		grpc.ChainUnaryInterceptor(authzIntr.Unary()),
+		grpc.ChainStreamInterceptor(authzIntr.Stream()),
+	)
 
 	// OperationService (kacho.cloud.operation.OperationService): Get + Cancel.
 	// Public per proto annotation `(kacho.iam.authz.v1.permission) = "<exempt>"`
@@ -298,6 +339,36 @@ func runServe(configPath string) error {
 		// exit; transient errors → log + continue (не abort task'а).
 		func() error {
 			return drainRunner.Run(ctx)
+		},
+		// task 4 — FGA Check cache invalidator (KAC-156). Слушает
+		// `kacho_iam_subjects` на iam-DB через DEDICATED pgx-conn (LISTEN/NOTIFY
+		// требует non-pooled conn — godzila §16). На каждый NOTIFY → invalidate
+		// cache по subject_id. На conn-drop → exponential backoff + conservative
+		// InvalidateAll (защита от пропущенных NOTIFY в окне disconnect'а).
+		//
+		// Включается ТОЛЬКО если cfg.Authz.ListenInvalidator.Enable=true И
+		// IAMDirectDSN задан (нам нужен прямой DSN к kacho_iam Postgres — это
+		// cross-DB connection, поэтому отдельный config-field, не Repository.URL).
+		// Иначе — no-op task (cache живёт TTL-only invalidation).
+		func() error {
+			if !cfg.Authz.ListenInvalidator.Enable || strings.TrimSpace(cfg.Authz.ListenInvalidator.IAMDirectDSN) == "" {
+				logger.Info("authz_listen_invalidator_disabled",
+					"enable", cfg.Authz.ListenInvalidator.Enable,
+					"dsn_configured", cfg.Authz.ListenInvalidator.IAMDirectDSN != "")
+				<-ctx.Done()
+				return nil
+			}
+			channel := cfg.Authz.ListenInvalidator.Channel
+			if channel == "" {
+				channel = "kacho_iam_subjects"
+			}
+			inv := &authz.ListenInvalidator{
+				ConnString: cfg.Authz.ListenInvalidator.IAMDirectDSN,
+				Channel:    channel,
+				Cache:      authzCache,
+				Logger:     logger,
+			}
+			return inv.Run(ctx)
 		},
 	}
 	// maxConcurrency = len(tasks)-1: основной goroutine исполняет task[0],
