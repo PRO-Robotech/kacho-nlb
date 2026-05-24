@@ -1,0 +1,46 @@
+# ghz job — gRPC-direct baseline against kacho-nlb (mirrors scenarios/baseline.js).
+#
+# 500 RPS sustained for 5min on NetworkLoadBalancerService.List. Use to
+# compare gRPC-direct latency vs grpc-gateway-translated REST latency.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ghz-nlb-baseline
+  namespace: kacho
+  labels:
+    app: ghz
+    scenario: baseline
+    service: kacho-nlb
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 3600
+  template:
+    metadata:
+      labels:
+        app: ghz
+        scenario: baseline
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: ghz
+          image: ghz:dev
+          imagePullPolicy: IfNotPresent
+          args:
+            - "--insecure"
+            - "--call"
+            - "kacho.cloud.loadbalancer.v1.NetworkLoadBalancerService.List"
+            - "--total"
+            - "150000"
+            - "--rps"
+            - "500"
+            - "--concurrency"
+            - "100"
+            - "--connections"
+            - "20"
+            - "--timeout"
+            - "15s"
+            - "--metadata"
+            - '{"authorization":"Bearer ${IAM_TOKEN}","x-kacho-actor":"ghz-loadtest","x-kacho-project-id":"${PROJECT_ID}"}'
+            - "--data"
+            - '{"project_id":"${PROJECT_ID}","page_size":20}'
+            - "nlb.kacho.svc.cluster.local:9090"

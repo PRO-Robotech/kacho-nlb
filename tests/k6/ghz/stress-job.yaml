@@ -1,0 +1,48 @@
+# ghz job — gRPC-direct stress against kacho-nlb (mirrors scenarios/stress.js).
+#
+# ghz has no native ramp, so we approximate stress with a high constant RPS
+# (2000) and a high total — the cluster experiences the peak load throughout
+# and we read the latency curve from the percentile report. For a true ramp,
+# apply baseline-job.yaml + this in sequence.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ghz-nlb-stress
+  namespace: kacho
+  labels:
+    app: ghz
+    scenario: stress
+    service: kacho-nlb
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 3600
+  template:
+    metadata:
+      labels:
+        app: ghz
+        scenario: stress
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: ghz
+          image: ghz:dev
+          imagePullPolicy: IfNotPresent
+          args:
+            - "--insecure"
+            - "--call"
+            - "kacho.cloud.loadbalancer.v1.NetworkLoadBalancerService.List"
+            - "--total"
+            - "600000"
+            - "--rps"
+            - "2000"
+            - "--concurrency"
+            - "400"
+            - "--connections"
+            - "40"
+            - "--timeout"
+            - "30s"
+            - "--metadata"
+            - '{"authorization":"Bearer ${IAM_TOKEN}","x-kacho-actor":"ghz-loadtest","x-kacho-project-id":"${PROJECT_ID}"}'
+            - "--data"
+            - '{"project_id":"${PROJECT_ID}","page_size":20}'
+            - "nlb.kacho.svc.cluster.local:9090"
