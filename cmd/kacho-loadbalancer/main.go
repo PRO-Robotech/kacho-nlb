@@ -37,8 +37,9 @@ import (
 	operationpb "github.com/PRO-Robotech/kacho-proto/gen/go/kacho/cloud/operation"
 	lbv1 "github.com/PRO-Robotech/kacho-proto/gen/go/kacho/cloud/loadbalancer/v1"
 
-	lbhandler "github.com/PRO-Robotech/kacho-nlb/internal/apps/kacho/api/loadbalancer"
+	internallifecycle "github.com/PRO-Robotech/kacho-nlb/internal/apps/kacho/api/internal_lifecycle"
 	"github.com/PRO-Robotech/kacho-nlb/internal/apps/kacho/api/listener"
+	lbhandler "github.com/PRO-Robotech/kacho-nlb/internal/apps/kacho/api/loadbalancer"
 	"github.com/PRO-Robotech/kacho-nlb/internal/apps/kacho/api/operation"
 	"github.com/PRO-Robotech/kacho-nlb/internal/apps/kacho/api/targetgroup"
 	"github.com/PRO-Robotech/kacho-nlb/internal/apps/kacho/config"
@@ -209,6 +210,22 @@ func runServe(configPath string) error {
 		logger,
 	)
 	lbv1.RegisterTargetGroupServiceServer(publicSrv, tgHandler)
+
+	// InternalResourceLifecycleService (KAC-157). Server-stream Subscribe(req)
+	// для D-13 (kacho-iam consumer FGA tuple-sync). Зарегистрирован ТОЛЬКО на
+	// internalSrv — workspace CLAUDE.md «Запреты» #6 (Internal.* НЕ маршрутизируется
+	// через api-gateway на external TLS endpoint). Кросс-репо edge:
+	// `iam → nlb.InternalResourceLifecycleService.Subscribe` (см. nlb CLAUDE.md §2).
+	//
+	// dsn — используется handler'ом для dedicated pgx.Conn (LISTEN/NOTIFY вне
+	// pool'а); MaxStreams ограничивает concurrent streams (защита pgxpool от
+	// исчерпания одним buggy/looping kacho-iam pod'ом).
+	lifecycleHandler := internallifecycle.NewHandler(
+		cfg.Repository.Postgres.URL,
+		cfg.InternalLifecycle.MaxStreams,
+		logger,
+	)
+	lbv1.RegisterInternalResourceLifecycleServiceServer(internalSrv, lifecycleHandler)
 
 	publicListener, err := listenEndpoint(cfg.APIServer.Endpoint)
 	if err != nil {
