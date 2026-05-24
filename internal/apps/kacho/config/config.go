@@ -44,6 +44,11 @@ type Config struct {
 	Authz       AuthzConfig       `mapstructure:"authz"`
 	FGA         FGAConfig         `mapstructure:"fga"`
 	Jobs        JobsConfig        `mapstructure:"jobs"`
+
+	// InternalLifecycle — параметры InternalResourceLifecycleService.Subscribe
+	// (D-13 server-stream к kacho-iam, см.
+	// `internal/apps/kacho/api/internal_lifecycle`).
+	InternalLifecycle InternalLifecycleConfig `mapstructure:"internal-lifecycle"`
 }
 
 // Mode возвращает резолвленный enum-режим (после `Validate()`).
@@ -182,4 +187,17 @@ type TargetDrainConfig struct {
 	// Interval — период между тиками drain-runner'а. Default 10s
 	// (см. RegisterDefaults). Должен быть > 0.
 	Interval time.Duration `mapstructure:"interval"`
+}
+
+// ─── InternalLifecycle (D-13 stream) ─────────────────────────────────────────
+
+// InternalLifecycleConfig — параметры InternalResourceLifecycleService.Subscribe
+// (KAC-157). Server-stream к kacho-iam для FGA tuple-sync; cluster-internal
+// only (port 9091, workspace CLAUDE.md «Запреты» #6).
+type InternalLifecycleConfig struct {
+	// MaxStreams — максимальное число одновременных Subscribe-стримов.
+	// Каждый стрим держит dedicated pgx.Conn для LISTEN/NOTIFY (вне pool'а),
+	// поэтому слот ≈ +1 conn'у к Postgres. Default 32 (см. RegisterDefaults).
+	// Должен быть > 0.
+	MaxStreams int `mapstructure:"max-streams"`
 }

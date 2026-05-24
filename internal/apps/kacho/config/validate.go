@@ -132,6 +132,13 @@ func (c Config) Validate() error {
 		errs = multierr.Append(errs, fmt.Errorf("jobs.target-drain.interval must be > 0, got %v", c.Jobs.TargetDrain.Interval))
 	}
 
+	// InternalLifecycle.MaxStreams (KAC-157 D-13 stream). Должен быть > 0:
+	// =0 означало бы «никакие streams не разрешены» → kacho-iam не сможет
+	// подключиться → tuple-sync сломан.
+	if c.InternalLifecycle.MaxStreams <= 0 {
+		errs = multierr.Append(errs, fmt.Errorf("internal-lifecycle.max-streams must be > 0, got %d", c.InternalLifecycle.MaxStreams))
+	}
+
 	return errs
 }
 
