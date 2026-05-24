@@ -199,13 +199,18 @@ func runServe(configPath string) error {
 	// (InternalResourceLifecycleService) автоматически распознаются
 	// interceptor'ом по methodIsInternal heuristic и пропускаются
 	// (DecisionInternal). См. authz/types.go::methodIsInternal.
+	// KAC-178 §2 (W1.4 mirror of vpc/compute): grpcsrv.UnaryPrincipalExtract
+	// ОБЯЗАН быть ПЕРВЫМ в public chain — без него operations.PrincipalFromContext
+	// возвращает SystemPrincipal() = user:bootstrap для каждого request'а,
+	// независимо от того, что api-gateway форвардит x-kacho-principal-* через
+	// gRPC metadata. Operation handler пишет "anonymous"/empty principal в DB.
 	publicSrv := grpcsrv.NewServer(
-		grpc.ChainUnaryInterceptor(authzIntr.Unary()),
-		grpc.ChainStreamInterceptor(authzIntr.Stream()),
+		grpc.ChainUnaryInterceptor(grpcsrv.UnaryPrincipalExtract(), authzIntr.Unary()),
+		grpc.ChainStreamInterceptor(grpcsrv.StreamPrincipalExtract(), authzIntr.Stream()),
 	)
 	internalSrv := grpcsrv.NewServer(
-		grpc.ChainUnaryInterceptor(authzIntr.Unary()),
-		grpc.ChainStreamInterceptor(authzIntr.Stream()),
+		grpc.ChainUnaryInterceptor(grpcsrv.UnaryPrincipalExtract(), authzIntr.Unary()),
+		grpc.ChainStreamInterceptor(grpcsrv.StreamPrincipalExtract(), authzIntr.Stream()),
 	)
 
 	// OperationService (kacho.cloud.operation.OperationService): Get + Cancel.
