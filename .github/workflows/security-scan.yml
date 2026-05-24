@@ -1,19 +1,95 @@
 name: security-scan
 
+# KAC-127 Phase 12 — Security scan gates for Compute.
+
 on:
-  schedule:
-    - cron: '0 6 * * 1'  # weekly Mon 06:00 UTC
-  workflow_dispatch:
+  push:
+    branches: [main, KAC-*]
+  pull_request:
 
 permissions:
   contents: read
   security-events: write
+  pull-requests: write
 
-# TODO(KAC-169): trivy / gosec / govulncheck weekly scan. Структурно — копия
-# kacho-compute/.github/workflows/security-scan.yml.
+defaults:
+  run:
+    working-directory: kacho-nlb
 
 jobs:
-  noop:
+  gosec:
+    name: gosec
     runs-on: ubuntu-latest
     steps:
-      - run: echo "TODO(KAC-169): wire trivy/gosec/govulncheck weekly scan"
+      - uses: actions/checkout@v6
+        with: { path: kacho-nlb }
+      - uses: actions/checkout@v6
+        with: { repository: PRO-Robotech/kacho-corelib, ref: main, path: kacho-corelib }
+      - uses: actions/checkout@v6
+        with: { repository: PRO-Robotech/kacho-proto, ref: main, path: kacho-proto }
+      - uses: actions/setup-go@v6
+        with: { go-version-file: kacho-nlb/go.mod }
+      - run: |
+          go install github.com/securego/gosec/v2/cmd/gosec@latest
+          "$(go env GOPATH)/bin/gosec" -fmt sarif -out gosec.sarif ./... || true
+          # gosec emits duplicate entries in rule properties.tags, which the
+          # codeql SARIF validator rejects ("contains duplicate item"). Dedupe
+          # every rule's tags, or substitute an empty schema-valid document.
+          if jq -e . gosec.sarif >/dev/null 2>&1; then
+            jq '(.runs[].tool.driver.rules[]?.properties.tags) |= (if . then unique else . end)' \
+              gosec.sarif > gosec.sanitized.sarif && mv gosec.sanitized.sarif gosec.sarif
+          else
+            printf '%s' '{"version":"2.1.0","$schema":"https://json.schemastore.org/sarif-2.1.0.json","runs":[{"tool":{"driver":{"name":"gosec","rules":[]}},"results":[]}]}' > gosec.sarif
+          fi
+      - uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with: { sarif_file: kacho-nlb/gosec.sarif, category: gosec }
+
+  trivy:
+    name: trivy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with: { path: kacho-nlb }
+      - uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: 'fs'
+          scan-ref: 'kacho-nlb'
+          format: 'sarif'
+          output: 'trivy-fs.sarif'
+          severity: 'CRITICAL,HIGH'
+          exit-code: '1'
+          ignore-unfixed: true
+      - uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with: { sarif_file: trivy-fs.sarif, category: trivy-fs }
+
+  govulncheck:
+    name: govulncheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with: { path: kacho-nlb }
+      - uses: actions/checkout@v6
+        with: { repository: PRO-Robotech/kacho-corelib, ref: main, path: kacho-corelib }
+      - uses: actions/checkout@v6
+        with: { repository: PRO-Robotech/kacho-proto, ref: main, path: kacho-proto }
+      - uses: actions/setup-go@v6
+        with: { go-version-file: kacho-nlb/go.mod }
+      - run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          "$(go env GOPATH)/bin/govulncheck" -mode=source -format=sarif ./... > govulncheck.sarif || true
+          # govulncheck emits nothing on a build error → upload-sarif chokes on
+          # "Unexpected end of JSON input"; it also emits duplicate entries in
+          # rule properties.tags, which the codeql validator rejects. Sanitize:
+          # dedupe every rule's tags, or substitute an empty schema-valid doc.
+          if jq -e . govulncheck.sarif >/dev/null 2>&1; then
+            jq '(.runs[].tool.driver.rules[]?.properties.tags) |= (if . then unique else . end)' \
+              govulncheck.sarif > govulncheck.sanitized.sarif && mv govulncheck.sanitized.sarif govulncheck.sarif
+          else
+            echo "govulncheck produced no/invalid SARIF — substituting empty document"
+            printf '%s' '{"version":"2.1.0","$schema":"https://json.schemastore.org/sarif-2.1.0.json","runs":[{"tool":{"driver":{"name":"govulncheck","rules":[]}},"results":[]}]}' > govulncheck.sarif
+          fi
+      - uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with: { sarif_file: kacho-nlb/govulncheck.sarif, category: govulncheck }

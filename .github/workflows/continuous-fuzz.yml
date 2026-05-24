@@ -1,19 +1,66 @@
 name: continuous-fuzz
 
+# KAC-127 Phase 12 — Continuous fuzzing for Compute.
+# Targets: FuzzInstanceSpecValidate.
+
 on:
   schedule:
-    - cron: '0 4 * * *'  # daily 04:00 UTC
+    - cron: '0 4 * * *'
   workflow_dispatch:
+    inputs:
+      fuzztime:
+        description: 'Duration (e.g. 1h)'
+        required: false
+        default: '1h'
 
 permissions:
   contents: read
+  issues: write
 
-# TODO(KAC-167): continuous fuzz — corpus в internal/fuzz/ (filter/parse, update_mask,
-# health-check JSONB decode, target identity oneof). Структурно — копия
-# kacho-compute/.github/workflows/continuous-fuzz.yml.
+defaults:
+  run:
+    working-directory: kacho-nlb
 
 jobs:
-  noop:
+  fuzz:
+    name: fuzz ${{ matrix.target }}
     runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - FuzzInstanceSpecValidate
     steps:
-      - run: echo "TODO(KAC-167): wire go test -fuzz after internal/fuzz/ corpus is seeded"
+      - uses: actions/checkout@v6
+        with: { path: kacho-nlb }
+      - uses: actions/checkout@v6
+        with: { repository: PRO-Robotech/kacho-corelib, ref: main, path: kacho-corelib }
+      - uses: actions/checkout@v6
+        with: { repository: PRO-Robotech/kacho-proto, ref: main, path: kacho-proto }
+      - uses: actions/setup-go@v6
+        with: { go-version-file: kacho-nlb/go.mod }
+
+      - name: restore fuzz corpus
+        uses: actions/cache@v4
+        with:
+          path: kacho-nlb/internal/fuzz/testdata/fuzz/${{ matrix.target }}
+          key: fuzz-corpus-${{ matrix.target }}-${{ github.run_id }}
+          restore-keys: |
+            fuzz-corpus-${{ matrix.target }}-
+
+      - name: run fuzz
+        env:
+          FUZZTIME: ${{ inputs.fuzztime || '1h' }}
+        run: |
+          go test -run=^$ -fuzz=${{ matrix.target }} -fuzztime=${FUZZTIME} \
+            ./internal/fuzz/ 2>&1 | tee fuzz-output.log
+
+      - name: upload failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: fuzz-failure-${{ matrix.target }}
+          path: |
+            kacho-nlb/internal/fuzz/testdata/fuzz/${{ matrix.target }}/
+            kacho-nlb/fuzz-output.log
