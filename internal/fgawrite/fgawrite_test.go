@@ -50,9 +50,9 @@ func (w *recordingWriter) RewriteProjectTuple(_ context.Context, objectType, obj
 
 func TestObjectTypeConstants(t *testing.T) {
 	t.Parallel()
-	require.Equal(t, "nlb_load_balancer", ObjectTypeLoadBalancer)
-	require.Equal(t, "nlb_listener", ObjectTypeListener)
-	require.Equal(t, "nlb_target_group", ObjectTypeTargetGroup)
+	require.Equal(t, "lb_network_load_balancer", ObjectTypeLoadBalancer)
+	require.Equal(t, "lb_listener", ObjectTypeListener)
+	require.Equal(t, "lb_target_group", ObjectTypeTargetGroup)
 }
 
 func TestRelationConstants(t *testing.T) {
@@ -118,7 +118,7 @@ func TestEmitCreator_Delegates(t *testing.T) {
 	t.Parallel()
 	w := &recordingWriter{}
 	EmitCreator(context.Background(), w, nil, "user:u-1", RelationOwner, ObjectTypeLoadBalancer, "nlb-x")
-	require.Equal(t, []creatorCall{{Subject: "user:u-1", Relation: RelationOwner, Object: "nlb_load_balancer:nlb-x"}}, w.creatorCalls)
+	require.Equal(t, []creatorCall{{Subject: "user:u-1", Relation: RelationOwner, Object: "lb_network_load_balancer:nlb-x"}}, w.creatorCalls)
 }
 
 func TestEmitCreator_Error_NonFatal(t *testing.T) {
@@ -146,9 +146,9 @@ func TestEmitParentLink_Delegates(t *testing.T) {
 	EmitParentLink(context.Background(), w, nil,
 		ObjectTypeLoadBalancer, "nlb-x", RelationLoadBalancer, ObjectTypeListener, "lst-y")
 	require.Equal(t, []creatorCall{{
-		Subject:  "nlb_load_balancer:nlb-x",
+		Subject:  "lb_network_load_balancer:nlb-x",
 		Relation: RelationLoadBalancer,
-		Object:   "nlb_listener:lst-y",
+		Object:   "lb_listener:lst-y",
 	}}, w.creatorCalls)
 }
 

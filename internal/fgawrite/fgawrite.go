@@ -11,12 +11,17 @@ import (
 // ---- FGA model constants (kacho-nlb domain) ----
 
 // ObjectType* — FGA object type strings used by the kacho-nlb authorization
-// model (mirrors kacho-iam/internal/authzmap/permission_catalog.go namespace
-// `loadbalancer.*`).
+// model.
+//
+// KAC-178 §2: switched от nlb_* конвенции к lb_* — соответствует FGA model
+// (`type lb_network_load_balancer / lb_target_group / lb_listener` в
+// kacho-proto fga_model.fga) и api-gateway permission_catalog.json. nlb_*
+// типы не определены в model — WriteTuples возвращал status 400 "invalid
+// relation/object" → creator-tuple не записывался → 'no path' на GET.
 const (
-	ObjectTypeLoadBalancer = "nlb_load_balancer"
-	ObjectTypeListener     = "nlb_listener"
-	ObjectTypeTargetGroup  = "nlb_target_group"
+	ObjectTypeLoadBalancer = "lb_network_load_balancer"
+	ObjectTypeListener     = "lb_listener"
+	ObjectTypeTargetGroup  = "lb_target_group"
 )
 
 // Relation* — predicate names used in tuples emitted by kacho-nlb.
