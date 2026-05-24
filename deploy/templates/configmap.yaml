@@ -26,7 +26,13 @@ data:
     repository:
       type: POSTGRES
       postgres:
+        # `dbDSN` рендерит URL с placeholder `$(KACHO_NLB_DB_PASSWORD)`.
+        # Реальный пароль приходит из Secret через `password-from-env`;
+        # config.Load() (KAC-172) подставляет его при старте — viper сам
+        # не expand'ит `$(VAR)` syntax. Пароль в ConfigMap (git-committed)
+        # держать нельзя.
         url: {{ include "kacho-nlb.dbDSN" . | quote }}
+        password-from-env: KACHO_NLB_DB_PASSWORD
         max-conns: 0
         conn-lifetime: 0s
         slave-url: ""

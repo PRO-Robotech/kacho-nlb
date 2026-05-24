@@ -94,6 +94,14 @@ type PostgresConfig struct {
 	MaxConns     int32         `mapstructure:"max-conns"`     // pool size; 0 → pgxpool default
 	ConnLifetime time.Duration `mapstructure:"conn-lifetime"` // 0 → pgxpool default
 	SlaveURL     string        `mapstructure:"slave-url"`     // optional read-replica DSN
+
+	// PasswordFromEnv — имя ENV-переменной с паролем, который подставляется
+	// в URL/SlaveURL по shell-placeholder'у `$(<ИМЯ>)` на этапе Load() (см.
+	// load.go::expandPasswordFromEnv). Пароль — Secret в Helm, в ConfigMap
+	// его держать нельзя; viper не понимает `$(VAR)` синтаксис, поэтому
+	// expand делаем явно. Пустая строка — substitution отключён (URL
+	// используется как есть). KAC-172 regression-fix.
+	PasswordFromEnv string `mapstructure:"password-from-env"`
 }
 
 // ─── Authn (transport TLS) ───────────────────────────────────────────────────
