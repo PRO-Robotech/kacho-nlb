@@ -26,8 +26,13 @@ const (
 
 // Relation* — predicate names used in tuples emitted by kacho-nlb.
 const (
-	// RelationOwner — creator tuple "<subject> #owner @<object>".
-	RelationOwner = "owner"
+	// RelationOwner — creator tuple "<subject> #<relation> @<object>".
+	// KAC-178 §2: switched от "owner" → "admin". FGA model для lb_*-типов
+	// определяет только viewer/editor/admin (нет "owner"). Без переименования
+	// WriteTuples возвращал openfga status 400 'invalid relation', и
+	// creator-tuple никогда не записывался. "admin" — closest fit для
+	// creator-семантики и достаточно permissive (creator получает full control).
+	RelationOwner = "admin"
 	// RelationProject — hierarchy tuple "project:<id> #project @<object>".
 	RelationProject = "project"
 	// RelationLoadBalancer — parent-link tuple
