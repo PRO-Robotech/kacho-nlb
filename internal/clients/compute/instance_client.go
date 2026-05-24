@@ -8,6 +8,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/PRO-Robotech/kacho-corelib/auth"
 	"github.com/PRO-Robotech/kacho-corelib/retry"
 	computepb "github.com/PRO-Robotech/kacho-proto/gen/go/kacho/cloud/compute/v1"
 
@@ -68,6 +69,8 @@ func (c *instanceClient) Get(ctx context.Context, instanceID string) (*Instance,
 	if instanceID == "" {
 		return nil, fmt.Errorf("%w: instance_id is empty", domain.ErrInvalidArg)
 	}
+
+	ctx = auth.PropagateOutgoing(ctx)
 
 	var resp *computepb.Instance
 	if err := retry.OnUnavailable(ctx, func(ctx context.Context) error {

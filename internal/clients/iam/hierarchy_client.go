@@ -8,6 +8,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/PRO-Robotech/kacho-corelib/auth"
 	"github.com/PRO-Robotech/kacho-corelib/retry"
 	iampb "github.com/PRO-Robotech/kacho-proto/gen/go/kacho/cloud/iam/v1"
 
@@ -71,6 +72,7 @@ func (w *hierarchyWriter) WriteCreatorTuple(ctx context.Context, subjectID, rela
 		return fmt.Errorf("%w: object is empty", domain.ErrInvalidArg)
 	}
 
+	ctx = auth.PropagateOutgoing(ctx)
 	return retry.OnUnavailable(ctx, func(ctx context.Context) error {
 		_, rerr := w.cli.WriteCreatorTuple(ctx, &iampb.WriteCreatorTupleRequest{
 			SubjectId: subjectID,
@@ -105,6 +107,7 @@ func (w *hierarchyWriter) RewriteProjectTuple(
 
 	object := objectType + ":" + objectID
 	subject := "project:" + dstProject
+	ctx = auth.PropagateOutgoing(ctx)
 	return retry.OnUnavailable(ctx, func(ctx context.Context) error {
 		_, rerr := w.cli.WriteCreatorTuple(ctx, &iampb.WriteCreatorTupleRequest{
 			SubjectId: subject,
