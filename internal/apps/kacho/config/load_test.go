@@ -159,6 +159,78 @@ func TestLoad_MissingRequired_Postgres(t *testing.T) {
 	}
 }
 
+// TestLoad_PasswordFromEnv_SubstitutesPlaceholder — KAC-172 regression.
+//
+// Helm рендерит `postgres.url` с shell-style placeholder
+// `$(KACHO_NLB_DB_PASSWORD)` (password — Secret, не в ConfigMap). Viper НЕ
+// expand'ит `$(VAR)` синтаксис — без подстановки migrator передаёт literal
+// строку в pgx → connection fail → init-container CrashLoopBackOff.
+//
+// Load() обязана: если `password-from-env: <NAME>` задан и URL содержит
+// `$(<NAME>)`-placeholder — substitution из env при Load.
+func TestLoad_PasswordFromEnv_SubstitutesPlaceholder(t *testing.T) {
+	t.Setenv("KACHO_NLB_DB_PASSWORD", "secret-pw-123")
+
+	yaml := `
+mode: dev
+logger:
+  level: INFO
+api-server:
+  endpoint: tcp://0.0.0.0:9090
+  internal-endpoint: tcp://0.0.0.0:9091
+  graceful-shutdown: 10s
+repository:
+  type: POSTGRES
+  postgres:
+    url: postgres://kacho_nlb:$(KACHO_NLB_DB_PASSWORD)@pg-nlb:5432/kacho_nlb?sslmode=disable
+    password-from-env: KACHO_NLB_DB_PASSWORD
+`
+	cfg, err := Load(writeYAML(t, yaml))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	want := "postgres://kacho_nlb:secret-pw-123@pg-nlb:5432/kacho_nlb?sslmode=disable"
+	if got := cfg.Repository.Postgres.URL; got != want {
+		t.Errorf("Repository.Postgres.URL: placeholder must be expanded\n got: %q\nwant: %q", got, want)
+	}
+	if got := cfg.Repository.Postgres.PasswordFromEnv; got != "KACHO_NLB_DB_PASSWORD" {
+		t.Errorf("Repository.Postgres.PasswordFromEnv: got %q, want %q", got, "KACHO_NLB_DB_PASSWORD")
+	}
+}
+
+// TestLoad_PasswordFromEnv_UnsetVar — env-var не задан → placeholder
+// остаётся как есть; ошибка валидации Postgres URL произойдёт позже на
+// connect-step (тут — конфиг просто грузится без панcики).
+func TestLoad_PasswordFromEnv_UnsetVar(t *testing.T) {
+	// Гарантируем, что переменная не утекла из других тестов.
+	t.Setenv("KACHO_NLB_DB_PASSWORD_MISSING", "")
+	yaml := `
+mode: dev
+logger:
+  level: INFO
+api-server:
+  endpoint: tcp://0.0.0.0:9090
+  internal-endpoint: tcp://0.0.0.0:9091
+  graceful-shutdown: 10s
+repository:
+  type: POSTGRES
+  postgres:
+    url: postgres://user:$(KACHO_NLB_DB_PASSWORD_MISSING)@h/d
+    password-from-env: KACHO_NLB_DB_PASSWORD_MISSING
+`
+	cfg, err := Load(writeYAML(t, yaml))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	// Placeholder остаётся литералом — failure surface на connect, не silent
+	// «постгрес с пустым паролем».
+	want := "postgres://user:$(KACHO_NLB_DB_PASSWORD_MISSING)@h/d"
+	if got := cfg.Repository.Postgres.URL; got != want {
+		t.Errorf("URL must be left intact when env-var unset\n got: %q\nwant: %q", got, want)
+	}
+}
+
 func TestLoad_ConfigFileMissing(t *testing.T) {
 	_, err := Load("/nonexistent/path/config.yaml")
 	if err == nil {

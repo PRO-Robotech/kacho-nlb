@@ -59,8 +59,33 @@ func Load(path string) (*Config, error) {
 	if err := v.Unmarshal(&cfg); err != nil {
 		return nil, fmt.Errorf("unmarshal config: %w", err)
 	}
+	expandPasswordFromEnv(&cfg)
 	if err := cfg.Validate(); err != nil {
 		return nil, fmt.Errorf("validate config: %w", err)
 	}
 	return &cfg, nil
+}
+
+// expandPasswordFromEnv — KAC-172. Helm рендерит `postgres.url` с
+// shell-style placeholder `$(KACHO_NLB_DB_PASSWORD)` (password хранится в
+// Secret, не в ConfigMap). Viper не expand'ит `$(VAR)` синтаксис, поэтому
+// без явной подстановки migrator/api-server передают literal placeholder в
+// pgx → connection fail → init-container CrashLoopBackOff.
+//
+// Подставляет значение env-переменной `cfg.Repository.Postgres.PasswordFromEnv`
+// вместо `$(<имя>)` в URL и SlaveURL. Env-var не задана → placeholder
+// остаётся (failure surface на connect, не silent «постгрес с пустым
+// паролем»). `password-from-env: ""` → ничего не делаем.
+func expandPasswordFromEnv(cfg *Config) {
+	envName := strings.TrimSpace(cfg.Repository.Postgres.PasswordFromEnv)
+	if envName == "" {
+		return
+	}
+	pass := os.Getenv(envName)
+	if pass == "" {
+		return
+	}
+	placeholder := "$(" + envName + ")"
+	cfg.Repository.Postgres.URL = strings.ReplaceAll(cfg.Repository.Postgres.URL, placeholder, pass)
+	cfg.Repository.Postgres.SlaveURL = strings.ReplaceAll(cfg.Repository.Postgres.SlaveURL, placeholder, pass)
 }
