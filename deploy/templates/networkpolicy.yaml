@@ -1,0 +1,38 @@
+{{- if .Values.networkPolicy.enable -}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "kacho-nlb.fullname" . }}
+  namespace: {{ .Values.namespace | default .Release.Namespace }}
+  labels:
+    {{- include "kacho-nlb.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "kacho-nlb.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+  ingress:
+    # Public gRPC :9090 — only api-gateway may reach it.
+    - from:
+        - podSelector:
+            {{- toYaml .Values.networkPolicy.apiGatewayPodSelector | nindent 12 }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.ports.grpc }}
+    # Internal gRPC :9091 — only peer services (kacho-iam / kacho-vpc /
+    # kacho-compute / admin tooling). Selector labels picked from values.
+    - from:
+        - podSelector:
+            {{- toYaml .Values.networkPolicy.internalPodSelector | nindent 12 }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.ports.internalGrpc }}
+    # Metrics :9101 — only Prometheus pods may scrape.
+    - from:
+        - podSelector:
+            {{- toYaml .Values.networkPolicy.metricsPodSelector | nindent 12 }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.ports.metrics }}
+{{- end -}}

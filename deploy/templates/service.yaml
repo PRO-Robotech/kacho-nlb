@@ -1,15 +1,44 @@
-# TODO(KAC-169): two Services — public (:9090) + internal (:9091).
+{{/*
+Two Services so api-gateway (public clients) and peer services (internal
+listener) get separate DNS records — workspace CLAUDE.md "Запреты" #6:
+Internal.* must never be reachable from the external TLS endpoint.
+*/}}
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ .Values.name }}
+  name: {{ include "kacho-nlb.fullname" . }}
+  namespace: {{ .Values.namespace | default .Release.Namespace }}
+  labels:
+    {{- include "kacho-nlb.labels" . | nindent 4 }}
+    kacho.io/listener: public
 spec:
+  type: ClusterIP
   selector:
-    app: {{ .Values.name }}
+    {{- include "kacho-nlb.selectorLabels" . | nindent 4 }}
   ports:
     - name: grpc
       port: {{ .Values.ports.grpc }}
       targetPort: grpc
+      protocol: TCP
+    - name: metrics
+      port: {{ .Values.ports.metrics }}
+      targetPort: metrics
+      protocol: TCP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "kacho-nlb.fullname" . }}-internal
+  namespace: {{ .Values.namespace | default .Release.Namespace }}
+  labels:
+    {{- include "kacho-nlb.labels" . | nindent 4 }}
+    kacho.io/listener: internal
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "kacho-nlb.selectorLabels" . | nindent 4 }}
+  ports:
     - name: igrpc
       port: {{ .Values.ports.internalGrpc }}
       targetPort: igrpc
+      protocol: TCP

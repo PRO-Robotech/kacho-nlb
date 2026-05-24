@@ -1,0 +1,21 @@
+{{- if .Values.rbac.create -}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "kacho-nlb.fullname" . }}
+  namespace: {{ .Values.namespace | default .Release.Namespace }}
+  labels:
+    {{- include "kacho-nlb.labels" . | nindent 4 }}
+rules:
+  # Read own ConfigMap (mounted via volume — kubelet caches, so a runtime get
+  # is rarely needed; granted to keep the role explicit / kubectl-debug-friendly).
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: [{{ include "kacho-nlb.configMapName" . | quote }}]
+    verbs: ["get"]
+  # Read own DB-password Secret.
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: [{{ include "kacho-nlb.dbSecretName" . | quote }}]
+    verbs: ["get"]
+{{- end -}}

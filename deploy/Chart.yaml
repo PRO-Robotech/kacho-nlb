@@ -1,6 +1,31 @@
 apiVersion: v2
 name: kacho-nlb
-description: L4 Network Load Balancer control-plane (KAC-141)
+description: |
+  Kachō L4 Network Load Balancer control-plane.
+
+  Provides NetworkLoadBalancer, Listener and TargetGroup resources with the
+  Kachō flat-resource + Operations LRO API contract. Two gRPC listeners:
+  public :9090 (clients via kacho-api-gateway) and internal :9091 (peer
+  services kacho-iam / kacho-vpc / kacho-compute, admin UI, Watch streams).
 type: application
-version: 0.1.0
-appVersion: "0.1.0"
+
+# Chart version — bump on chart-template changes.
+version: 0.2.0
+
+# Application version — kacho-nlb binary version; CI bumps via `--set
+# appVersion=<tag>` on image-build pipelines. Defaults to chart version on a
+# fresh install.
+appVersion: "0.2.0"
+
+home: https://github.com/PRO-Robotech/kacho-nlb
+sources:
+  - https://github.com/PRO-Robotech/kacho-nlb
+maintainers:
+  - name: Kachō
+    url: https://github.com/PRO-Robotech
+keywords:
+  - kacho
+  - loadbalancer
+  - nlb
+  - control-plane
+  - grpc
