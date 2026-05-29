@@ -38,9 +38,11 @@ func NewListUseCase(repo RepoFactory) *ListUseCase {
 //	req.LoadBalancerId == "" → InvalidArgument "load_balancer_id required"
 //	repo error               → mapDomainErr (sentinel-aware)
 func (u *ListUseCase) Run(ctx context.Context, req *lbv1.ListListenersRequest) (*lbv1.ListListenersResponse, error) {
-	lbID := req.GetLoadBalancerId()
-	if lbID == "" {
-		return nil, status.Error(codes.InvalidArgument, "load_balancer_id required")
+	// KAC-229: project-scoped (parity with NLB/TG List). project_id is required;
+	// load_balancer_id is an optional filter (restrict to one parent LB).
+	projectID := req.GetProjectId()
+	if projectID == "" {
+		return nil, status.Error(codes.InvalidArgument, "project_id required")
 	}
 
 	name, err := parseNameFilter(req.GetFilter())
@@ -56,7 +58,8 @@ func (u *ListUseCase) Run(ctx context.Context, req *lbv1.ListListenersRequest) (
 
 	page, nextToken, err := rd.Listeners().List(ctx,
 		kachorepo.ListenerFilter{
-			LoadBalancerID: lbID,
+			ProjectID:      projectID,
+			LoadBalancerID: req.GetLoadBalancerId(),
 			Name:           name,
 		},
 		kachorepo.Pagination{

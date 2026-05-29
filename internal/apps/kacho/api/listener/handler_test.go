@@ -60,7 +60,10 @@ func TestHandler_RoutesEachRPC(t *testing.T) {
 
 	t.Run("List", func(t *testing.T) {
 		t.Parallel()
-		resp, err := h.List(context.Background(), &lbv1.ListListenersRequest{LoadBalancerId: string(lb.ID)})
+		resp, err := h.List(context.Background(), &lbv1.ListListenersRequest{
+			ProjectId:      string(lb.ProjectID),
+			LoadBalancerId: string(lb.ID),
+		})
 		require.NoError(t, err)
 		require.GreaterOrEqual(t, len(resp.Listeners), 1)
 	})

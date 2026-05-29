@@ -102,7 +102,7 @@ func TestAZD001_NLBCreate_NoEditor_Denied(t *testing.T) {
 func TestAZD002_NLBGet_Viewer_OK(t *testing.T) {
 	intr, _, _ := newTestInterceptor(t, func(_ context.Context, subj, rel, obj string) (bool, error) {
 		require.Equal(t, "viewer", rel)
-		require.Equal(t, "nlb_load_balancer:nlb-1", obj)
+		require.Equal(t, "lb_network_load_balancer:nlb-1", obj)
 		return true, nil
 	})
 	uIntr := intr.Unary()
@@ -163,7 +163,7 @@ func TestAZD004_NLBStart_Viewer_Denied(t *testing.T) {
 func TestAZD004_NLBStop_Editor_OK(t *testing.T) {
 	intr, _, _ := newTestInterceptor(t, func(_ context.Context, subj, rel, obj string) (bool, error) {
 		require.Equal(t, "editor", rel)
-		require.Equal(t, "nlb_load_balancer:nlb-1", obj)
+		require.Equal(t, "lb_network_load_balancer:nlb-1", obj)
 		return true, nil
 	})
 	resp, err := intr.Unary()(
@@ -220,7 +220,7 @@ func TestAZD005_NLBDelete_Editor_OK_ViewerRejected(t *testing.T) {
 func TestAZD006_NLBMove_PerRPCCheck_OnResourceOnly(t *testing.T) {
 	intr, n, calls := newTestInterceptor(t, func(_ context.Context, subj, rel, obj string) (bool, error) {
 		require.Equal(t, "editor", rel)
-		require.Equal(t, "nlb_load_balancer:nlb-src", obj, "interceptor must Check on resource, NOT destination project")
+		require.Equal(t, "lb_network_load_balancer:nlb-src", obj, "interceptor must Check on resource, NOT destination project")
 		return true, nil
 	})
 	_, err := intr.Unary()(
@@ -242,7 +242,7 @@ func TestAZD006_NLBMove_PerRPCCheck_OnResourceOnly(t *testing.T) {
 func TestAZD007_NLBAttachTargetGroup_PerRPCCheck_OnLBOnly(t *testing.T) {
 	intr, n, _ := newTestInterceptor(t, func(_ context.Context, _, rel, obj string) (bool, error) {
 		require.Equal(t, "editor", rel)
-		require.Equal(t, "nlb_load_balancer:nlb-1", obj)
+		require.Equal(t, "lb_network_load_balancer:nlb-1", obj)
 		return true, nil
 	})
 	_, err := intr.Unary()(
@@ -265,7 +265,7 @@ func TestAZD007_NLBAttachTargetGroup_PerRPCCheck_OnLBOnly(t *testing.T) {
 func TestAZD008_TGAddTargets_Viewer_Denied(t *testing.T) {
 	intr, _, _ := newTestInterceptor(t, func(_ context.Context, _, rel, obj string) (bool, error) {
 		require.Equal(t, "editor", rel)
-		require.Equal(t, "nlb_target_group:tgr-1", obj)
+		require.Equal(t, "lb_target_group:tgr-1", obj)
 		return false, nil
 	})
 	_, err := intr.Unary()(
@@ -285,8 +285,8 @@ func TestAZD008_TGAddTargets_Viewer_Denied(t *testing.T) {
 func TestAZD009_ListenerCreate_OnParentLB(t *testing.T) {
 	intr, _, _ := newTestInterceptor(t, func(_ context.Context, _, rel, obj string) (bool, error) {
 		require.Equal(t, "editor", rel)
-		require.Equal(t, "nlb_load_balancer:nlb-1", obj,
-			"Listener.Create checks editor on parent LB (FGA cascades через nlb_listener.load_balancer)")
+		require.Equal(t, "lb_network_load_balancer:nlb-1", obj,
+			"Listener.Create checks editor on parent LB (FGA cascades через lb_listener.load_balancer)")
 		return false, nil
 	})
 	_, err := intr.Unary()(
@@ -462,14 +462,14 @@ func TestAZD015_D11CreatorTupleWrite_NotInterceptorScope(t *testing.T) {
 
 func TestAZD016_CacheInvalidation_BySubject(t *testing.T) {
 	cache := authz.NewCache(5 * time.Second)
-	cache.SetAllowed("user:usr_alice", "viewer", "nlb_load_balancer", "nlb-1")
+	cache.SetAllowed("user:usr_alice", "viewer", "lb_network_load_balancer", "nlb-1")
 
-	allowed, hit := cache.Get("user:usr_alice", "viewer", "nlb_load_balancer", "nlb-1")
+	allowed, hit := cache.Get("user:usr_alice", "viewer", "lb_network_load_balancer", "nlb-1")
 	require.True(t, hit)
 	require.True(t, allowed)
 
 	cache.InvalidateBySubject("user:usr_alice")
-	_, hit = cache.Get("user:usr_alice", "viewer", "nlb_load_balancer", "nlb-1")
+	_, hit = cache.Get("user:usr_alice", "viewer", "lb_network_load_balancer", "nlb-1")
 	require.False(t, hit, "after InvalidateBySubject the cache miss")
 }
 
@@ -484,7 +484,7 @@ func TestAZD017_CustomRole_ResolvesToEditor(t *testing.T) {
 	intr, _, calls := newTestInterceptor(t, func(_ context.Context, _, rel, obj string) (bool, error) {
 		require.Equal(t, "editor", rel,
 			"Custom role narrowest covering relation = editor (design §6.4)")
-		require.Equal(t, "nlb_load_balancer:nlb-1", obj)
+		require.Equal(t, "lb_network_load_balancer:nlb-1", obj)
 		return true, nil
 	})
 	_, err := intr.Unary()(
@@ -687,7 +687,7 @@ func TestAZD025_InternalRPC_NotInPermissionMap(t *testing.T) {
 func TestAZD026_NLBListOperations_ViewerOnResource(t *testing.T) {
 	intr, _, _ := newTestInterceptor(t, func(_ context.Context, _, rel, obj string) (bool, error) {
 		require.Equal(t, "viewer", rel)
-		require.Equal(t, "nlb_load_balancer:nlb-1", obj)
+		require.Equal(t, "lb_network_load_balancer:nlb-1", obj)
 		return true, nil
 	})
 	_, err := intr.Unary()(
@@ -869,7 +869,7 @@ func TestIAMCheckClient_Adapter_NoPathPassthrough(t *testing.T) {
 	adapter := check.NewIAMCheckClient(peer)
 	require.NotNil(t, adapter)
 
-	allowed, err := adapter.Check(context.Background(), "user:x", "viewer", "nlb_load_balancer:y")
+	allowed, err := adapter.Check(context.Background(), "user:x", "viewer", "lb_network_load_balancer:y")
 	require.False(t, allowed)
 	require.ErrorIs(t, err, authz.ErrNoPath)
 }
