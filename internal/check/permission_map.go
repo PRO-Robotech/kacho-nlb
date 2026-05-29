@@ -31,10 +31,14 @@ import (
 // используется для Create / List (caller должен иметь `editor`/`viewer`
 // на project'е).
 const (
+	// KAC-227: object types MUST match the FGA model (iam/v1/fga_model.fga) and
+	// the nlb tuple-writes (internal/.../fgawrite) — both use the `lb_*` prefix.
+	// The interceptor Checks these object types; mismatched names → no tuple →
+	// per-RPC 403 even when the gateway-edge FGA Check allowed.
 	objectTypeProject      = "project"
-	objectTypeLoadBalancer = "nlb_load_balancer"
-	objectTypeListener     = "nlb_listener"
-	objectTypeTargetGroup  = "nlb_target_group"
+	objectTypeLoadBalancer = "lb_network_load_balancer"
+	objectTypeListener     = "lb_listener"
+	objectTypeTargetGroup  = "lb_target_group"
 )
 
 // FGA relations (design §6.1). Дублирует константы из
@@ -252,13 +256,13 @@ func PermissionMap() authz.RPCMap {
 			}),
 		},
 		"/kacho.cloud.loadbalancer.v1.ListenerService/List": {
-			// scope — parent LB; List сам авторизует на data-уровне через
-			// ListObjects (фильтрация listener'ов по доступным LB).
+			// KAC-229: project-scoped (parity with NLB/TG List). viewer on the
+			// project; data-level ListObjects still filters by accessible LBs.
 			Relation:      relationViewer,
 			Permission:    permLstList,
 			ScopeFiltered: true,
-			Extract: authz.StaticExtractor(objectTypeLoadBalancer, func(req any) (string, error) {
-				return req.(*lbv1.ListListenersRequest).GetLoadBalancerId(), nil
+			Extract: authz.StaticExtractor(objectTypeProject, func(req any) (string, error) {
+				return req.(*lbv1.ListListenersRequest).GetProjectId(), nil
 			}),
 		},
 		"/kacho.cloud.loadbalancer.v1.ListenerService/Create": {

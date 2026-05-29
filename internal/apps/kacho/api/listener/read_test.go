@@ -84,19 +84,53 @@ func TestListListeners_GWT_LST_017_FilterByLB(t *testing.T) {
 
 	uc := NewListUseCase(suite.repo)
 	resp, err := uc.Run(context.Background(), &lbv1.ListListenersRequest{
+		ProjectId:      string(suite.listener.ProjectID),
 		LoadBalancerId: string(suite.listener.LoadBalancerID),
 	})
 	require.NoError(t, err)
-	require.Len(t, resp.Listeners, 1, "only the parent LB's listeners must be returned")
+	require.Len(t, resp.Listeners, 1, "load_balancer_id filter restricts to the parent LB's listeners")
 	require.Equal(t, string(suite.listener.ID), resp.Listeners[0].Id)
 }
 
-// TestListListeners_EmptyLBID — required field check.
-func TestListListeners_EmptyLBID(t *testing.T) {
+// TestListListeners_ByProject_KAC229 — project-scoped List returns ALL listeners
+// in the project across every load balancer (no load_balancer_id filter).
+func TestListListeners_ByProject_KAC229(t *testing.T) {
+	t.Parallel()
+	suite := newReadSuite(t)
+	otherLB := newRecordLB(t, suite.listener.ProjectID, suite.listener.RegionID, domain.LBTypeExternal, "other-lb-p")
+	suite.repo.seedLB(otherLB)
+	suite.repo.seedListener(&kachorepo.ListenerRecord{
+		Listener: domain.Listener{
+			ID:               domain.ResourceID(ids.NewID(ids.PrefixListener)),
+			LoadBalancerID:   otherLB.ID,
+			ProjectID:        suite.listener.ProjectID,
+			RegionID:         suite.listener.RegionID,
+			Name:             domain.LbName("other-listener-p"),
+			Labels:           domain.LbLabels{},
+			Protocol:         domain.ProtoTCP,
+			Port:             81,
+			TargetPort:       8081,
+			IPVersion:        domain.IPVersionV4,
+			AllocatedAddress: "203.0.113.98",
+			Status:           domain.ListenerStatusActive,
+		},
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+	})
+	uc := NewListUseCase(suite.repo)
+	resp, err := uc.Run(context.Background(), &lbv1.ListListenersRequest{
+		ProjectId: string(suite.listener.ProjectID),
+	})
+	require.NoError(t, err)
+	require.Len(t, resp.Listeners, 2, "project-scoped List returns listeners across all LBs in the project")
+}
+
+// TestListListeners_EmptyProjectID — project_id is required (KAC-229).
+func TestListListeners_EmptyProjectID(t *testing.T) {
 	t.Parallel()
 	suite := newReadSuite(t)
 	uc := NewListUseCase(suite.repo)
-	_, err := uc.Run(context.Background(), &lbv1.ListListenersRequest{LoadBalancerId: ""})
+	_, err := uc.Run(context.Background(), &lbv1.ListListenersRequest{ProjectId: ""})
 	require.Error(t, err)
 	require.Equal(t, codes.InvalidArgument, status.Code(err))
 }
@@ -125,6 +159,7 @@ func TestListListeners_FilterName(t *testing.T) {
 	})
 	uc := NewListUseCase(suite.repo)
 	resp, err := uc.Run(context.Background(), &lbv1.ListListenersRequest{
+		ProjectId:      string(suite.listener.ProjectID),
 		LoadBalancerId: string(suite.listener.LoadBalancerID),
 		Filter:         `name="named-second"`,
 	})
@@ -139,6 +174,7 @@ func TestListListeners_InvalidFilter(t *testing.T) {
 	suite := newReadSuite(t)
 	uc := NewListUseCase(suite.repo)
 	_, err := uc.Run(context.Background(), &lbv1.ListListenersRequest{
+		ProjectId:      string(suite.listener.ProjectID),
 		LoadBalancerId: string(suite.listener.LoadBalancerID),
 		Filter:         "garbage",
 	})
