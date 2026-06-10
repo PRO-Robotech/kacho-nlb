@@ -1,8 +1,22 @@
 # kacho-nlb — CLAUDE.md
 
-NLB-специфичный CLAUDE.md, дополняющий workspace [`../../CLAUDE.md`](../../CLAUDE.md)
-(parent-walkup discovery). Этот файл — обязательный контекст при работе из
-`project/kacho-nlb/`.
+NLB-специфичный CLAUDE.md. Базовые правила Kachō (`.claude/rules/*`) — локальная
+копия, синхронизируемая из workspace (`./sync-tooling.sh`; источник истины —
+`kacho-workspace/.claude/rules/`, копию здесь не редактировать). `@import` ниже делает
+репо самодостаточным и при standalone-клоне.
+
+## Базовые правила Kachō (@import — синканная копия из workspace)
+
+@.claude/rules/00-kacho-core.md
+@.claude/rules/api-conventions.md
+@.claude/rules/polyrepo.md
+@.claude/rules/architecture.md
+@.claude/rules/data-integrity.md
+@.claude/rules/security.md
+@.claude/rules/git-youtrack.md
+@.claude/rules/testing.md
+@.claude/rules/vault.md
+@.claude/rules/ai-tooling.md
 
 > **Происхождение:** новый сервис, написан с нуля на проверенных паттернах
 > `kacho-compute` / `kacho-vpc` + evgeniy regulation v2 (UseCase / CQRS /
