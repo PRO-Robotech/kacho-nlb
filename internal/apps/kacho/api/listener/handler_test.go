@@ -27,25 +27,42 @@ func TestHandler_RoutesEachRPC(t *testing.T) {
 	repo := newFakeRepo()
 	lb := newRecordLB(t, "prj01HANDLERROUTING1", "ru-central1", domain.LBTypeExternal, "h-lb")
 	repo.seedLB(lb)
-	listener := &kachorepo.ListenerRecord{
-		Listener: domain.Listener{
-			ID:               domain.ResourceID(ids.NewID(ids.PrefixListener)),
-			LoadBalancerID:   lb.ID,
-			ProjectID:        lb.ProjectID,
-			RegionID:         lb.RegionID,
-			Name:             domain.LbName("handler-routed"),
-			Labels:           domain.LbLabels{},
-			Protocol:         domain.ProtoTCP,
-			Port:             8080,
-			TargetPort:       80,
-			IPVersion:        domain.IPVersionV4,
-			AllocatedAddress: "203.0.113.99",
-			Status:           domain.ListenerStatusActive,
-		},
-		CreatedAt: time.Now().UTC(),
-		UpdatedAt: time.Now().UTC(),
+
+	// Each parallel subtest gets its OWN seeded Listener record. The mutating
+	// RPCs (Update / Delete) run a background ops-worker that mutates the stored
+	// record in place (fakeListenerWriter.Update writes cur.* fields); sharing a
+	// single record across parallel subtests would race that worker-write against
+	// another subtest reading the same record (`-race` flagged exactly this:
+	// handler_test Delete read vs Update-worker write on one *ListenerRecord).
+	// Distinct records per subtest = no shared mutable state across goroutines.
+	seedListener := func(name string, port domain.LbPort) *kachorepo.ListenerRecord {
+		rec := &kachorepo.ListenerRecord{
+			Listener: domain.Listener{
+				ID:               domain.ResourceID(ids.NewID(ids.PrefixListener)),
+				LoadBalancerID:   lb.ID,
+				ProjectID:        lb.ProjectID,
+				RegionID:         lb.RegionID,
+				Name:             domain.LbName(name),
+				Labels:           domain.LbLabels{},
+				Protocol:         domain.ProtoTCP,
+				Port:             port,
+				TargetPort:       80,
+				IPVersion:        domain.IPVersionV4,
+				AllocatedAddress: "203.0.113.99",
+				Status:           domain.ListenerStatusActive,
+			},
+			CreatedAt: time.Now().UTC(),
+			UpdatedAt: time.Now().UTC(),
+		}
+		repo.seedListener(rec)
+		return rec
 	}
-	repo.seedListener(listener)
+
+	getListener := seedListener("handler-get", 8080)
+	listListener := seedListener("handler-list", 8081)
+	updateListener := seedListener("handler-update", 8082)
+	deleteListener := seedListener("handler-delete", 8083)
+	opsListener := seedListener("handler-ops", 8084)
 
 	ops := newFakeOpsRepo()
 	internalAddrs := newFakeInternalAddressClient()
@@ -53,9 +70,9 @@ func TestHandler_RoutesEachRPC(t *testing.T) {
 
 	t.Run("Get", func(t *testing.T) {
 		t.Parallel()
-		got, err := h.Get(context.Background(), &lbv1.GetListenerRequest{ListenerId: string(listener.ID)})
+		got, err := h.Get(context.Background(), &lbv1.GetListenerRequest{ListenerId: string(getListener.ID)})
 		require.NoError(t, err)
-		require.Equal(t, string(listener.ID), got.Id)
+		require.Equal(t, string(getListener.ID), got.Id)
 	})
 
 	t.Run("List", func(t *testing.T) {
@@ -66,6 +83,7 @@ func TestHandler_RoutesEachRPC(t *testing.T) {
 		})
 		require.NoError(t, err)
 		require.GreaterOrEqual(t, len(resp.Listeners), 1)
+		_ = listListener // List scans by (project, LB); seeded above so result is non-empty.
 	})
 
 	t.Run("Create", func(t *testing.T) {
@@ -87,7 +105,7 @@ func TestHandler_RoutesEachRPC(t *testing.T) {
 	t.Run("Update", func(t *testing.T) {
 		t.Parallel()
 		op, err := h.Update(context.Background(), &lbv1.UpdateListenerRequest{
-			ListenerId:  string(listener.ID),
+			ListenerId:  string(updateListener.ID),
 			UpdateMask:  &fieldmaskpb.FieldMask{Paths: []string{"description"}},
 			Description: "handler-set",
 		})
@@ -97,14 +115,8 @@ func TestHandler_RoutesEachRPC(t *testing.T) {
 
 	t.Run("Delete", func(t *testing.T) {
 		t.Parallel()
-		// Seed an extra listener to delete in isolation from above flow.
-		toDelete := *listener
-		toDelete.ID = domain.ResourceID(ids.NewID(ids.PrefixListener))
-		toDelete.Port = 7000
-		toDelete.AddressID = listener.AddressID
-		repo.seedListener(&toDelete)
 		op, err := h.Delete(context.Background(), &lbv1.DeleteListenerRequest{
-			ListenerId: string(toDelete.ID),
+			ListenerId: string(deleteListener.ID),
 		})
 		require.NoError(t, err)
 		awaitOpDone(t, ops, op.Id, time.Second)
@@ -113,7 +125,7 @@ func TestHandler_RoutesEachRPC(t *testing.T) {
 	t.Run("ListOperations", func(t *testing.T) {
 		t.Parallel()
 		resp, err := h.ListOperations(context.Background(), &lbv1.ListListenerOperationsRequest{
-			ListenerId: string(listener.ID),
+			ListenerId: string(opsListener.ID),
 		})
 		require.NoError(t, err)
 		_ = resp // operations may not be present in this thin smoke test
