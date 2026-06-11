@@ -55,6 +55,9 @@ type RepositoryWriter interface {
 	AttachedTargetGroups() AttachedTargetGroupWriterIface
 	// Outbox — emit события в `nlb_outbox` в той же tx-области writer'а.
 	Outbox() OutboxEmitter
+	// FGARegisterOutbox — emit FGA-register-intent в `fga_register_outbox` в
+	// той же tx-области writer'а (SEC-D transactional-outbox; epic §3.1).
+	FGARegisterOutbox() FGARegisterEmitter
 	// Commit финализирует tx. После Commit вызов Abort — no-op.
 	Commit() error
 	// Abort откатывает tx. Идемпотентен — безопасно через `defer w.Abort()`

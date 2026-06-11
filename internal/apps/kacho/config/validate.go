@@ -121,11 +121,6 @@ func (c Config) Validate() error {
 		errs = multierr.Append(errs, fmt.Errorf("authz.breakglass: forbidden in production mode (dev-only)"))
 	}
 
-	// FGA tuple-write
-	if c.FGA.TupleWrite.MaxRetries < 0 {
-		errs = multierr.Append(errs, fmt.Errorf("fga.tuple-write.max-retries must be >= 0, got %d", c.FGA.TupleWrite.MaxRetries))
-	}
-
 	// Jobs.target-drain (KAC-159 Phase B drain runner). Interval должен быть > 0;
 	// `0s` означало бы tight-loop, что нагрузит БД.
 	if c.Jobs.TargetDrain.Interval <= 0 {

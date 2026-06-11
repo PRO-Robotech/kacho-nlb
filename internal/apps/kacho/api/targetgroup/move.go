@@ -13,7 +13,7 @@ import (
 	"github.com/PRO-Robotech/kacho-corelib/operations"
 	lbv1 "github.com/PRO-Robotech/kacho-proto/gen/go/kacho/cloud/loadbalancer/v1"
 
-	"github.com/PRO-Robotech/kacho-nlb/internal/fgawrite"
+	"github.com/PRO-Robotech/kacho-nlb/internal/domain"
 	kachopg "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho/pg"
 )
 
@@ -26,8 +26,9 @@ import (
 //   - destination project exists (peer ProjectClient.Get) — InvalidArgument если NotFound.
 //
 // Worker:
-//   - Writer-TX → MoveProject (UPDATE project_id) + outbox MOVED + outbox UPDATED → Commit;
-//   - D-11 hierarchy rewrite (best-effort log).
+//   - Writer-TX → MoveProject (UPDATE project_id) + outbox MOVED + outbox
+//     UPDATED + FGA-register(dst project) + FGA-unregister(src project) → Commit
+//     (SEC-D Вариант A: project-rewrite in the SAME tx as MoveProject).
 //
 // GWT-TGR-027 (scope editor на dst project) — реализуется api-gateway authz-
 // interceptor'ом (KAC-127 Phase 4); use-case остаётся unaware.
@@ -35,21 +36,20 @@ type MoveTargetGroupUseCase struct {
 	repo          Repo
 	opsRepo       OpsRepo
 	projectClient ProjectClient
-	fgaWriter     HierarchyWriter
 	logger        *slog.Logger
 }
 
 // NewMoveTargetGroupUseCase конструктор.
 func NewMoveTargetGroupUseCase(
 	repo Repo, opsRepo OpsRepo,
-	pc ProjectClient, fga HierarchyWriter, logger *slog.Logger,
+	pc ProjectClient, logger *slog.Logger,
 ) *MoveTargetGroupUseCase {
 	if logger == nil {
 		logger = slog.Default()
 	}
 	return &MoveTargetGroupUseCase{
 		repo: repo, opsRepo: opsRepo,
-		projectClient: pc, fgaWriter: fga, logger: logger,
+		projectClient: pc, logger: logger,
 	}
 }
 
@@ -154,12 +154,17 @@ func (u *MoveTargetGroupUseCase) doMove(ctx context.Context, id, srcProject, dst
 	); err != nil {
 		return nil, mapDomainErr(err)
 	}
+	// SEC-D: project-rewrite as register(dst) + unregister(src) in the SAME tx.
+	if err := w.FGARegisterOutbox().Emit(ctx, domain.FGAEventRegister,
+		tgUnregisterIntent(id, dstProject)); err != nil {
+		return nil, mapDomainErr(err)
+	}
+	if err := w.FGARegisterOutbox().Emit(ctx, domain.FGAEventUnregister,
+		tgUnregisterIntent(id, srcProject)); err != nil {
+		return nil, mapDomainErr(err)
+	}
 	if err := w.Commit(); err != nil {
 		return nil, mapDomainErr(err)
 	}
-
-	fgawrite.EmitProjectRewrite(ctx, u.fgaWriter,
-		loggerOrDiscard(u.logger).With("tg_id", id),
-		fgawrite.ObjectTypeTargetGroup, id, srcProject, dstProject)
 	return marshalTargetGroup(moved)
 }

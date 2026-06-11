@@ -32,8 +32,9 @@ import (
 // на project'е).
 const (
 	// KAC-227: object types MUST match the FGA model (iam/v1/fga_model.fga) and
-	// the nlb tuple-writes (internal/.../fgawrite) — both use the `lb_*` prefix.
-	// The interceptor Checks these object types; mismatched names → no tuple →
+	// the nlb owner-tuple intents (internal/domain FGAObjectType*, applied via
+	// SEC-D fga_register_outbox → IAM) — both use the `lb_*` prefix. The
+	// interceptor Checks these object types; mismatched names → no tuple →
 	// per-RPC 403 even when the gateway-edge FGA Check allowed.
 	objectTypeProject      = "project"
 	objectTypeLoadBalancer = "lb_network_load_balancer"

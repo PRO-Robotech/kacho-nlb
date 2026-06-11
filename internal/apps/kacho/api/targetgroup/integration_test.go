@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -30,6 +31,10 @@ import (
 	"github.com/PRO-Robotech/kacho-nlb/internal/migrations"
 	kachopg "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho/pg"
 )
+
+// gooseMu serialises goose's package-level globals (SetBaseFS / SetDialect / Up),
+// which are not goroutine-safe; parallel integration tests each apply migrations.
+var gooseMu sync.Mutex
 
 // setupDB поднимает изолированный Postgres + накатывает migrations.
 func setupDB(t *testing.T) (*pgxpool.Pool, *kachopg.Repository) {
@@ -57,9 +62,14 @@ func setupDB(t *testing.T) (*pgxpool.Pool, *kachopg.Repository) {
 	require.NoError(t, err)
 	defer func() { _ = db.Close() }()
 
+	gooseMu.Lock()
 	goose.SetBaseFS(migrations.FS)
-	require.NoError(t, goose.SetDialect("postgres"))
-	require.NoError(t, goose.Up(db, "."))
+	err = goose.SetDialect("postgres")
+	if err == nil {
+		err = goose.Up(db, ".")
+	}
+	gooseMu.Unlock()
+	require.NoError(t, err)
 
 	if !strings.Contains(dsn, "options=") {
 		sep := "?"
@@ -99,7 +109,7 @@ func mkHandler(t *testing.T, repo *kachopg.Repository, opsRepo operations.Repo) 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
 	// nil peer-clients — Create/AddTargets/Move skip peer-validate (acceptable
 	// для integration сценариев DB happy-paths).
-	return targetgroup.NewHandler(repo, opsRepo, nil, nil, nil, nil, nil, nil, logger)
+	return targetgroup.NewHandler(repo, opsRepo, nil, nil, nil, nil, nil, logger)
 }
 
 // ---- Integration tests -----------------------------------------------------

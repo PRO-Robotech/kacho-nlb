@@ -14,6 +14,7 @@ import (
 	"github.com/PRO-Robotech/kacho-corelib/operations"
 	lbv1 "github.com/PRO-Robotech/kacho-proto/gen/go/kacho/cloud/loadbalancer/v1"
 
+	"github.com/PRO-Robotech/kacho-nlb/internal/domain"
 	kachopg "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho/pg"
 )
 
@@ -126,6 +127,11 @@ func (u *DeleteTargetGroupUseCase) doDelete(ctx context.Context, id, projectID s
 		kachopg.OutboxResourceTargetGroup, id, projectID,
 		kachopg.OutboxActionDeleted, map[string]any{"id": id, "project_id": projectID},
 	); err != nil {
+		return nil, mapDomainErr(err)
+	}
+	// SEC-D: FGA-unregister-intent (project-hierarchy) in the SAME tx as Delete.
+	if err := w.FGARegisterOutbox().Emit(ctx, domain.FGAEventUnregister,
+		tgUnregisterIntent(id, projectID)); err != nil {
 		return nil, mapDomainErr(err)
 	}
 	if err := w.Commit(); err != nil {

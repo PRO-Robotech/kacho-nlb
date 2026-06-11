@@ -30,22 +30,21 @@ type Handler struct {
 // NewHandler — composition-root constructor.
 //
 // Все adapters передаются через port-интерфейсы (`internal/clients/*`,
-// `internal/repo/kacho.Repository`). nil-зависимости (hierarchyWriter / logger)
-// допускаются — Create/Delete UseCase это переживают (см. helpers.loggerOrDiscard
-// и fga write best-effort).
+// `internal/repo/kacho.Repository`). nil-зависимость logger допускается — Create/
+// Delete UseCase это переживают (см. helpers.loggerOrDiscard). FGA owner/parent-
+// link tuple-регистрация — через SEC-D outbox (FGARegisterOutbox в writer-tx).
 func NewHandler(
 	repo RepoFactory,
 	opsRepo OperationsRepo,
 	addresses AddressClient,
 	internalAddrs InternalAddressClient,
 	subnets SubnetClient,
-	hierarchyWriter HierarchyWriter,
 	logger *slog.Logger,
 ) *Handler {
 	return &Handler{
 		get:            NewGetUseCase(repo),
 		list:           NewListUseCase(repo),
-		create:         NewCreateUseCase(repo, opsRepo, addresses, internalAddrs, subnets, hierarchyWriter, logger),
+		create:         NewCreateUseCase(repo, opsRepo, addresses, internalAddrs, subnets, logger),
 		update:         NewUpdateUseCase(repo, opsRepo, logger),
 		deleteUC:       NewDeleteUseCase(repo, opsRepo, addresses, internalAddrs, logger),
 		listOperations: NewListOperationsUseCase(opsRepo),

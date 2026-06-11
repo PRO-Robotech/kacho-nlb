@@ -45,6 +45,13 @@ type BuildOptions struct {
 	DialTimeout   time.Duration // dial backoff target (default 10s)
 	KeepAliveTime time.Duration // ping every (default 30s)
 	UserAgent     string        // gRPC User-Agent (default "kacho-nlb")
+
+	// MTLSCreds — SEC-D opt-in per-edge mTLS transport-credentials (built from
+	// the corelib grpcclient.TLSClient via clients.MTLSCredsFor). When non-nil it
+	// OVERRIDES the simple TLS bool above: the dial presents a client-cert and
+	// verifies the server-cert against the configured CA + server_name (SEC-B).
+	// nil → fall back to buildCreds(opts.TLS) (legacy system-trust TLS / insecure).
+	MTLSCreds credentials.TransportCredentials
 }
 
 const (
@@ -79,7 +86,11 @@ func Build(ctx context.Context, opts BuildOptions) (Conn, error) {
 	}
 	opts = opts.withDefaults()
 
-	creds := buildCreds(opts.TLS)
+	// SEC-D: per-edge mTLS creds override the legacy TLS bool when provided.
+	creds := opts.MTLSCreds
+	if creds == nil {
+		creds = buildCreds(opts.TLS)
+	}
 
 	cc, err := corlibgrpc.ClientFromAddress(opts.Endpoint).
 		WithCreds(creds).

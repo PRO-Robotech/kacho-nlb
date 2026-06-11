@@ -52,7 +52,6 @@ func NewHandler(
 	peerInstance InstanceClient,
 	peerNIC NetworkInterfaceClient,
 	peerSubnet SubnetClient,
-	peerHierarchy HierarchyWriter,
 	logger *slog.Logger,
 ) *Handler {
 	if logger == nil {
@@ -61,10 +60,10 @@ func NewHandler(
 	return &Handler{
 		get:           NewGetTargetGroupUseCase(repo),
 		list:          NewListTargetGroupsUseCase(repo),
-		create:        NewCreateTargetGroupUseCase(repo, opsRepo, peerProject, peerRegion, peerHierarchy, logger),
+		create:        NewCreateTargetGroupUseCase(repo, opsRepo, peerProject, peerRegion, logger),
 		update:        NewUpdateTargetGroupUseCase(repo, opsRepo, logger),
 		deleteUC:      NewDeleteTargetGroupUseCase(repo, opsRepo, logger),
-		move:          NewMoveTargetGroupUseCase(repo, opsRepo, peerProject, peerHierarchy, logger),
+		move:          NewMoveTargetGroupUseCase(repo, opsRepo, peerProject, logger),
 		addTargets:    NewAddTargetsUseCase(repo, opsRepo, peerInstance, peerNIC, peerSubnet, logger),
 		removeTargets: NewRemoveTargetsUseCase(repo, opsRepo, logger),
 		listOps:       NewListOperationsUseCase(opsRepo),

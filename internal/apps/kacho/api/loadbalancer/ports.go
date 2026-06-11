@@ -27,11 +27,6 @@ type ProjectClient = iamclient.ProjectClient
 // в Create use-case'е для валидации `region_id`.
 type RegionClient = computeclient.RegionClient
 
-// HierarchyWriter — D-11 sync hierarchy tuple write to kacho-iam после успешного
-// Insert (Create) или MoveProject (Move). Не блокирует commit — best-effort log
-// с error trail.
-type HierarchyWriter = iamclient.HierarchyWriter
-
 // Logger — узкий port логгера; вся работа use-case'ов и worker'ов идёт через
 // этот интерфейс — concrete *slog.Logger удовлетворяет его автоматически.
 type Logger interface {
@@ -40,4 +35,3 @@ type Logger interface {
 	Error(msg string, args ...any)
 	Debug(msg string, args ...any)
 }
-

@@ -49,7 +49,7 @@ func TestHandler_RoutesEachRPC(t *testing.T) {
 
 	ops := newFakeOpsRepo()
 	internalAddrs := newFakeInternalAddressClient()
-	h := NewHandler(repo, ops, newFakeAddressClient(), internalAddrs, newFakeSubnetClient(), newFakeHierarchyWriter(), slog.Default())
+	h := NewHandler(repo, ops, newFakeAddressClient(), internalAddrs, newFakeSubnetClient(), slog.Default())
 
 	t.Run("Get", func(t *testing.T) {
 		t.Parallel()
@@ -87,8 +87,8 @@ func TestHandler_RoutesEachRPC(t *testing.T) {
 	t.Run("Update", func(t *testing.T) {
 		t.Parallel()
 		op, err := h.Update(context.Background(), &lbv1.UpdateListenerRequest{
-			ListenerId: string(listener.ID),
-			UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"description"}},
+			ListenerId:  string(listener.ID),
+			UpdateMask:  &fieldmaskpb.FieldMask{Paths: []string{"description"}},
 			Description: "handler-set",
 		})
 		require.NoError(t, err)

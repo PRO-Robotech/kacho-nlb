@@ -32,32 +32,32 @@ import (
 type Handler struct {
 	lbv1.UnimplementedNetworkLoadBalancerServiceServer
 
-	get               *GetLoadBalancerUseCase
-	list              *ListLoadBalancersUseCase
-	create            *CreateLoadBalancerUseCase
-	update            *UpdateLoadBalancerUseCase
-	deleteUC          *DeleteLoadBalancerUseCase
-	start             *StartLoadBalancerUseCase
-	stop              *StopLoadBalancerUseCase
-	move              *MoveLoadBalancerUseCase
-	attachTG          *AttachTargetGroupUseCase
-	detachTG          *DetachTargetGroupUseCase
-	getTargetStates   *GetTargetStatesUseCase
-	listOps           *ListOperationsUseCase
+	get             *GetLoadBalancerUseCase
+	list            *ListLoadBalancersUseCase
+	create          *CreateLoadBalancerUseCase
+	update          *UpdateLoadBalancerUseCase
+	deleteUC        *DeleteLoadBalancerUseCase
+	start           *StartLoadBalancerUseCase
+	stop            *StopLoadBalancerUseCase
+	move            *MoveLoadBalancerUseCase
+	attachTG        *AttachTargetGroupUseCase
+	detachTG        *DetachTargetGroupUseCase
+	getTargetStates *GetTargetStatesUseCase
+	listOps         *ListOperationsUseCase
 }
 
 // NewHandler собирает Handler с одним набором common-зависимостей. Composition
 // root вызывает это один раз и регистрирует на publicSrv.
 //
-// peerProject / peerRegion / peerHierarchy могут быть nil (dev-mode без
-// peer-сервисов) — use-case'ы при отсутствующем peer'е fail-close с
-// Unavailable / "<peer> not configured".
+// peerProject / peerRegion могут быть nil (dev-mode без peer-сервисов) —
+// use-case'ы при отсутствующем peer'е fail-close с Unavailable / "<peer> not
+// configured". FGA owner-tuple-регистрация — через SEC-D transactional-outbox
+// (register-drainer → IAM), не через peer-client здесь.
 func NewHandler(
 	repo Repo,
 	opsRepo operations.Repo,
 	peerProject ProjectClient,
 	peerRegion RegionClient,
-	peerHierarchy HierarchyWriter,
 	logger *slog.Logger,
 ) *Handler {
 	if logger == nil {
@@ -66,12 +66,12 @@ func NewHandler(
 	return &Handler{
 		get:             NewGetLoadBalancerUseCase(repo),
 		list:            NewListLoadBalancersUseCase(repo),
-		create:          NewCreateLoadBalancerUseCase(repo, opsRepo, peerProject, peerRegion, peerHierarchy, logger),
+		create:          NewCreateLoadBalancerUseCase(repo, opsRepo, peerProject, peerRegion, logger),
 		update:          NewUpdateLoadBalancerUseCase(repo, opsRepo, logger),
 		deleteUC:        NewDeleteLoadBalancerUseCase(repo, opsRepo, logger),
 		start:           NewStartLoadBalancerUseCase(repo, opsRepo, logger),
 		stop:            NewStopLoadBalancerUseCase(repo, opsRepo, logger),
-		move:            NewMoveLoadBalancerUseCase(repo, opsRepo, peerProject, peerHierarchy, logger),
+		move:            NewMoveLoadBalancerUseCase(repo, opsRepo, peerProject, logger),
 		attachTG:        NewAttachTargetGroupUseCase(repo, opsRepo, logger),
 		detachTG:        NewDetachTargetGroupUseCase(repo, opsRepo, logger),
 		getTargetStates: NewGetTargetStatesUseCase(repo),

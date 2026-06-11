@@ -3,15 +3,16 @@
 // Иерархия секций — спека `docs/superpowers/specs/2026-05-23-kacho-nlb-design.md §6.9`:
 //
 //	logger / api-server / metrics / healthcheck / repository.postgres /
-//	authn / extapi / authz.iam (+ cache, listen-invalidator) / fga.tuple-write.
+//	authn / extapi / authz.iam (+ cache, listen-invalidator) /
+//	fga.register-drainer (SEC-D) / mtls (SEC-B opt-in).
 //
 // ENV-binding через viper с делимитером `__`:
 //
-//	KACHO_NLB_API_SERVER__ENDPOINT           → api-server.endpoint
-//	KACHO_NLB_REPOSITORY__POSTGRES__URL      → repository.postgres.url
-//	KACHO_NLB_AUTHZ__IAM__ADDR               → authz.iam.addr
-//	KACHO_NLB_FGA__TUPLE_WRITE__TIMEOUT      → fga.tuple-write.timeout
-//	KACHO_NLB_LOGGER__LEVEL                  → logger.level
+//	KACHO_NLB_API_SERVER__ENDPOINT              → api-server.endpoint
+//	KACHO_NLB_REPOSITORY__POSTGRES__URL         → repository.postgres.url
+//	KACHO_NLB_AUTHZ__IAM__ADDR                  → authz.iam.addr
+//	KACHO_NLB_FGA__REGISTER_DRAINER__ENABLE     → fga.register-drainer.enable
+//	KACHO_NLB_LOGGER__LEVEL                     → logger.level
 //
 // Defaults — в `defaults.go` (`RegisterDefaults`); validation — в `validate.go`
 // (`Config.Validate()`, `Mode` enum); loader — в `load.go` (`Load(path)`).
@@ -23,7 +24,12 @@
 //   - НЕ `cfg.AuthMode` — `cfg.Mode` (общий режим работы, а не «auth mode»).
 package config
 
-import "time"
+import (
+	"time"
+
+	"github.com/PRO-Robotech/kacho-corelib/grpcclient"
+	"github.com/PRO-Robotech/kacho-corelib/grpcsrv"
+)
 
 // Config — корневой config kacho-nlb. Все вложенные структуры с mapstructure-тегами
 // для viper-биндинга; defaults — в `defaults.go`, validation — в `validate.go`.
@@ -43,6 +49,7 @@ type Config struct {
 	ExtAPI      ExtAPIConfig      `mapstructure:"extapi"`
 	Authz       AuthzConfig       `mapstructure:"authz"`
 	FGA         FGAConfig         `mapstructure:"fga"`
+	MTLS        MTLSConfig        `mapstructure:"mtls"`
 	Jobs        JobsConfig        `mapstructure:"jobs"`
 
 	// InternalLifecycle — параметры InternalResourceLifecycleService.Subscribe
@@ -164,23 +171,65 @@ type AuthzCacheConfig struct {
 }
 
 type AuthzListenInvalidatorConfig struct {
-	Enable     bool   `mapstructure:"enable"`     // LISTEN kacho_iam_subjects on iam-PG
-	Channel    string `mapstructure:"channel"`    // default "kacho_iam_subjects"
-	IAMDirectDSN string `mapstructure:"iam-dsn"`  // dedicated pgx conn to iam-DB (optional)
+	Enable       bool   `mapstructure:"enable"`  // LISTEN kacho_iam_subjects on iam-PG
+	Channel      string `mapstructure:"channel"` // default "kacho_iam_subjects"
+	IAMDirectDSN string `mapstructure:"iam-dsn"` // dedicated pgx conn to iam-DB (optional)
 }
 
-// ─── FGA (tuple write) ───────────────────────────────────────────────────────
+// ─── FGA (owner-tuple registration via IAM, SEC-D) ───────────────────────────
 
+// FGAConfig — SEC-D: kacho-nlb НЕ ходит в FGA напрямую (эпик #6, GitHub Issue N5).
+// Прямой best-effort tuple-write (OpenFGA endpoint/store/model) удалён; вместо него
+// owner-hierarchy tuple пишется register-intent'ом в `fga_register_outbox` в той же
+// writer-tx (Вариант A), а register-drainer применяет его через kacho-iam
+// InternalIAMService.RegisterResource/UnregisterResource по mTLS.
 type FGAConfig struct {
-	Endpoint   string             `mapstructure:"endpoint"`    // OpenFGA HTTP/gRPC endpoint
-	StoreID    string             `mapstructure:"store-id"`    // FGA store identifier
-	ModelID    string             `mapstructure:"model-id"`    // optional explicit authorization model
-	TupleWrite FGATupleWriteConfig `mapstructure:"tuple-write"`
+	// RegisterDrainer — SEC-D register-drainer (fga_register_outbox → IAM
+	// RegisterResource/UnregisterResource). OQ-SEC-D-5: default-on (без него
+	// созданные ресурсы не получат owner-tuple — деградация хуже текущей).
+	RegisterDrainer FGARegisterDrainerConfig `mapstructure:"register-drainer"`
 }
 
-type FGATupleWriteConfig struct {
-	Timeout    time.Duration `mapstructure:"timeout"`     // default 2s
-	MaxRetries int           `mapstructure:"max-retries"` // default 3
+// FGARegisterDrainerConfig — параметры corelib outbox/drainer на таблице
+// `kacho_nlb.fga_register_outbox` (SEC-D Вариант A). Drainer — внутренняя
+// goroutine (не cross-cluster flag); под FOR UPDATE SKIP LOCKED claim одна
+// реплика дренит каждую строку (exactly-once across pods).
+type FGARegisterDrainerConfig struct {
+	Enable       bool          `mapstructure:"enable"`        // default true (OQ-SEC-D-5)
+	BatchSize    int           `mapstructure:"batch-size"`    // default 32
+	PollFallback time.Duration `mapstructure:"poll-fallback"` // default 30s (missed-NOTIFY safety)
+	MaxAttempts  int           `mapstructure:"max-attempts"`  // default 10 (poison threshold)
+	BackoffMin   time.Duration `mapstructure:"backoff-min"`   // default 1s
+	BackoffMax   time.Duration `mapstructure:"backoff-max"`   // default 30s
+}
+
+// ─── mTLS (SEC-B opt-in, per-edge) ───────────────────────────────────────────
+
+// MTLSConfig — per-edge mTLS via corelib SEC-B value-structs. enable=false
+// (default) → insecure (dev backward-compat, эпик §5). Каждое ребро —
+// независимый enable (эпик §6.5 rollback per-edge).
+//
+// ENV (viper, делимитер `.`→`__`; hyphen in a section name stays literal):
+// mapstructure лоуэркейсит имена полей corelib-структур →
+// `enable`/`certfile`/`keyfile`/`clientcafiles`/`cafiles`/`servername`:
+//
+//	KACHO_NLB_MTLS__SERVER__ENABLE                 → server listener mTLS
+//	KACHO_NLB_MTLS__SERVER__CERTFILE / __KEYFILE / __CLIENTCAFILES
+//	KACHO_NLB_MTLS__IAM-REGISTER__ENABLE           → nlb→iam (RegisterResource)
+//	KACHO_NLB_MTLS__IAM-REGISTER__CERTFILE / __KEYFILE / __CAFILES / __SERVERNAME
+//	KACHO_NLB_MTLS__VPC__*                         → nlb→vpc
+//	KACHO_NLB_MTLS__COMPUTE__*                     → nlb→compute
+type MTLSConfig struct {
+	// Server — server-cert на public+internal listener'ах (RequireAndVerify-
+	// ClientCert при enable=true).
+	Server grpcsrv.TLSServer `mapstructure:"server"`
+	// IAMRegister — client-cert на ребре nlb→iam (register-drainer →
+	// RegisterResource/UnregisterResource по mTLS, SEC-D-17/21).
+	IAMRegister grpcclient.TLSClient `mapstructure:"iam-register"`
+	// VPC — client-cert на ребре nlb→vpc (Address/Subnet/NIC IPAM, SEC-D-18).
+	VPC grpcclient.TLSClient `mapstructure:"vpc"`
+	// Compute — client-cert на ребре nlb→compute (Region/Instance, SEC-D-19).
+	Compute grpcclient.TLSClient `mapstructure:"compute"`
 }
 
 // ─── Jobs (background workers) ───────────────────────────────────────────────

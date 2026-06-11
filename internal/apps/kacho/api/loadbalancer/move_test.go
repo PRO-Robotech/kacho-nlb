@@ -20,8 +20,7 @@ func TestMove_HappyPath(t *testing.T) {
 	repo := newFakeRepo()
 	lbID := seedLB(t, repo, "prj-src", "edge")
 	opsRepo := newFakeOpsRepo()
-	fga := &fakeHierarchy{}
-	uc := NewMoveLoadBalancerUseCase(repo, opsRepo, &fakeProjectClient{}, fga, slog.Default())
+	uc := NewMoveLoadBalancerUseCase(repo, opsRepo, &fakeProjectClient{}, slog.Default())
 	op, err := uc.Execute(context.Background(), &lbv1.MoveNetworkLoadBalancerRequest{
 		NetworkLoadBalancerId: lbID,
 		DestinationProjectId:  "prj-dst",
@@ -30,14 +29,19 @@ func TestMove_HappyPath(t *testing.T) {
 	final := awaitOpDone(t, opsRepo, op.ID)
 	require.Nil(t, final.Error)
 	require.Equal(t, domain.ProjectID("prj-dst"), repo.lbs[lbID].ProjectID)
-	require.Len(t, fga.rewriteCalls, 1, "expected FGA rewrite call")
+	// SEC-D: project-rewrite = register(dst) + unregister(src) intents in writer-tx.
+	require.Len(t, repo.fga, 2, "expected register(dst)+unregister(src) intents")
+	require.Equal(t, domain.FGAEventRegister, repo.fga[0].EventType)
+	require.Equal(t, "project:prj-dst", repo.fga[0].Intent.Tuples[0].SubjectID)
+	require.Equal(t, domain.FGAEventUnregister, repo.fga[1].EventType)
+	require.Equal(t, "project:prj-src", repo.fga[1].Intent.Tuples[0].SubjectID)
 }
 
 func TestMove_SameProject(t *testing.T) {
 	t.Parallel()
 	repo := newFakeRepo()
 	lbID := seedLB(t, repo, "prj-a", "edge")
-	uc := NewMoveLoadBalancerUseCase(repo, newFakeOpsRepo(), &fakeProjectClient{}, nil, nil)
+	uc := NewMoveLoadBalancerUseCase(repo, newFakeOpsRepo(), &fakeProjectClient{}, nil)
 	_, err := uc.Execute(context.Background(), &lbv1.MoveNetworkLoadBalancerRequest{
 		NetworkLoadBalancerId: lbID,
 		DestinationProjectId:  "prj-a",
@@ -52,7 +56,7 @@ func TestMove_BlockedIfAttachedTG(t *testing.T) {
 	repo.pivot[lbID+"/tgr-fake"] = &kachorepo.AttachedTargetGroupRecord{
 		LoadBalancerID: lbID, TargetGroupID: "tgr-fake",
 	}
-	uc := NewMoveLoadBalancerUseCase(repo, newFakeOpsRepo(), &fakeProjectClient{}, nil, nil)
+	uc := NewMoveLoadBalancerUseCase(repo, newFakeOpsRepo(), &fakeProjectClient{}, nil)
 	_, err := uc.Execute(context.Background(), &lbv1.MoveNetworkLoadBalancerRequest{
 		NetworkLoadBalancerId: lbID,
 		DestinationProjectId:  "prj-dst",
@@ -64,7 +68,7 @@ func TestMove_EmptyDst(t *testing.T) {
 	t.Parallel()
 	repo := newFakeRepo()
 	lbID := seedLB(t, repo, "prj-a", "edge")
-	uc := NewMoveLoadBalancerUseCase(repo, newFakeOpsRepo(), nil, nil, nil)
+	uc := NewMoveLoadBalancerUseCase(repo, newFakeOpsRepo(), nil, nil)
 	_, err := uc.Execute(context.Background(), &lbv1.MoveNetworkLoadBalancerRequest{
 		NetworkLoadBalancerId: lbID,
 	})
@@ -73,7 +77,7 @@ func TestMove_EmptyDst(t *testing.T) {
 
 func TestMove_NotFound(t *testing.T) {
 	t.Parallel()
-	uc := NewMoveLoadBalancerUseCase(newFakeRepo(), newFakeOpsRepo(), nil, nil, nil)
+	uc := NewMoveLoadBalancerUseCase(newFakeRepo(), newFakeOpsRepo(), nil, nil)
 	_, err := uc.Execute(context.Background(), &lbv1.MoveNetworkLoadBalancerRequest{
 		NetworkLoadBalancerId: "nlb-x",
 		DestinationProjectId:  "prj-dst",

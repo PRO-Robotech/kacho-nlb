@@ -5,9 +5,8 @@ import (
 
 	"github.com/PRO-Robotech/kacho-corelib/operations"
 
-	iamclient "github.com/PRO-Robotech/kacho-nlb/internal/clients/iam"
 	vpcclient "github.com/PRO-Robotech/kacho-nlb/internal/clients/vpc"
-	"github.com/PRO-Robotech/kacho-nlb/internal/fgawrite"
+	"github.com/PRO-Robotech/kacho-nlb/internal/domain"
 	kachorepo "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho"
 )
 
@@ -35,9 +34,9 @@ type InternalAddressClient = vpcclient.InternalAddressClient
 // subnet validation, same project + denormalised region resolve).
 type SubnetClient = vpcclient.SubnetClient
 
-// HierarchyWriter — iam.InternalIAMService.WriteCreatorTuple wrapper for
-// D-11 sync hierarchy tuple emit after Listener row commit.
-type HierarchyWriter = iamclient.HierarchyWriter
+// FGA owner-hierarchy / creator / parent-link tuple-регистрация — через SEC-D
+// transactional-outbox (FGARegisterOutbox emit в writer-tx + register-drainer →
+// IAM), не прямым FGA-клиентом. FGA object-types / relations — `internal/domain`.
 
 // addressOwner — package-internal helper для построения VPC owner tuple
 // (`{Kind:"nlb_listener", ID:<listener-id>}`). Используется при alloc,
@@ -53,9 +52,8 @@ func addressOwner(listenerID string) vpcclient.AddressOwner {
 // `used_by` (design §4.2 «owner="nlb_listener:<id>"`).
 const addressOwnerKindNLBListener = "nlb_listener"
 
-// FGA object-type strings — moved to `internal/fgawrite` (single source of
-// truth, kacho-nlb-wide). Use `fgawrite.ObjectTypeListener` /
-// `fgawrite.ObjectTypeLoadBalancer`.
+// FGA object-type strings live in `internal/domain` (single source of truth,
+// kacho-nlb-wide): `domain.FGAObjectTypeListener` / `domain.FGAObjectTypeLoadBalancer`.
 
 // outboxResourceTypeListener / outboxResourceTypeLoadBalancer — resource_type
 // в `nlb_outbox` (design §3.9; ограничено CHECK CONSTRAINT в миграции 0001).
@@ -72,8 +70,8 @@ const (
 	outboxActionFailed  = "FAILED"
 )
 
-// FGA relation strings — moved to `internal/fgawrite`. Use
-// `fgawrite.RelationOwner` / `fgawrite.RelationLoadBalancer`.
+// FGA relation strings live in `internal/domain`:
+// `domain.FGARelationAdmin` / `domain.FGARelationLoadBalancer`.
 
 // permissionsCtxAccessor — port для извлечения acting subject FGA-id из ctx.
 // На E0 (без auth-interceptor) возвращает "" → creator tuple не пишется
@@ -90,8 +88,9 @@ type permissionsCtxAccessor interface {
 type principalSubjectAccessor struct{}
 
 // SubjectFromContext — см. permissionsCtxAccessor. Delegates to
-// `fgawrite.SubjectFromPrincipal` so the subject-string format stays in one
+// `domain.FGASubjectFromPrincipal` so the subject-string format stays in one
 // place across LB/Listener/TG.
 func (principalSubjectAccessor) SubjectFromContext(ctx context.Context) string {
-	return fgawrite.SubjectFromPrincipal(operations.PrincipalFromContext(ctx))
+	p := operations.PrincipalFromContext(ctx)
+	return domain.FGASubjectFromPrincipal(p.Type, p.ID)
 }

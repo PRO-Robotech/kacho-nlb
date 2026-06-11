@@ -134,6 +134,13 @@ func (w *writerImpl) Outbox() kacho.OutboxEmitter {
 	return &outboxEmitter{tx: w.tx}
 }
 
+// FGARegisterOutbox — emit FGA-register-intent в `fga_register_outbox` в той же
+// tx-области writer'а (SEC-D). DML ресурса + register-intent атомарны одной
+// writer-tx (epic §3.1 Вариант A — no dual-write).
+func (w *writerImpl) FGARegisterOutbox() kacho.FGARegisterEmitter {
+	return &fgaRegisterEmitter{tx: w.tx}
+}
+
 // Commit финализирует write-TX. После Commit вызов Abort — no-op.
 func (w *writerImpl) Commit() error {
 	if w.finalised {

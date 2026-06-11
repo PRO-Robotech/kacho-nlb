@@ -20,7 +20,7 @@ func TestHandler_RoutesAllRPCs(t *testing.T) {
 		newFakeRepo(), newFakeOpsRepo(),
 		&fakeProjectClient{}, &fakeRegionClient{},
 		&fakeInstanceClient{}, &fakeNICClient{}, &fakeSubnetClient{},
-		&fakeHierarchy{}, nil,
+		nil,
 	)
 
 	t.Run("Get empty id → InvalidArgument", func(t *testing.T) {
@@ -80,7 +80,7 @@ func TestHandler_TolerantToNilPeers(t *testing.T) {
 	repo := newFakeRepo()
 	tg := makeTG("prj-acme", "nil-peers")
 	repo.seedTG(tg)
-	h := NewHandler(repo, newFakeOpsRepo(), nil, nil, nil, nil, nil, nil, nil)
+	h := NewHandler(repo, newFakeOpsRepo(), nil, nil, nil, nil, nil, nil)
 
 	// Get all-sync path работает без peer'ов.
 	resp, err := h.Get(context.Background(), &lbv1.GetTargetGroupRequest{

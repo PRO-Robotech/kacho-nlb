@@ -17,7 +17,6 @@ import (
 
 	vpcclient "github.com/PRO-Robotech/kacho-nlb/internal/clients/vpc"
 	"github.com/PRO-Robotech/kacho-nlb/internal/domain"
-	"github.com/PRO-Robotech/kacho-nlb/internal/fgawrite"
 )
 
 // CreateUseCase инициирует создание Listener'а (acceptance GWT-LST-001..LST-015).
@@ -42,10 +41,11 @@ import (
 //  2. repo.Writer open: Insert listener (with allocated_address + address_id) +
 //     outbox emit `nlb_listener:<id> CREATED` + `nlb_load_balancer:<lb_id> UPDATED`
 //     atomically.
-//  3. Commit. Если ошибка после Commit (defer compensation no-op).
-//  4. fgawrite: best-effort WriteCreatorTuple(`owner`, "nlb_listener:<id>") +
-//     parent-link tuple `nlb_listener:<id>#load_balancer@nlb_load_balancer:<lb_id>`.
-//  5. operations.Run возвращает marshalled Listener → ops.MarkDone(response).
+//  3. Commit (Insert + 2× outbox + FGA-register-intent atomically — SEC-D:
+//     creator tuple + parent-link tuple
+//     `lb_network_load_balancer:<lb_id>#load_balancer@lb_listener:<id>` written
+//     in the SAME writer-tx; register-drainer applies it through kacho-iam).
+//  4. operations.Run возвращает marshalled Listener → ops.MarkDone(response).
 //
 // Compensation (defer guard в worker):
 //   - VIP allocated AND (subsequent SetReference|Insert|Commit failed) →
@@ -54,38 +54,36 @@ import (
 //     ошибка compensation НЕ маскирует исходную ошибку worker'а (она важнее
 //     для caller'а; cleanup только log'ируется).
 type CreateUseCase struct {
-	repo            RepoFactory
-	opsRepo         OperationsRepo
-	addresses       AddressClient         // BYO: Address.Get
-	internalAddrs   InternalAddressClient // Auto-alloc + SetReference + Free + Clear
-	subnets         SubnetClient          // INTERNAL Listener subnet validation
-	hierarchyWriter HierarchyWriter       // D-11 sync hierarchy tuples (best-effort)
-	subject         permissionsCtxAccessor
-	logger          *slog.Logger
+	repo          RepoFactory
+	opsRepo       OperationsRepo
+	addresses     AddressClient         // BYO: Address.Get
+	internalAddrs InternalAddressClient // Auto-alloc + SetReference + Free + Clear
+	subnets       SubnetClient          // INTERNAL Listener subnet validation
+	subject       permissionsCtxAccessor
+	logger        *slog.Logger
 }
 
 // NewCreateUseCase — конструктор. Все зависимости — port-интерфейсы (composition
-// root wires в `cmd/kacho-loadbalancer/main.go`). hierarchyWriter и logger
-// допускаются nil (dev mode без FGA) — write-helpers это переживают (см.
-// helpers.go loggerOrDiscard).
+// root wires в `cmd/kacho-loadbalancer/main.go`). logger допускается nil — write-
+// helpers это переживают (см. helpers.go loggerOrDiscard). FGA owner/parent-link
+// tuple-регистрация — через SEC-D outbox (FGARegisterOutbox в writer-tx), не
+// прямым FGA-клиентом.
 func NewCreateUseCase(
 	repo RepoFactory,
 	opsRepo OperationsRepo,
 	addresses AddressClient,
 	internalAddrs InternalAddressClient,
 	subnets SubnetClient,
-	hierarchyWriter HierarchyWriter,
 	logger *slog.Logger,
 ) *CreateUseCase {
 	return &CreateUseCase{
-		repo:            repo,
-		opsRepo:         opsRepo,
-		addresses:       addresses,
-		internalAddrs:   internalAddrs,
-		subnets:         subnets,
-		hierarchyWriter: hierarchyWriter,
-		subject:         principalSubjectAccessor{},
-		logger:          logger,
+		repo:          repo,
+		opsRepo:       opsRepo,
+		addresses:     addresses,
+		internalAddrs: internalAddrs,
+		subnets:       subnets,
+		subject:       principalSubjectAccessor{},
+		logger:        logger,
 	}
 }
 
@@ -173,10 +171,10 @@ func (u *CreateUseCase) Run(ctx context.Context, req *lbv1.CreateListenerRequest
 	// возврата Operation; worker должен жить на собственном baggage-ctx.
 	subject := u.subject.SubjectFromContext(ctx)
 	in := createInput{
-		listener:  listener,
-		addrCtx:   addrCtx,
-		lb:        lb,
-		fgaOwner:  subject,
+		listener: listener,
+		addrCtx:  addrCtx,
+		lb:       lb,
+		fgaOwner: subject,
 	}
 	operations.Run(ctx, u.opsRepo, op.ID, func(workerCtx context.Context) (*anypb.Any, error) {
 		return u.doCreate(workerCtx, in)
@@ -330,16 +328,19 @@ func (u *CreateUseCase) doCreate(ctx context.Context, in createInput) (*anypb.An
 		rolledBack = true
 		return nil, mapDomainErr(fmt.Errorf("%w: outbox emit lb UPDATED: %v", domain.ErrInternal, err))
 	}
+	// SEC-D: FGA-register-intent (creator + parent-link) in the SAME writer-tx as
+	// the Insert — register-drainer applies it through kacho-iam RegisterResource.
+	if err := w.FGARegisterOutbox().Emit(ctx, domain.FGAEventRegister,
+		listenerRegisterIntent(created.ID, in.lb.ID, in.fgaOwner)); err != nil {
+		w.Abort()
+		rolledBack = true
+		return nil, mapDomainErr(fmt.Errorf("%w: fga register-intent emit: %v", domain.ErrInternal, err))
+	}
 	if err := w.Commit(); err != nil {
 		rolledBack = true
 		return nil, mapDomainErr(err)
 	}
 	committed = true
-
-	// D-11 sync hierarchy tuple writes. Best-effort + non-fatal — listener row
-	// already durable. Failures logged through helper (zero-deps; pattern
-	// mirrors kacho-vpc/internal/apps/kacho/fgawrite.Emit).
-	u.emitHierarchyTuples(ctx, created.ID, in.lb.ID, in.fgaOwner)
 
 	return marshalListener(created)
 }
@@ -348,7 +349,7 @@ func (u *CreateUseCase) doCreate(ctx context.Context, in createInput) (*anypb.An
 type vipAllocResult struct {
 	addressID string
 	address   string
-	byo       bool                  // если true — освобождать через ClearReference, иначе через FreeIP.
+	byo       bool // если true — освобождать через ClearReference, иначе через FreeIP.
 	owner     vpcclient.AddressOwner
 }
 
@@ -475,28 +476,44 @@ func (u *CreateUseCase) compensateVIP(ctx context.Context, listenerID domain.Res
 	logger.Info("listener.Create compensation FreeIP ok")
 }
 
-// emitHierarchyTuples — best-effort D-11 sync emit:
+// listenerRegisterIntent builds the SEC-D FGA-register-intent for a created
+// Listener:
 //
-//	nlb_listener:<id> #owner @<subject>                          (creator)
-//	nlb_listener:<id> #load_balancer @nlb_load_balancer:<lb_id>  (parent-link)
+//	<subject> #admin @lb_listener:<id>                                 (creator)
+//	lb_network_load_balancer:<lb_id> #load_balancer @lb_listener:<id>  (parent-link)
 //
-// Delegates to the shared `internal/fgawrite` helper (single source of truth
-// for FGA emission across LB/Listener/TG). nil hierarchyWriter or empty
-// subject → tuple skipped (dev mode / unauthenticated); failure → logged,
-// listener row already durable.
-func (u *CreateUseCase) emitHierarchyTuples(ctx context.Context, listenerID, lbID domain.ResourceID, subject string) {
-	logger := loggerOrDiscard(u.logger).With(
-		"listener_id", string(listenerID),
-		"lb_id", string(lbID),
-	)
-	// Creator tuple (skipped silently if subject == "").
-	fgawrite.EmitCreator(ctx, u.hierarchyWriter, logger,
-		subject, fgawrite.RelationOwner, fgawrite.ObjectTypeListener, string(listenerID))
-	// Parent-link tuple: nlb_load_balancer:<lb_id> #load_balancer @nlb_listener:<id>.
-	fgawrite.EmitParentLink(ctx, u.hierarchyWriter, logger,
-		fgawrite.ObjectTypeLoadBalancer, string(lbID),
-		fgawrite.RelationLoadBalancer,
-		fgawrite.ObjectTypeListener, string(listenerID))
+// The creator tuple is skipped on empty subject (system-initiated). The listener
+// resolves its project via the parent-link → LB hierarchy cascade, so it has no
+// own project-hierarchy tuple (parity with the former emitHierarchyTuples).
+func listenerRegisterIntent(listenerID, lbID domain.ResourceID, subject string) domain.FGARegisterIntent {
+	id := string(listenerID)
+	var tuples []domain.FGATuple
+	if subject != "" {
+		tuples = append(tuples, domain.FGACreatorTuple(subject, domain.FGAObjectTypeListener, id))
+	}
+	tuples = append(tuples, domain.FGAParentLinkTuple(
+		domain.FGAObjectTypeLoadBalancer, string(lbID),
+		domain.FGARelationLoadBalancer,
+		domain.FGAObjectTypeListener, id,
+	))
+	return domain.FGARegisterIntent{Kind: "Listener", ResourceID: id, Tuples: tuples}
+}
+
+// listenerUnregisterIntent builds the SEC-D FGA-unregister-intent (parent-link)
+// for a deleted Listener (OQ-SEC-D-4: unregister parent-link; creator is left
+// for IAM-side GC).
+func listenerUnregisterIntent(listenerID, lbID string) domain.FGARegisterIntent {
+	return domain.FGARegisterIntent{
+		Kind:       "Listener",
+		ResourceID: listenerID,
+		Tuples: []domain.FGATuple{
+			domain.FGAParentLinkTuple(
+				domain.FGAObjectTypeLoadBalancer, lbID,
+				domain.FGARelationLoadBalancer,
+				domain.FGAObjectTypeListener, listenerID,
+			),
+		},
+	}
 }
 
 // familyForIPVersion → vpcclient.AddressFamilyIPv4/IPv6.

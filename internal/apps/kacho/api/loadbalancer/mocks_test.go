@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/PRO-Robotech/kacho-nlb/internal/domain"
 	"github.com/PRO-Robotech/kacho-nlb/internal/clients/compute"
 	"github.com/PRO-Robotech/kacho-nlb/internal/clients/iam"
+	"github.com/PRO-Robotech/kacho-nlb/internal/domain"
 	// dto/type2pb init()-registrations — handler-слой строит proto через DTO-реестр.
 	_ "github.com/PRO-Robotech/kacho-nlb/internal/dto/type2pb"
 	kachorepo "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho"
@@ -30,17 +30,18 @@ type fakeRepo struct {
 	lists  map[string][]*kachorepo.ListenerRecord
 	pivot  map[string]*kachorepo.AttachedTargetGroupRecord // key=lbID+"/"+tgID
 	outbox []outboxEvent
+	fga    []fgaIntentEvent // SEC-D FGARegisterOutbox intents (flushed on Commit)
 	// Knobs for fault injection.
-	failOnInsert     error
-	failOnUpdate     error
-	failOnDelete     error
-	failOnSetStatus  error
-	failOnMove       error
-	failOnAttach     error
-	failOnList       error
-	failOnGet        error
-	failOnOutbox     error
-	preCommitHook    func() error
+	failOnInsert    error
+	failOnUpdate    error
+	failOnDelete    error
+	failOnSetStatus error
+	failOnMove      error
+	failOnAttach    error
+	failOnList      error
+	failOnGet       error
+	failOnOutbox    error
+	preCommitHook   func() error
 }
 
 type outboxEvent struct {
@@ -105,11 +106,18 @@ type fakeWriter struct {
 	committed bool
 	aborted   bool
 	// pending mutations recorded until Commit.
-	pendingLBs    []*kachorepo.LoadBalancerRecord
-	pendingPivots []*kachorepo.AttachedTargetGroupRecord
-	pendingDeletes []string // LB ids
+	pendingLBs          []*kachorepo.LoadBalancerRecord
+	pendingPivots       []*kachorepo.AttachedTargetGroupRecord
+	pendingDeletes      []string // LB ids
 	pendingPivotDeletes []string // "lb/tg"
-	pendingOutbox []outboxEvent
+	pendingOutbox       []outboxEvent
+	pendingFGA          []fgaIntentEvent
+}
+
+// fgaIntentEvent records one FGARegisterOutbox.Emit (SEC-D) for assertions.
+type fgaIntentEvent struct {
+	EventType string
+	Intent    domain.FGARegisterIntent
 }
 
 func (w *fakeWriter) LoadBalancers() kachorepo.LoadBalancerWriterIface {
@@ -126,6 +134,9 @@ func (w *fakeWriter) AttachedTargetGroups() kachorepo.AttachedTargetGroupWriterI
 }
 func (w *fakeWriter) Outbox() kachorepo.OutboxEmitter {
 	return &fakeOutbox{w: w}
+}
+func (w *fakeWriter) FGARegisterOutbox() kachorepo.FGARegisterEmitter {
+	return &fakeFGARegisterOutbox{w: w}
 }
 
 func (w *fakeWriter) Commit() error {
@@ -153,6 +164,7 @@ func (w *fakeWriter) Commit() error {
 		delete(w.r.pivot, k)
 	}
 	w.r.outbox = append(w.r.outbox, w.pendingOutbox...)
+	w.r.fga = append(w.r.fga, w.pendingFGA...)
 	return nil
 }
 
@@ -577,25 +589,16 @@ func (f *fakeRegionClient) Get(ctx context.Context, regionID string) (*compute.R
 	return &compute.Region{ID: regionID, Name: "fake-region"}, nil
 }
 
-type fakeHierarchy struct {
-	mu               sync.Mutex
-	writeCreatorErr  error
-	rewriteProjectErr error
-	creatorCalls     []string // "subject relation object"
-	rewriteCalls     []string // "objType:objID src dst"
-}
+// fakeFGARegisterOutbox records SEC-D FGARegisterOutbox.Emit into the writer's
+// pending buffer (flushed to fakeRepo.fga on Commit, dropped on Abort).
+type fakeFGARegisterOutbox struct{ w *fakeWriter }
 
-func (f *fakeHierarchy) WriteCreatorTuple(ctx context.Context, subjectID, relation, object string) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.creatorCalls = append(f.creatorCalls, fmt.Sprintf("%s %s %s", subjectID, relation, object))
-	return f.writeCreatorErr
-}
-func (f *fakeHierarchy) RewriteProjectTuple(ctx context.Context, objectType, objectID, srcProject, dstProject string) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.rewriteCalls = append(f.rewriteCalls, fmt.Sprintf("%s:%s %s→%s", objectType, objectID, srcProject, dstProject))
-	return f.rewriteProjectErr
+func (o *fakeFGARegisterOutbox) Emit(ctx context.Context, eventType string, intent domain.FGARegisterIntent) error {
+	if o.w.r.failOnOutbox != nil {
+		return o.w.r.failOnOutbox
+	}
+	o.w.pendingFGA = append(o.w.pendingFGA, fgaIntentEvent{EventType: eventType, Intent: intent})
+	return nil
 }
 
 // ensure interface conformance (compile-time).
@@ -603,5 +606,4 @@ var (
 	_ kachorepo.Repository = (*fakeRepo)(nil)
 	_ ProjectClient        = (*fakeProjectClient)(nil)
 	_ RegionClient         = (*fakeRegionClient)(nil)
-	_ HierarchyWriter      = (*fakeHierarchy)(nil)
 )
