@@ -106,6 +106,16 @@ spec:
               readOnly: true
             - name: tmp
               mountPath: /tmp
+            {{- if .Values.mtls.enable }}
+            # SEC-F mTLS — cert-manager internal-CA server + client secrets in
+            # separate dirs (req #5). cert-manager writes tls.crt/tls.key/ca.crt.
+            - name: mtls-server
+              mountPath: {{ printf "%s/server" .Values.mtls.mountPath | quote }}
+              readOnly: true
+            - name: mtls-client
+              mountPath: {{ printf "%s/client" .Values.mtls.mountPath | quote }}
+              readOnly: true
+            {{- end }}
           securityContext:
             {{- toYaml .Values.containerSecurityContext | nindent 12 }}
       volumes:
@@ -116,3 +126,12 @@ spec:
         - name: tmp
           emptyDir:
             sizeLimit: 64Mi
+        {{- if .Values.mtls.enable }}
+        # SEC-F mTLS — cert-manager internal-CA secrets (server + client).
+        - name: mtls-server
+          secret:
+            secretName: {{ .Values.mtls.serverSecretName | quote }}
+        - name: mtls-client
+          secret:
+            secretName: {{ .Values.mtls.clientSecretName | quote }}
+        {{- end }}
