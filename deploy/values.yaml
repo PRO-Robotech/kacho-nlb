@@ -132,6 +132,29 @@ authz:
     dialDeadline: 3s
     requestTimeout: 500ms
 
+# ─── SEC-F mTLS — per-edge opt-in (cert-manager internal-CA certs) ─────────────
+# enable=false (default) → НИ cert-secret, НИ `mtls:` секция в config.yaml →
+# текущее insecure dev (нулевая регрессия, SEC-F-05). umbrella прокидывает
+# .mtls.enable + per-edge флаги (КРИТ#3). config.go MTLSConfig (viper mapstructure):
+#   mtls.server       → server-cert на public+internal listener'ах
+#   mtls.iam-register → nlb→iam (RegisterResource drainer)
+#   mtls.vpc          → nlb→vpc (Address/Subnet/NIC IPAM)
+#   mtls.compute      → nlb→compute (Region/Instance)
+# serverName на dial-стороне = реальный dial-host (∈ server-SAN пира, КРИТ#1).
+mtls:
+  enable: false
+  serverSecretName: kacho-nlb-server-tls   # cert key = kacho-nlb (КРИТ#1)
+  clientSecretName: kacho-nlb-client-tls
+  mountPath: /etc/kacho-nlb/tls            # <mp>/server|client/{tls.crt,tls.key,ca.crt}
+  edges:
+    iamRegister: false   # nlb→iam InternalIAMService.Register (drainer)
+    vpc: false           # nlb→vpc Address/Subnet/NIC
+    compute: false       # nlb→compute Region/Instance
+  serverName:
+    iamRegister: kacho-iam-internal.kacho.svc.cluster.local
+    vpc: vpc.kacho.svc.cluster.local
+    compute: compute.kacho.svc.cluster.local
+
 # ─── Resource requests/limits + probes ────────────────────────────────────────
 resources:
   requests:

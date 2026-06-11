@@ -95,3 +95,46 @@ data:
     jobs:
       target-drain:
         interval: {{ .Values.config.jobs.targetDrain.interval }}
+    {{- if .Values.mtls.enable }}
+
+    # SEC-F mTLS (per-edge opt-in) — corelib SEC-B value-structs via viper
+    # mapstructure. server-cert on both listeners; per-edge client-creds.
+    # serverName = real dial-host (∈ peer server-SAN, КРИТ#1). Paths point at the
+    # cert-manager secrets mounted by the Deployment (<mountPath>/server|client).
+    {{- $srv := printf "%s/server" .Values.mtls.mountPath }}
+    {{- $cli := printf "%s/client" .Values.mtls.mountPath }}
+    mtls:
+      server:
+        enable: true
+        certfile: {{ printf "%s/tls.crt" $srv | quote }}
+        keyfile: {{ printf "%s/tls.key" $srv | quote }}
+        clientcafiles:
+          - {{ printf "%s/ca.crt" $srv | quote }}
+      iam-register:
+        enable: {{ .Values.mtls.edges.iamRegister }}
+        {{- if .Values.mtls.edges.iamRegister }}
+        certfile: {{ printf "%s/tls.crt" $cli | quote }}
+        keyfile: {{ printf "%s/tls.key" $cli | quote }}
+        cafiles:
+          - {{ printf "%s/ca.crt" $cli | quote }}
+        servername: {{ .Values.mtls.serverName.iamRegister | quote }}
+        {{- end }}
+      vpc:
+        enable: {{ .Values.mtls.edges.vpc }}
+        {{- if .Values.mtls.edges.vpc }}
+        certfile: {{ printf "%s/tls.crt" $cli | quote }}
+        keyfile: {{ printf "%s/tls.key" $cli | quote }}
+        cafiles:
+          - {{ printf "%s/ca.crt" $cli | quote }}
+        servername: {{ .Values.mtls.serverName.vpc | quote }}
+        {{- end }}
+      compute:
+        enable: {{ .Values.mtls.edges.compute }}
+        {{- if .Values.mtls.edges.compute }}
+        certfile: {{ printf "%s/tls.crt" $cli | quote }}
+        keyfile: {{ printf "%s/tls.key" $cli | quote }}
+        cafiles:
+          - {{ printf "%s/ca.crt" $cli | quote }}
+        servername: {{ .Values.mtls.serverName.compute | quote }}
+        {{- end }}
+    {{- end }}
