@@ -14,7 +14,7 @@ import (
 
 	lbv1 "github.com/PRO-Robotech/kacho-proto/gen/go/kacho/cloud/loadbalancer/v1"
 
-	"github.com/PRO-Robotech/kacho-nlb/internal/fgawrite"
+	"github.com/PRO-Robotech/kacho-nlb/internal/domain"
 	kachopg "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho/pg"
 )
 
@@ -46,7 +46,7 @@ func mkUC(repo *fakeRepo, opsRepo *fakeOpsRepo) *CreateTargetGroupUseCase {
 	return NewCreateTargetGroupUseCase(
 		repo, opsRepo,
 		&fakeProjectClient{}, &fakeRegionClient{},
-		&fakeHierarchy{}, nil,
+		nil,
 	)
 }
 
@@ -219,7 +219,7 @@ func TestCreate_PeerProject_NotFound(t *testing.T) {
 		&fakeProjectClient{getFunc: func(_ context.Context, id string) (*projectIamProjection, error) {
 			return nil, projectNotFound(id)
 		}},
-		&fakeRegionClient{}, &fakeHierarchy{}, nil,
+		&fakeRegionClient{}, nil,
 	)
 
 	op, err := uc.Execute(context.Background(), mkCreateReq("prj-x", "ru-central1", "peer-fail"))
@@ -230,13 +230,13 @@ func TestCreate_PeerProject_NotFound(t *testing.T) {
 	require.Contains(t, final.Error.Message, "Project prj-x not found")
 }
 
-// FGA writer writes creator + project tuples (with subject in ctx).
-func TestCreate_EmitsHierarchyTuples(t *testing.T) {
+// SEC-D: Create writes a fga.register-intent (project-hierarchy + creator) into
+// the writer-tx outbox when the principal is an authenticated user.
+func TestCreate_EmitsFGARegisterIntent(t *testing.T) {
 	repo := newFakeRepo()
 	opsRepo := newFakeOpsRepo()
-	fga := &fakeHierarchy{}
 	uc := NewCreateTargetGroupUseCase(repo, opsRepo,
-		&fakeProjectClient{}, &fakeRegionClient{}, fga, nil,
+		&fakeProjectClient{}, &fakeRegionClient{}, nil,
 	)
 
 	// Inject principal via operations.WithPrincipal.
@@ -245,10 +245,13 @@ func TestCreate_EmitsHierarchyTuples(t *testing.T) {
 	require.NoError(t, err)
 	awaitOpDone(t, opsRepo, op.ID)
 
-	fga.mu.Lock()
-	defer fga.mu.Unlock()
-	require.NotEmpty(t, fga.rewriteCalls, "project tuple write expected")
-	require.NotEmpty(t, fga.creatorCalls, "creator tuple write expected")
-	require.Contains(t, fga.creatorCalls[0], "user:alice")
-	require.Contains(t, fga.creatorCalls[0], fgawrite.RelationOwner)
+	require.Len(t, repo.fga, 1, "one fga.register intent in writer-tx")
+	ev := repo.fga[0]
+	require.Equal(t, domain.FGAEventRegister, ev.EventType)
+	require.Equal(t, "TargetGroup", ev.Intent.Kind)
+	require.Len(t, ev.Intent.Tuples, 2, "project-hierarchy + creator")
+	require.Equal(t, domain.FGARelationProject, ev.Intent.Tuples[0].Relation)
+	require.Equal(t, "project:prj-fga", ev.Intent.Tuples[0].SubjectID)
+	require.Equal(t, "user:alice", ev.Intent.Tuples[1].SubjectID)
+	require.Equal(t, domain.FGARelationAdmin, ev.Intent.Tuples[1].Relation)
 }

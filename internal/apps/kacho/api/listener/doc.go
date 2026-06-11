@@ -40,13 +40,19 @@
 //     (Wave 9 follow-up) eventually retries. Within this Wave Delete returns
 //     Unavailable если peer vpc недоступен; row остаётся в DELETING.
 //
-// FGA hierarchy tuple emit (D-11 sync hierarchy):
-//   - `iam.HierarchyWriter.WriteCreatorTuple(subject, "owner", "nlb_listener:<id>")`
-//     написан ПОСЛЕ commit'а listener row (best-effort, non-fatal — listener row
-//     already durable; tuple write failure is logged for operator).
-//   - Parent-link tuple `nlb_listener:<id>#load_balancer@nlb_load_balancer:<lb_id>`
-//     написан тем же writer (acceptance §4.1 D-11 sync writer; LST-001 outcome:
-//     "FGA tuple D-11 sync write before commit: ... via D-13 ... #load_balancer").
+// FGA owner-hierarchy tuple emit (SEC-D transactional-outbox, replaces the former
+// best-effort direct FGA write — GitHub Issue N5):
+//   - creator tuple `<subject> #admin @lb_listener:<id>` (skipped if the principal
+//     is system/unauthenticated) + parent-link tuple
+//     `lb_network_load_balancer:<lb_id> #load_balancer @lb_listener:<id>` are
+//     serialised into a `domain.FGARegisterIntent` and persisted via
+//     `w.FGARegisterOutbox().Emit(fga.register, …)` in the SAME writer-tx as the
+//     listener INSERT (one commit, no dual-write).
+//   - the register-drainer (`cmd/kacho-loadbalancer/main.go`) later applies each
+//     tuple through kacho-iam `InternalIAMService.RegisterResource` by mTLS;
+//     IAM-down → intent stays durable and is retried (tuple is never lost).
+//   - Delete emits the symmetric `fga.unregister` intent (parent-link) →
+//     `UnregisterResource`.
 //
 // Test layout (test-first per workspace CLAUDE.md §11):
 //   - *_test.go — unit (in-package), table-driven, fake-port adapters.

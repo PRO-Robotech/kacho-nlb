@@ -41,10 +41,6 @@ type NetworkInterfaceClient = vpcclient.NetworkInterfaceClient
 // для ip_ref-target peer-validate (Subnet existence + IP-in-CIDR + region-match).
 type SubnetClient = vpcclient.SubnetClient
 
-// HierarchyWriter — iam.InternalIAMService.WriteCreatorTuple wrapper для D-11
-// sync hierarchy tuple emit после Create / Move worker commit.
-type HierarchyWriter = iamclient.HierarchyWriter
-
-// FGA object-types / relations — moved to `internal/fgawrite` (single source of
-// truth, kacho-nlb-wide). Use `fgawrite.ObjectTypeTargetGroup`,
-// `fgawrite.RelationOwner`, `fgawrite.RelationProject`.
+// FGA owner-hierarchy tuple-регистрация — через SEC-D transactional-outbox
+// (FGARegisterOutbox emit в writer-tx + register-drainer → IAM); FGA object-types
+// / relations живут в `internal/domain` (FGAObjectType* / FGARelation*).

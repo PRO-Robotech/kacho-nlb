@@ -93,8 +93,11 @@ func TestLoad_DefaultsApplied(t *testing.T) {
 	if cfg.Jobs.TargetDrain.Interval != 10*time.Second {
 		t.Errorf("default Jobs.TargetDrain.Interval: got %v, want 10s", cfg.Jobs.TargetDrain.Interval)
 	}
-	if cfg.FGA.TupleWrite.Timeout != 2*time.Second {
-		t.Errorf("default FGA.TupleWrite.Timeout: got %v", cfg.FGA.TupleWrite.Timeout)
+	if !cfg.FGA.RegisterDrainer.Enable {
+		t.Errorf("default FGA.RegisterDrainer.Enable: got %v, want true (OQ-SEC-D-5 default-on)", cfg.FGA.RegisterDrainer.Enable)
+	}
+	if cfg.FGA.RegisterDrainer.MaxAttempts != 10 {
+		t.Errorf("default FGA.RegisterDrainer.MaxAttempts: got %d, want 10", cfg.FGA.RegisterDrainer.MaxAttempts)
 	}
 	if cfg.InternalLifecycle.MaxStreams != 32 {
 		t.Errorf("default InternalLifecycle.MaxStreams: got %d, want 32", cfg.InternalLifecycle.MaxStreams)

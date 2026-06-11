@@ -44,7 +44,7 @@ func RegisterDefaults(v *viper.Viper) {
 
 	// ExtAPI (peer gRPC clients)
 	v.SetDefault("extapi.def-dial-duration", "10s")
-	v.SetDefault("extapi.vpc.dial-duration", "0s")     // 0 → берёт def-dial-duration
+	v.SetDefault("extapi.vpc.dial-duration", "0s") // 0 → берёт def-dial-duration
 	v.SetDefault("extapi.compute.dial-duration", "0s")
 	v.SetDefault("extapi.iam.dial-duration", "0s")
 
@@ -53,15 +53,42 @@ func RegisterDefaults(v *viper.Viper) {
 	v.SetDefault("authz.iam.dial-deadline", "3s")
 	v.SetDefault("authz.iam.request-timeout", "500ms")
 	v.SetDefault("authz.cache.enable", true)
-	v.SetDefault("authz.cache.ttl", "5s")  // NFR KAC-108: ≤10s
+	v.SetDefault("authz.cache.ttl", "5s") // NFR KAC-108: ≤10s
 	v.SetDefault("authz.cache.size", 10000)
 	v.SetDefault("authz.listen-invalidator.enable", false)
 	v.SetDefault("authz.listen-invalidator.channel", "kacho_iam_subjects")
 	v.SetDefault("authz.breakglass", false)
 
-	// FGA tuple-write
-	v.SetDefault("fga.tuple-write.timeout", "2s")
-	v.SetDefault("fga.tuple-write.max-retries", 3)
+	// FGA register-drainer (SEC-D Вариант A). OQ-SEC-D-5: default-on — drainer
+	// is an in-process goroutine; without it created resources never get an
+	// owner-tuple (worse than the former best-effort path). mTLS on the
+	// drainer→iam edge is a separate per-edge flag (mtls.iam-register, default off).
+	v.SetDefault("fga.register-drainer.enable", true)
+	v.SetDefault("fga.register-drainer.batch-size", 32)
+	v.SetDefault("fga.register-drainer.poll-fallback", "30s")
+	v.SetDefault("fga.register-drainer.max-attempts", 10)
+	v.SetDefault("fga.register-drainer.backoff-min", "1s")
+	v.SetDefault("fga.register-drainer.backoff-max", "30s")
+
+	// mTLS (SEC-B opt-in, per-edge). Default OFF on every edge → insecure
+	// (dev backward-compat, эпик §5). corelib field names lowercased by
+	// mapstructure: enable / certfile / keyfile / clientcafiles / cafiles / servername.
+	//
+	// Every leaf key is registered (even with a zero default) so viper's
+	// AutomaticEnv knows the key exists and binds the corresponding
+	// KACHO_NLB_MTLS__<EDGE>__<NAME> env var on Unmarshal (viper only env-binds
+	// keys it has seen via SetDefault/BindEnv).
+	v.SetDefault("mtls.server.enable", false)
+	v.SetDefault("mtls.server.certfile", "")
+	v.SetDefault("mtls.server.keyfile", "")
+	v.SetDefault("mtls.server.clientcafiles", []string{})
+	for _, edge := range []string{"iam-register", "vpc", "compute"} {
+		v.SetDefault("mtls."+edge+".enable", false)
+		v.SetDefault("mtls."+edge+".certfile", "")
+		v.SetDefault("mtls."+edge+".keyfile", "")
+		v.SetDefault("mtls."+edge+".cafiles", []string{})
+		v.SetDefault("mtls."+edge+".servername", "")
+	}
 
 	// Jobs (background workers)
 	// target-drain: Phase B 2-phase drain runner (KAC-159). 10s — компромисс

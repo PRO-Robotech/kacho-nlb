@@ -14,9 +14,23 @@ import (
 	"github.com/PRO-Robotech/kacho-corelib/operations"
 	lbv1 "github.com/PRO-Robotech/kacho-proto/gen/go/kacho/cloud/loadbalancer/v1"
 
+	"github.com/PRO-Robotech/kacho-nlb/internal/domain"
 	kachorepo "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho"
 	kachopg "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho/pg"
 )
+
+// lbUnregisterIntent builds the SEC-D FGA-unregister-intent (project-hierarchy)
+// for a deleted LoadBalancer. The creator tuple is left for IAM-side GC
+// (OQ-SEC-D-4: unregister project-hierarchy/parent-link; creator is per SEC-C).
+func lbUnregisterIntent(id, projectID string) domain.FGARegisterIntent {
+	return domain.FGARegisterIntent{
+		Kind:       "NetworkLoadBalancer",
+		ResourceID: id,
+		Tuples: []domain.FGATuple{
+			domain.FGAProjectTuple(domain.FGAObjectTypeLoadBalancer, id, projectID),
+		},
+	}
+}
 
 // DeleteLoadBalancerUseCase — sync precheck + async delete (acceptance
 // GWT-NLB-015..GWT-NLB-019).
@@ -127,6 +141,12 @@ func (u *DeleteLoadBalancerUseCase) doDelete(ctx context.Context, id, projectID 
 		kachopg.OutboxResourceLoadBalancer, id, projectID,
 		kachopg.OutboxActionDeleted, map[string]any{"id": id, "project_id": projectID},
 	); err != nil {
+		return nil, mapDomainErr(err)
+	}
+	// SEC-D: FGA-unregister-intent (project-hierarchy) in the SAME tx as the
+	// Delete — drainer applies UnregisterResource to remove the owner-tuple.
+	if err := w.FGARegisterOutbox().Emit(ctx, domain.FGAEventUnregister,
+		lbUnregisterIntent(id, projectID)); err != nil {
 		return nil, mapDomainErr(err)
 	}
 	if err := w.Commit(); err != nil {

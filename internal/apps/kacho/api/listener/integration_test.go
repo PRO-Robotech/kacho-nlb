@@ -46,6 +46,12 @@ import (
 //
 // All tests gated by testing.Short() (testcontainers requires Docker).
 
+// gooseMu serialises the goose package-level globals (SetBaseFS / SetDialect /
+// Up) which are NOT goroutine-safe. Parallel integration tests each call
+// setupTestDB; without this guard `-race` flags a write-write race on goose's
+// internal globals (test-infra only, no production state).
+var gooseMu sync.Mutex
+
 func setupTestDB(t testing.TB) string {
 	t.Helper()
 	if testing.Short() {
@@ -67,9 +73,14 @@ func setupTestDB(t testing.TB) string {
 	db, err := sql.Open("pgx", dsn)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = db.Close() })
+	gooseMu.Lock()
 	goose.SetBaseFS(migrations.FS)
-	require.NoError(t, goose.SetDialect("postgres"))
-	require.NoError(t, goose.Up(db, "."))
+	err = goose.SetDialect("postgres")
+	if err == nil {
+		err = goose.Up(db, ".")
+	}
+	gooseMu.Unlock()
+	require.NoError(t, err)
 	return appendSearchPathOptions(dsn)
 }
 
@@ -182,7 +193,7 @@ func TestIntegration_Listener_Create_EndToEnd(t *testing.T) {
 	ic := newIntegrationCtx(t)
 	lb := ic.seedLB(t, "prj01INTEGTEST000001", "ru-central1", domain.LBTypeExternal, "lb-e2e")
 	internalAddrs := &recordingInternalAddrs{}
-	createUC := listener.NewCreateUseCase(ic.repo, ic.opsRepo, nil, internalAddrs, nil, nil, slog.Default())
+	createUC := listener.NewCreateUseCase(ic.repo, ic.opsRepo, nil, internalAddrs, nil, slog.Default())
 
 	op, err := createUC.Run(context.Background(), &lbv1.CreateListenerRequest{
 		LoadBalancerId: string(lb.ID),
@@ -254,7 +265,7 @@ func TestIntegration_Listener_Create_UniquePortRace(t *testing.T) {
 	ic := newIntegrationCtx(t)
 	lb := ic.seedLB(t, "prj01INTEGTEST000002", "ru-central1", domain.LBTypeExternal, "lb-race")
 	internalAddrs := &recordingInternalAddrs{}
-	createUC := listener.NewCreateUseCase(ic.repo, ic.opsRepo, nil, internalAddrs, nil, nil, slog.Default())
+	createUC := listener.NewCreateUseCase(ic.repo, ic.opsRepo, nil, internalAddrs, nil, slog.Default())
 
 	var wg sync.WaitGroup
 	var successCount, failCount int
@@ -312,7 +323,7 @@ func TestIntegration_Listener_Delete_FreeIP(t *testing.T) {
 	lb := ic.seedLB(t, "prj01INTEGTEST000003", "ru-central1", domain.LBTypeExternal, "lb-delete")
 	internalAddrs := &recordingInternalAddrs{}
 	addresses := &deleteIntegrationAddressClient{name: "nlb-listener-stub"}
-	createUC := listener.NewCreateUseCase(ic.repo, ic.opsRepo, addresses, internalAddrs, nil, nil, slog.Default())
+	createUC := listener.NewCreateUseCase(ic.repo, ic.opsRepo, addresses, internalAddrs, nil, slog.Default())
 	deleteUC := listener.NewDeleteUseCase(ic.repo, ic.opsRepo, addresses, internalAddrs, slog.Default())
 
 	op, err := createUC.Run(context.Background(), &lbv1.CreateListenerRequest{

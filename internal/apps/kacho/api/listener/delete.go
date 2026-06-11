@@ -56,11 +56,11 @@ import (
 // колонкой `address_byo bool` — отложено в KAC-152 follow-up (требует миграции
 // schema; acceptance работает и с эвристикой). См. GWT-LST-022/-023.
 type DeleteUseCase struct {
-	repo            RepoFactory
-	opsRepo         OperationsRepo
-	addresses       AddressClient
-	internalAddrs   InternalAddressClient
-	logger          *slog.Logger
+	repo          RepoFactory
+	opsRepo       OperationsRepo
+	addresses     AddressClient
+	internalAddrs InternalAddressClient
+	logger        *slog.Logger
 }
 
 // NewDeleteUseCase — конструктор.
@@ -208,6 +208,12 @@ func (u *DeleteUseCase) doDelete(ctx context.Context, cur *kachorepo.ListenerRec
 		outboxActionUpdated, lbUpdatedPayloadMap(lbID, projectID, regionID, "listener_deleted"),
 	); err != nil {
 		return nil, mapDomainErr(fmt.Errorf("%w: outbox emit lb UPDATED: %v", domain.ErrInternal, err))
+	}
+	// SEC-D: FGA-unregister-intent (parent-link) in the SAME tx as the Delete —
+	// register-drainer removes the parent-link tuple via IAM.UnregisterResource.
+	if err := w.FGARegisterOutbox().Emit(ctx, domain.FGAEventUnregister,
+		listenerUnregisterIntent(listenerID, lbID)); err != nil {
+		return nil, mapDomainErr(fmt.Errorf("%w: fga unregister-intent emit: %v", domain.ErrInternal, err))
 	}
 	if err := w.Commit(); err != nil {
 		return nil, mapDomainErr(err)

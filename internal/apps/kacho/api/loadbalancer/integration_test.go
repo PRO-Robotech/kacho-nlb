@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -30,6 +31,10 @@ import (
 	kachorepo "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho"
 	kachopg "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho/pg"
 )
+
+// gooseMu serialises goose's package-level globals (SetBaseFS / SetDialect / Up),
+// which are not goroutine-safe; parallel integration tests each apply migrations.
+var gooseMu sync.Mutex
 
 // setupDB поднимает изолированный Postgres контейнер и применяет миграцию.
 // Зеркало pg/setup_integration_test.go (внутренний helper).
@@ -58,9 +63,14 @@ func setupDB(t *testing.T) (*pgxpool.Pool, *kachopg.Repository) {
 	require.NoError(t, err)
 	defer func() { _ = db.Close() }()
 
+	gooseMu.Lock()
 	goose.SetBaseFS(migrations.FS)
-	require.NoError(t, goose.SetDialect("postgres"))
-	require.NoError(t, goose.Up(db, "."))
+	err = goose.SetDialect("postgres")
+	if err == nil {
+		err = goose.Up(db, ".")
+	}
+	gooseMu.Unlock()
+	require.NoError(t, err)
 
 	if !strings.Contains(dsn, "options=") {
 		sep := "?"
@@ -100,7 +110,7 @@ func pollOpDone(t *testing.T, opsRepo operations.Repo, opID string) *operations.
 func makeHandler(t *testing.T, repo *kachopg.Repository, opsRepo operations.Repo) *loadbalancer.Handler {
 	t.Helper()
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
-	return loadbalancer.NewHandler(repo, opsRepo, nil, nil, nil, logger)
+	return loadbalancer.NewHandler(repo, opsRepo, nil, nil, logger)
 }
 
 // ---- Tests -----------------------------------------------------------------
@@ -149,7 +159,7 @@ func TestIntegration_DeleteLoadBalancer_BlocksOnListener(t *testing.T) {
 	w, err := repo.Writer(context.Background())
 	require.NoError(t, err)
 	lb := &domain.LoadBalancer{
-		ID: domain.ResourceID(ids.NewID(ids.PrefixLoadBalancer)),
+		ID:        domain.ResourceID(ids.NewID(ids.PrefixLoadBalancer)),
 		ProjectID: "prj-x", RegionID: "ru-central1",
 		Name: "edge", Type: domain.LBTypeExternal, Status: domain.LBStatusInactive,
 		SessionAffinity: domain.SessionAffinity5Tuple,
@@ -187,7 +197,7 @@ func TestIntegration_AttachTargetGroup_RegionMismatch(t *testing.T) {
 	w, err := repo.Writer(context.Background())
 	require.NoError(t, err)
 	lb := &domain.LoadBalancer{
-		ID: domain.ResourceID(ids.NewID(ids.PrefixLoadBalancer)),
+		ID:        domain.ResourceID(ids.NewID(ids.PrefixLoadBalancer)),
 		ProjectID: "prj-z", RegionID: "ru-central1",
 		Name: "edge", Type: domain.LBTypeExternal, Status: domain.LBStatusInactive,
 		SessionAffinity: domain.SessionAffinity5Tuple,
@@ -195,7 +205,7 @@ func TestIntegration_AttachTargetGroup_RegionMismatch(t *testing.T) {
 	_, err = w.LoadBalancers().Insert(context.Background(), lb)
 	require.NoError(t, err)
 	tg := &domain.TargetGroup{
-		ID: domain.ResourceID(ids.NewID(ids.PrefixTargetGroup)),
+		ID:        domain.ResourceID(ids.NewID(ids.PrefixTargetGroup)),
 		ProjectID: "prj-z", RegionID: "ru-central2", Name: "tg-1",
 		DeregistrationDelaySeconds: 300,
 		Status:                     domain.TargetGroupStatusActive,

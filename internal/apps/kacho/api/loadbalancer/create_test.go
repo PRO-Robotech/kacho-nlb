@@ -18,8 +18,8 @@ import (
 	"github.com/PRO-Robotech/kacho-nlb/internal/domain"
 )
 
-func newCreateUC(repo *fakeRepo, opsRepo *fakeOpsRepo, pc ProjectClient, rc RegionClient, fga HierarchyWriter) *CreateLoadBalancerUseCase {
-	return NewCreateLoadBalancerUseCase(repo, opsRepo, pc, rc, fga, slog.Default())
+func newCreateUC(repo *fakeRepo, opsRepo *fakeOpsRepo, pc ProjectClient, rc RegionClient) *CreateLoadBalancerUseCase {
+	return NewCreateLoadBalancerUseCase(repo, opsRepo, pc, rc, slog.Default())
 }
 
 func TestCreateLoadBalancer_HappyPath(t *testing.T) {
@@ -28,8 +28,7 @@ func TestCreateLoadBalancer_HappyPath(t *testing.T) {
 	opsRepo := newFakeOpsRepo()
 	pc := &fakeProjectClient{}
 	rc := &fakeRegionClient{}
-	fga := &fakeHierarchy{}
-	uc := newCreateUC(repo, opsRepo, pc, rc, fga)
+	uc := newCreateUC(repo, opsRepo, pc, rc)
 
 	op, err := uc.Execute(context.Background(), &lbv1.CreateNetworkLoadBalancerRequest{
 		ProjectId: "prj-acme", RegionId: "ru-central1",
@@ -59,7 +58,7 @@ func TestCreateLoadBalancer_HappyPath(t *testing.T) {
 
 func TestCreateLoadBalancer_InvalidProjectID(t *testing.T) {
 	t.Parallel()
-	uc := newCreateUC(newFakeRepo(), newFakeOpsRepo(), nil, nil, nil)
+	uc := newCreateUC(newFakeRepo(), newFakeOpsRepo(), nil, nil)
 	_, err := uc.Execute(context.Background(), &lbv1.CreateNetworkLoadBalancerRequest{
 		Name: "edge", Type: lbv1.NetworkLoadBalancer_EXTERNAL,
 	})
@@ -68,7 +67,7 @@ func TestCreateLoadBalancer_InvalidProjectID(t *testing.T) {
 
 func TestCreateLoadBalancer_InvalidName(t *testing.T) {
 	t.Parallel()
-	uc := newCreateUC(newFakeRepo(), newFakeOpsRepo(), nil, nil, nil)
+	uc := newCreateUC(newFakeRepo(), newFakeOpsRepo(), nil, nil)
 	_, err := uc.Execute(context.Background(), &lbv1.CreateNetworkLoadBalancerRequest{
 		ProjectId: "prj-a", RegionId: "ru-central1",
 		Name: "Edge!", Type: lbv1.NetworkLoadBalancer_EXTERNAL,
@@ -78,7 +77,7 @@ func TestCreateLoadBalancer_InvalidName(t *testing.T) {
 
 func TestCreateLoadBalancer_TypeUnspecified(t *testing.T) {
 	t.Parallel()
-	uc := newCreateUC(newFakeRepo(), newFakeOpsRepo(), nil, nil, nil)
+	uc := newCreateUC(newFakeRepo(), newFakeOpsRepo(), nil, nil)
 	_, err := uc.Execute(context.Background(), &lbv1.CreateNetworkLoadBalancerRequest{
 		ProjectId: "prj-a", RegionId: "ru-central1", Name: "edge",
 	})
@@ -89,7 +88,7 @@ func TestCreateLoadBalancer_DuplicateName(t *testing.T) {
 	t.Parallel()
 	repo := newFakeRepo()
 	seedLB(t, repo, "prj-a", "edge")
-	uc := newCreateUC(repo, newFakeOpsRepo(), nil, nil, nil)
+	uc := newCreateUC(repo, newFakeOpsRepo(), nil, nil)
 	_, err := uc.Execute(context.Background(), &lbv1.CreateNetworkLoadBalancerRequest{
 		ProjectId: "prj-a", RegionId: "ru-central1", Name: "edge",
 		Type: lbv1.NetworkLoadBalancer_EXTERNAL,
@@ -106,7 +105,7 @@ func TestCreateLoadBalancer_ProjectNotFound(t *testing.T) {
 			return nil, fmt.Errorf("%w: Project %s not found", domain.ErrNotFound, projectID)
 		},
 	}
-	uc := newCreateUC(repo, opsRepo, pc, &fakeRegionClient{}, nil)
+	uc := newCreateUC(repo, opsRepo, pc, &fakeRegionClient{})
 	op, err := uc.Execute(context.Background(), &lbv1.CreateNetworkLoadBalancerRequest{
 		ProjectId: "prj-missing", RegionId: "ru-central1",
 		Name: "edge", Type: lbv1.NetworkLoadBalancer_EXTERNAL,
@@ -128,7 +127,7 @@ func TestCreateLoadBalancer_RegionNotFound(t *testing.T) {
 			return nil, fmt.Errorf("%w: Region %s not found", domain.ErrInvalidArg, regionID)
 		},
 	}
-	uc := newCreateUC(repo, opsRepo, &fakeProjectClient{}, rc, nil)
+	uc := newCreateUC(repo, opsRepo, &fakeProjectClient{}, rc)
 	op, err := uc.Execute(context.Background(), &lbv1.CreateNetworkLoadBalancerRequest{
 		ProjectId: "prj-a", RegionId: "ru-mars",
 		Name: "edge", Type: lbv1.NetworkLoadBalancer_EXTERNAL,
@@ -138,12 +137,14 @@ func TestCreateLoadBalancer_RegionNotFound(t *testing.T) {
 	require.NotNil(t, final.Error)
 }
 
-func TestCreateLoadBalancer_HierarchyTuplesEmitted(t *testing.T) {
+// TestCreateLoadBalancer_FGARegisterIntentEmitted — SEC-D: Create writes a
+// fga.register-intent (project-hierarchy + creator) into the writer-tx outbox,
+// not a direct best-effort FGA call.
+func TestCreateLoadBalancer_FGARegisterIntentEmitted(t *testing.T) {
 	t.Parallel()
 	repo := newFakeRepo()
 	opsRepo := newFakeOpsRepo()
-	fga := &fakeHierarchy{}
-	uc := newCreateUC(repo, opsRepo, &fakeProjectClient{}, &fakeRegionClient{}, fga)
+	uc := newCreateUC(repo, opsRepo, &fakeProjectClient{}, &fakeRegionClient{})
 	op, err := uc.Execute(context.Background(), &lbv1.CreateNetworkLoadBalancerRequest{
 		ProjectId: "prj-a", RegionId: "ru-central1",
 		Name: "edge", Type: lbv1.NetworkLoadBalancer_EXTERNAL,
@@ -151,14 +152,22 @@ func TestCreateLoadBalancer_HierarchyTuplesEmitted(t *testing.T) {
 	require.NoError(t, err)
 	final := awaitOpDone(t, opsRepo, op.ID)
 	require.Nil(t, final.Error)
-	require.Len(t, fga.rewriteCalls, 1, "expected hierarchy project tuple")
+
+	require.Len(t, repo.fga, 1, "expected one fga.register intent in writer-tx")
+	ev := repo.fga[0]
+	require.Equal(t, domain.FGAEventRegister, ev.EventType)
+	require.Equal(t, "NetworkLoadBalancer", ev.Intent.Kind)
+	// system principal (no auth in unit ctx) → project-hierarchy tuple only.
+	require.NotEmpty(t, ev.Intent.Tuples)
+	require.Equal(t, domain.FGARelationProject, ev.Intent.Tuples[0].Relation)
+	require.Equal(t, "project:prj-a", ev.Intent.Tuples[0].SubjectID)
 }
 
 func TestCreateLoadBalancer_ProjectClientErrorMapped(t *testing.T) {
 	t.Parallel()
 	tests := map[string]struct {
-		peerErr   error
-		wantCode  codes.Code
+		peerErr  error
+		wantCode codes.Code
 	}{
 		"unavailable":         {fmt.Errorf("%w: dial", domain.ErrUnavailable), codes.Unavailable},
 		"invalid_arg":         {fmt.Errorf("%w: invalid project", domain.ErrInvalidArg), codes.InvalidArgument},
@@ -172,7 +181,7 @@ func TestCreateLoadBalancer_ProjectClientErrorMapped(t *testing.T) {
 			pc := &fakeProjectClient{getFunc: func(_ context.Context, _ string) (*iam.Project, error) {
 				return nil, tc.peerErr
 			}}
-			uc := newCreateUC(newFakeRepo(), opsRepo, pc, &fakeRegionClient{}, nil)
+			uc := newCreateUC(newFakeRepo(), opsRepo, pc, &fakeRegionClient{})
 			op, err := uc.Execute(context.Background(), &lbv1.CreateNetworkLoadBalancerRequest{
 				ProjectId: "prj-a", RegionId: "ru-central1",
 				Name: "edge", Type: lbv1.NetworkLoadBalancer_EXTERNAL,

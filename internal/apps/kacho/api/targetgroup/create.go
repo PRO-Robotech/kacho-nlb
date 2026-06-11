@@ -14,7 +14,6 @@ import (
 	lbv1 "github.com/PRO-Robotech/kacho-proto/gen/go/kacho/cloud/loadbalancer/v1"
 
 	"github.com/PRO-Robotech/kacho-nlb/internal/domain"
-	"github.com/PRO-Robotech/kacho-nlb/internal/fgawrite"
 	kachorepo "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho"
 	kachopg "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho/pg"
 )
@@ -30,8 +29,10 @@ import (
 // Async worker:
 //   - peer-check project_id (iam ProjectService.Get);
 //   - peer-check region_id (compute RegionService.Get);
-//   - Writer-TX → Insert TG (+ inline targets) + outbox CREATED → Commit;
-//   - D-11 sync hierarchy tuples (creator + project, best-effort).
+//   - Writer-TX → Insert TG (+ inline targets) + outbox CREATED +
+//     FGARegisterOutbox.Emit(fga.register) → Commit (SEC-D Вариант A: owner-
+//     hierarchy + creator tuple intent written in the SAME tx as Insert — no
+//     dual-write; register-drainer applies it through kacho-iam).
 //
 // Note про inline targets (GWT-TGR-001 + GWT-TGR-012): per-target peer-resolve
 // (instance/nic/ip_ref existence + region match) делается AddTargets'ом, не
@@ -46,7 +47,6 @@ type CreateTargetGroupUseCase struct {
 	opsRepo       OpsRepo
 	projectClient ProjectClient
 	regionClient  RegionClient
-	fgaWriter     HierarchyWriter
 	logger        *slog.Logger
 }
 
@@ -54,7 +54,7 @@ type CreateTargetGroupUseCase struct {
 func NewCreateTargetGroupUseCase(
 	repo Repo, opsRepo OpsRepo,
 	pc ProjectClient, rc RegionClient,
-	fga HierarchyWriter, logger *slog.Logger,
+	logger *slog.Logger,
 ) *CreateTargetGroupUseCase {
 	if logger == nil {
 		logger = slog.Default()
@@ -62,7 +62,7 @@ func NewCreateTargetGroupUseCase(
 	return &CreateTargetGroupUseCase{
 		repo: repo, opsRepo: opsRepo,
 		projectClient: pc, regionClient: rc,
-		fgaWriter: fga, logger: logger,
+		logger: logger,
 	}
 }
 
@@ -130,7 +130,8 @@ func (u *CreateTargetGroupUseCase) Execute(
 	return &op, nil
 }
 
-// doCreate — async worker: peer-check + Writer-TX + outbox + Commit + fgawrite.
+// doCreate — async worker: peer-check + Writer-TX + outbox + FGA-register-intent
+// + Commit (SEC-D: intent in the same tx, applied async by register-drainer).
 func (u *CreateTargetGroupUseCase) doCreate(
 	ctx context.Context, tg domain.TargetGroup, principal operations.Principal,
 ) (*anypb.Any, error) {
@@ -164,14 +165,16 @@ func (u *CreateTargetGroupUseCase) doCreate(
 	); err != nil {
 		return nil, mapDomainErr(err)
 	}
+	// SEC-D: FGA-register-intent (project-hierarchy + creator) in the SAME tx.
+	if err := w.FGARegisterOutbox().Emit(ctx, domain.FGAEventRegister,
+		tgRegisterIntent(created, principal)); err != nil {
+		return nil, mapDomainErr(err)
+	}
 	if err := w.Commit(); err != nil {
 		return nil, mapDomainErr(err)
 	}
 
-	// 4. D-11 sync hierarchy tuple write (best-effort).
-	u.emitHierarchyTuples(ctx, created, principal)
-
-	// 5. Marshal response.
+	// 4. Marshal response.
 	return marshalTargetGroup(created)
 }
 
@@ -197,22 +200,28 @@ func (u *CreateTargetGroupUseCase) assertNameUnique(ctx context.Context, project
 	return nil
 }
 
-// emitHierarchyTuples — D-11 sync hierarchy writes. Delegates to the shared
-// `internal/fgawrite` helper (best-effort, non-fatal: TG row already committed;
-// subscriber D-13 backfills any tuple-write hiccups).
-func (u *CreateTargetGroupUseCase) emitHierarchyTuples(
-	ctx context.Context, tg *kachorepo.TargetGroupRecord, principal operations.Principal,
-) {
-	if tg == nil {
-		return
+// tgRegisterIntent builds the SEC-D FGA-register-intent for a created
+// TargetGroup: project-hierarchy tuple plus, for an authenticated (non-system)
+// principal, a creator (admin) tuple (skipped on empty subject).
+func tgRegisterIntent(tg *kachorepo.TargetGroupRecord, principal operations.Principal) domain.FGARegisterIntent {
+	id := string(tg.ID)
+	tuples := []domain.FGATuple{
+		domain.FGAProjectTuple(domain.FGAObjectTypeTargetGroup, id, string(tg.ProjectID)),
 	}
-	logger := loggerOrDiscard(u.logger).With(
-		"tg_id", string(tg.ID),
-		"project_id", string(tg.ProjectID),
-	)
-	fgawrite.EmitProjectRewrite(ctx, u.fgaWriter, logger,
-		fgawrite.ObjectTypeTargetGroup, string(tg.ID), "", string(tg.ProjectID))
-	fgawrite.EmitCreator(ctx, u.fgaWriter, logger,
-		fgawrite.SubjectFromPrincipal(principal),
-		fgawrite.RelationOwner, fgawrite.ObjectTypeTargetGroup, string(tg.ID))
+	if subject := domain.FGASubjectFromPrincipal(principal.Type, principal.ID); subject != "" {
+		tuples = append(tuples, domain.FGACreatorTuple(subject, domain.FGAObjectTypeTargetGroup, id))
+	}
+	return domain.FGARegisterIntent{Kind: "TargetGroup", ResourceID: id, Tuples: tuples}
+}
+
+// tgUnregisterIntent builds the SEC-D FGA-unregister-intent (project-hierarchy)
+// for a deleted/moved TargetGroup.
+func tgUnregisterIntent(id, projectID string) domain.FGARegisterIntent {
+	return domain.FGARegisterIntent{
+		Kind:       "TargetGroup",
+		ResourceID: id,
+		Tuples: []domain.FGATuple{
+			domain.FGAProjectTuple(domain.FGAObjectTypeTargetGroup, id, projectID),
+		},
+	}
 }

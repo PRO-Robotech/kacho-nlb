@@ -28,15 +28,18 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/spf13/cobra"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 
 	"github.com/PRO-Robotech/kacho-corelib/authz"
 	coredb "github.com/PRO-Robotech/kacho-corelib/db"
+	"github.com/PRO-Robotech/kacho-corelib/grpcclient"
 	"github.com/PRO-Robotech/kacho-corelib/grpcsrv"
 	"github.com/PRO-Robotech/kacho-corelib/observability"
 	"github.com/PRO-Robotech/kacho-corelib/operations"
+	"github.com/PRO-Robotech/kacho-corelib/outbox/drainer"
 
-	operationpb "github.com/PRO-Robotech/kacho-proto/gen/go/kacho/cloud/operation"
 	lbv1 "github.com/PRO-Robotech/kacho-proto/gen/go/kacho/cloud/loadbalancer/v1"
+	operationpb "github.com/PRO-Robotech/kacho-proto/gen/go/kacho/cloud/operation"
 
 	internallifecycle "github.com/PRO-Robotech/kacho-nlb/internal/apps/kacho/api/internal_lifecycle"
 	"github.com/PRO-Robotech/kacho-nlb/internal/apps/kacho/api/listener"
@@ -50,6 +53,7 @@ import (
 	computeclient "github.com/PRO-Robotech/kacho-nlb/internal/clients/compute"
 	iamclient "github.com/PRO-Robotech/kacho-nlb/internal/clients/iam"
 	vpcclient "github.com/PRO-Robotech/kacho-nlb/internal/clients/vpc"
+	"github.com/PRO-Robotech/kacho-nlb/internal/domain"
 	// dto/type2pb init() регистрирует все DTO трансферы (domain ↔ proto) в реестре.
 	// Импортируется здесь (composition root), чтобы registry был полон до старта
 	// gRPC server'ов; handler'ы вызывают dto.Transfer(...) и предполагают, что
@@ -64,9 +68,9 @@ import (
 // конкретные реализации).
 type peerClients struct {
 	// IAM
-	Project   iamclient.ProjectClient
-	Check     iamclient.CheckClient
-	Hierarchy iamclient.HierarchyWriter
+	Project  iamclient.ProjectClient
+	Check    iamclient.CheckClient
+	Register iamclient.RegisterResourceClient // SEC-D FGA-proxy (register-drainer)
 	// Compute
 	Region   computeclient.RegionClient
 	Instance computeclient.InstanceClient
@@ -204,11 +208,20 @@ func runServe(configPath string) error {
 	// возвращает SystemPrincipal() = user:bootstrap для каждого request'а,
 	// независимо от того, что api-gateway форвардит x-kacho-principal-* через
 	// gRPC metadata. Operation handler пишет "anonymous"/empty principal в DB.
+	// SEC-D S3: opt-in mTLS server-creds (SEC-B). enable=false (default) →
+	// insecure (dev backward-compat). enable=true → RequireAndVerifyClientCert
+	// (server-cert + client-CA). Applied to BOTH listeners (one server-cert).
+	serverCreds, err := grpcsrv.TLSServerCreds(cfg.MTLS.Server)
+	if err != nil {
+		return fmt.Errorf("build server TLS creds: %w", err)
+	}
 	publicSrv := grpcsrv.NewServer(
+		serverCreds,
 		grpc.ChainUnaryInterceptor(grpcsrv.UnaryPrincipalExtract(), authzIntr.Unary()),
 		grpc.ChainStreamInterceptor(grpcsrv.StreamPrincipalExtract(), authzIntr.Stream()),
 	)
 	internalSrv := grpcsrv.NewServer(
+		serverCreds,
 		grpc.ChainUnaryInterceptor(grpcsrv.UnaryPrincipalExtract(), authzIntr.Unary()),
 		grpc.ChainStreamInterceptor(grpcsrv.StreamPrincipalExtract(), authzIntr.Stream()),
 	)
@@ -226,13 +239,13 @@ func runServe(configPath string) error {
 	// workspace CLAUDE.md «Запреты» #6 (Internal.* живут на internalSrv).
 	lbHandler := lbhandler.NewHandler(
 		repo, opsRepo,
-		peers.Project, peers.Region, peers.Hierarchy,
+		peers.Project, peers.Region,
 		logger,
 	)
 	lbv1.RegisterNetworkLoadBalancerServiceServer(publicSrv, lbHandler)
 
 	// ListenerService (KAC-152): Get/List/Create/Update/Delete/ListOperations.
-	// Peer-clients (vpc Address / InternalAddress / Subnet, iam HierarchyWriter)
+	// Peer-clients (vpc Address / InternalAddress / Subnet)
 	// допускают nil — Create/Delete вернут Unavailable если peer не сконфигурирован.
 	lbv1.RegisterListenerServiceServer(publicSrv, listener.NewHandler(
 		repo,
@@ -240,7 +253,6 @@ func runServe(configPath string) error {
 		peers.Address,
 		peers.InternalAddress,
 		peers.Subnet,
-		peers.Hierarchy,
 		logger,
 	))
 
@@ -252,7 +264,6 @@ func runServe(configPath string) error {
 		repo, opsRepo,
 		peers.Project, peers.Region,
 		peers.Instance, peers.NetworkInterface, peers.Subnet,
-		peers.Hierarchy,
 		logger,
 	)
 	lbv1.RegisterTargetGroupServiceServer(publicSrv, tgHandler)
@@ -392,6 +403,49 @@ func runServe(configPath string) error {
 			}
 			return inv.Run(ctx)
 		},
+		// task 5 — SEC-D FGA register-drainer (epic §3.1 Вариант A). corelib
+		// outbox/drainer on `kacho_nlb.fga_register_outbox`; FOR UPDATE SKIP
+		// LOCKED claim → exactly-once across replicas. Each row → kacho-iam
+		// InternalIAMService.RegisterResource / UnregisterResource (mTLS when
+		// cfg.MTLS.IAMRegister.Enable). IAM Unavailable → retry with backoff,
+		// intent stays durable (SEC-D-11). enable=false → no-op task.
+		// OQ-SEC-D-5: default-on (без drainer'а ресурсы не получат owner-tuple).
+		func() error {
+			if !cfg.FGA.RegisterDrainer.Enable {
+				logger.Info("fga_register_drainer_disabled")
+				<-ctx.Done()
+				return nil
+			}
+			if peers.Register == nil {
+				// No iam peer configured: intents accumulate durably; without an
+				// applier the drainer would only poison. Log + idle (intent not
+				// lost — applied once iam is wired and drainer restarts).
+				logger.Warn("fga_register_drainer_idle_no_iam_peer")
+				<-ctx.Done()
+				return nil
+			}
+			d, derr := drainer.New[domain.FGARegisterIntent](
+				pool,
+				drainer.Config{
+					Table:        "kacho_nlb.fga_register_outbox",
+					Channel:      "kacho_nlb_fga_register_outbox",
+					BatchSize:    cfg.FGA.RegisterDrainer.BatchSize,
+					PollFallback: cfg.FGA.RegisterDrainer.PollFallback,
+					MaxAttempts:  cfg.FGA.RegisterDrainer.MaxAttempts,
+					BackoffMin:   cfg.FGA.RegisterDrainer.BackoffMin,
+					BackoffMax:   cfg.FGA.RegisterDrainer.BackoffMax,
+				},
+				iamclient.DecodeFGARegisterIntent,
+				iamclient.NewRegisterApplier(peers.Register),
+				logger,
+			)
+			if derr != nil {
+				return fmt.Errorf("build fga register-drainer: %w", derr)
+			}
+			logger.Info("fga_register_drainer_started",
+				"mtls", cfg.MTLS.IAMRegister.Enable)
+			return d.Run(ctx)
+		},
 	}
 	// maxConcurrency = len(tasks)-1: основной goroutine исполняет task[0],
 	// + дополнительные goroutine'ы для остальных. См. parallel.ExecAbstract doc.
@@ -425,7 +479,8 @@ func listenEndpoint(endpoint string) (net.Listener, error) {
 // Внутренняя топология:
 //   - kacho-iam: один conn на InternalAddr — ProjectService.Get живёт и
 //     на public, и (через scope-filter) на internal; InternalIAMService.{Check,
-//     WriteCreatorTuple} — только на internal. Используем internal listener.
+//     RegisterResource, UnregisterResource} — только на internal. Используем
+//     internal listener.
 //   - kacho-compute: один conn на public Addr — RegionService / ZoneService /
 //     InstanceService — публичные read RPC.
 //   - kacho-vpc: ДВА conn'а. public (Addr) — AddressService / OperationService;
@@ -439,22 +494,37 @@ func dialPeers(
 	ctx context.Context, cfg *config.Config, logger *slog.Logger,
 ) ([]clients.Conn, *peerClients, error) {
 	var conns []clients.Conn
-	dialOne := func(name, addr string, useTLS bool) (clients.Conn, error) {
+	// dialOne opens one peer conn. mtls (per-edge SEC-B grpcclient.TLSClient)
+	// takes precedence over the legacy `useTLS` system-trust bool: when
+	// mtls.Enable=true the dial presents a client-cert and verifies the server
+	// against the configured CA + server_name. mtls.Enable=false → insecure /
+	// legacy TLS (dev backward-compat, эпик §5). A mTLS cred-build error is
+	// fail-closed (no silent insecure downgrade, SEC-D-20).
+	dialOne := func(name, addr string, useTLS bool, mtls grpcclient.TLSClient) (clients.Conn, error) {
 		addr = strings.TrimSpace(addr)
 		if addr == "" {
 			logger.Info("peer not configured — skip", "peer", name)
 			return nil, nil
 		}
+		var mtlsCreds credentials.TransportCredentials
+		if mtls.Enable {
+			c, cerr := grpcclient.TLSClientTransportCreds(mtls)
+			if cerr != nil {
+				return nil, fmt.Errorf("build mTLS creds for %s: %w", name, cerr)
+			}
+			mtlsCreds = c
+		}
 		cc, err := clients.Build(ctx, clients.BuildOptions{
 			Endpoint:    addr,
 			TLS:         useTLS,
+			MTLSCreds:   mtlsCreds,
 			DialTimeout: peerDialDuration(cfg),
 		})
 		if err != nil {
 			return nil, fmt.Errorf("dial %s @ %q: %w", name, addr, err)
 		}
 		conns = append(conns, cc)
-		logger.Info("peer connected", "peer", name, "addr", addr, "tls", useTLS)
+		logger.Info("peer connected", "peer", name, "addr", addr, "tls", useTLS, "mtls", mtls.Enable)
 		return cc, nil
 	}
 
@@ -462,18 +532,21 @@ func dialPeers(
 
 	// kacho-iam — два conn'а:
 	//   - PUBLIC (9090): ProjectService.Get — публичный RPC.
-	//   - INTERNAL (9091): InternalIAMService.{Check,WriteCreatorTuple} —
-	//     internal-only admin RPC, registered только на internal listener.
+	//   - INTERNAL (9091): InternalIAMService.{Check,RegisterResource,
+	//     UnregisterResource} — internal-only admin RPC, registered только на
+	//     internal listener.
 	// KAC-178 §2 follow-up: до этого split'а оба клиента шли на INTERNAL,
 	// что для ProjectService давало Unimplemented → "project lookup failed".
+	// SEC-D edge nlb→iam: register-drainer + Check + Project use the iam mTLS
+	// client-cert (cfg.MTLS.IAMRegister) when enabled.
 	iamPublicAddr := firstNonEmpty(cfg.ExtAPI.IAM.Addr, cfg.ExtAPI.IAM.InternalAddr)
-	iamPublicConn, err := dialOne("iam-public", iamPublicAddr, cfg.ExtAPI.IAM.TLS)
+	iamPublicConn, err := dialOne("iam-public", iamPublicAddr, cfg.ExtAPI.IAM.TLS, cfg.MTLS.IAMRegister)
 	if err != nil {
 		closeAll(conns, logger)
 		return nil, nil, err
 	}
 	iamInternalAddr := firstNonEmpty(cfg.ExtAPI.IAM.InternalAddr, cfg.ExtAPI.IAM.Addr)
-	iamInternalConn, err := dialOne("iam-internal", iamInternalAddr, cfg.ExtAPI.IAM.TLS)
+	iamInternalConn, err := dialOne("iam-internal", iamInternalAddr, cfg.ExtAPI.IAM.TLS, cfg.MTLS.IAMRegister)
 	if err != nil {
 		closeAll(conns, logger)
 		return nil, nil, err
@@ -483,12 +556,15 @@ func dialPeers(
 	}
 	if iamInternalConn != nil {
 		peers.Check = iamclient.NewCheckClient(iamInternalConn)
-		peers.Hierarchy = iamclient.NewHierarchyWriter(iamInternalConn)
+		// SEC-D FGA-proxy: register-drainer applies owner-tuple intents through
+		// InternalIAMService.RegisterResource / UnregisterResource (Internal-only
+		// :9091). Replaces the former direct WriteCreatorTuple (Issue N5).
+		peers.Register = iamclient.NewRegisterResourceClient(iamInternalConn)
 	}
 
 	// kacho-compute — один conn на public listener (Region/Zone/Instance — публичные).
 	computeAddr := firstNonEmpty(cfg.ExtAPI.Compute.Addr, cfg.ExtAPI.Compute.InternalAddr)
-	computeConn, err := dialOne("compute", computeAddr, cfg.ExtAPI.Compute.TLS)
+	computeConn, err := dialOne("compute", computeAddr, cfg.ExtAPI.Compute.TLS, cfg.MTLS.Compute)
 	if err != nil {
 		closeAll(conns, logger)
 		return nil, nil, err
@@ -501,13 +577,13 @@ func dialPeers(
 	// kacho-vpc — два conn'а: public (Address/Subnet/NIC/Operation) +
 	// internal (InternalAddressService).
 	vpcPublicAddr := firstNonEmpty(cfg.ExtAPI.VPC.Addr, cfg.ExtAPI.VPC.InternalAddr)
-	vpcPublicConn, err := dialOne("vpc-public", vpcPublicAddr, cfg.ExtAPI.VPC.TLS)
+	vpcPublicConn, err := dialOne("vpc-public", vpcPublicAddr, cfg.ExtAPI.VPC.TLS, cfg.MTLS.VPC)
 	if err != nil {
 		closeAll(conns, logger)
 		return nil, nil, err
 	}
 	vpcInternalAddr := firstNonEmpty(cfg.ExtAPI.VPC.InternalAddr, cfg.ExtAPI.VPC.Addr)
-	vpcInternalConn, err := dialOne("vpc-internal", vpcInternalAddr, cfg.ExtAPI.VPC.TLS)
+	vpcInternalConn, err := dialOne("vpc-internal", vpcInternalAddr, cfg.ExtAPI.VPC.TLS, cfg.MTLS.VPC)
 	if err != nil {
 		closeAll(conns, logger)
 		return nil, nil, err
@@ -550,4 +626,3 @@ func closeAll(conns []clients.Conn, logger *slog.Logger) {
 		}
 	}
 }
-

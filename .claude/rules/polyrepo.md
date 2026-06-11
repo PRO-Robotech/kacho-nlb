@@ -45,8 +45,16 @@ versioned modules — под релизную фазу). Проверка: `grep
 - `kacho-vpc → kacho-compute` — валидация `zone_id` (`compute.v1.ZoneService.Get`); Geography — домен compute.
 - `kacho-compute → kacho-vpc` — валидация NIC-spec (Subnet/SecurityGroup) + IPAM-аллокация Address.
 - `* → kacho-iam` — `ProjectService.Get` (existence + account lookup, leaf-owner) + `InternalIAMService.Check` (authz-gate).
+- `kacho-vpc → kacho-iam` (fgaproxy, SEC-A) — `InternalIAMService.RegisterResource`/`UnregisterResource`: запись/снятие
+  owner-hierarchy-tuple в FGA через IAM (модули не ходят в FGA напрямую). Internal-only :9091, идемпотентно, at-least-once
+  через transactional-outbox (SEC-D). Least-priv: ReBAC `fga_writer` @ `iam_fgaproxy:system`.
+- `kacho-compute → kacho-iam` (fgaproxy, SEC-A) — то же ребро: `RegisterResource`/`UnregisterResource` для owner-tuple
+  compute-ресурсов. Internal-only :9091, идемпотентно, fgaproxy least-priv `fga_writer` @ `iam_fgaproxy:system`.
 
 **Циклы запрещены**: если A зовёт B — B не зовёт A. Новое ребро фиксируется здесь как runtime-edge.
+- `kacho-vpc ⇄ kacho-compute` — **НЕ семантический цикл**: рёбра разнонаправлены по ресурсному контексту
+  (`vpc→compute` = валидация `zone_id`/Geography; `compute→vpc` = валидация NIC-spec + IPAM). Запрос по одному ребру
+  **не порождает обратный синхронный вызов** по другому (нет request-time A→B→A). Допустимо как два независимых runtime-edge.
 Регламент кросс-доменных ссылок — `data-integrity.md`.
 
 ## Порядок работы / merge для кросс-репо фичи (топосортировка графа)

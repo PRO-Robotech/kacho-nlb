@@ -23,7 +23,7 @@ func TestHandler_DispatchesAll(t *testing.T) {
 	lbID := seedLB(t, repo, "prj-a", "edge")
 	tgID := seedTG(t, repo, "prj-a", "ru-central1", "tg-1")
 	opsRepo := newFakeOpsRepo()
-	h := NewHandler(repo, opsRepo, &fakeProjectClient{}, &fakeRegionClient{}, nil, slog.Default())
+	h := NewHandler(repo, opsRepo, &fakeProjectClient{}, &fakeRegionClient{}, slog.Default())
 
 	ctx := context.Background()
 
@@ -104,13 +104,13 @@ func TestHandler_DispatchesAll(t *testing.T) {
 
 func TestHandler_NewHandler_NilLogger_OK(t *testing.T) {
 	t.Parallel()
-	h := NewHandler(newFakeRepo(), newFakeOpsRepo(), nil, nil, nil, nil)
+	h := NewHandler(newFakeRepo(), newFakeOpsRepo(), nil, nil, nil)
 	require.NotNil(t, h)
 }
 
 func TestHandler_Get_PropagatesErr(t *testing.T) {
 	t.Parallel()
-	h := NewHandler(newFakeRepo(), newFakeOpsRepo(), nil, nil, nil, slog.Default())
+	h := NewHandler(newFakeRepo(), newFakeOpsRepo(), nil, nil, slog.Default())
 	_, err := h.Get(context.Background(), &lbv1.GetNetworkLoadBalancerRequest{})
 	require.Equal(t, codes.InvalidArgument, status.Code(err))
 }

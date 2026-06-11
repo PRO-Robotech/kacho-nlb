@@ -35,14 +35,15 @@ import (
 // видит свои writes, как evgeniy §G.2). Commit/Abort моделируется через
 // snapshot-restore при Abort'е.
 type fakeRepo struct {
-	mu             sync.Mutex
-	listeners      map[string]*kachorepo.ListenerRecord
-	loadBalancers  map[string]*kachorepo.LoadBalancerRecord
-	targetGroups   map[string]*kachorepo.TargetGroupRecord
-	outbox         []fakeOutboxEvent
-	insertErr      error // injected error for next Insert
-	commitErr      error // injected error for next Commit
-	currentWriter  *fakeWriter
+	mu            sync.Mutex
+	listeners     map[string]*kachorepo.ListenerRecord
+	loadBalancers map[string]*kachorepo.LoadBalancerRecord
+	targetGroups  map[string]*kachorepo.TargetGroupRecord
+	outbox        []fakeOutboxEvent
+	fga           []fgaIntentEvent // SEC-D FGARegisterOutbox intents (flushed on Commit)
+	insertErr     error            // injected error for next Insert
+	commitErr     error            // injected error for next Commit
+	currentWriter *fakeWriter
 }
 
 type fakeOutboxEvent struct {
@@ -115,9 +116,11 @@ type fakeReader struct {
 	r *fakeRepo
 }
 
-func (rd *fakeReader) LoadBalancers() kachorepo.LoadBalancerReaderIface { return &fakeLBReader{r: rd.r} }
-func (rd *fakeReader) Listeners() kachorepo.ListenerReaderIface         { return &fakeListenerReader{r: rd.r} }
-func (rd *fakeReader) TargetGroups() kachorepo.TargetGroupReaderIface   { return &fakeTGReader{r: rd.r} }
+func (rd *fakeReader) LoadBalancers() kachorepo.LoadBalancerReaderIface {
+	return &fakeLBReader{r: rd.r}
+}
+func (rd *fakeReader) Listeners() kachorepo.ListenerReaderIface       { return &fakeListenerReader{r: rd.r} }
+func (rd *fakeReader) TargetGroups() kachorepo.TargetGroupReaderIface { return &fakeTGReader{r: rd.r} }
 func (rd *fakeReader) AttachedTargetGroups() kachorepo.AttachedTargetGroupReaderIface {
 	return &fakeAttachedTGReader{}
 }
@@ -126,12 +129,19 @@ func (rd *fakeReader) Close() error { return nil }
 // ---- Writer ----
 
 type fakeWriter struct {
-	r        *fakeRepo
-	pending  []fakeOutboxEvent
-	inserted []domain.ResourceID // for rollback on Abort
-	updated  []domain.ResourceID
-	deleted  []string
-	finalize bool
+	r          *fakeRepo
+	pending    []fakeOutboxEvent
+	pendingFGA []fgaIntentEvent
+	inserted   []domain.ResourceID // for rollback on Abort
+	updated    []domain.ResourceID
+	deleted    []string
+	finalize   bool
+}
+
+// fgaIntentEvent records one FGARegisterOutbox.Emit (SEC-D) for assertions.
+type fgaIntentEvent struct {
+	EventType string
+	Intent    domain.FGARegisterIntent
 }
 
 func (w *fakeWriter) LoadBalancers() kachorepo.LoadBalancerWriterIface {
@@ -145,6 +155,9 @@ func (w *fakeWriter) AttachedTargetGroups() kachorepo.AttachedTargetGroupWriterI
 	return &fakeAttachedTGWriter{}
 }
 func (w *fakeWriter) Outbox() kachorepo.OutboxEmitter { return &fakeOutbox{w: w} }
+func (w *fakeWriter) FGARegisterOutbox() kachorepo.FGARegisterEmitter {
+	return &fakeFGARegisterOutbox{w: w}
+}
 func (w *fakeWriter) Commit() error {
 	w.r.mu.Lock()
 	defer w.r.mu.Unlock()
@@ -155,6 +168,7 @@ func (w *fakeWriter) Commit() error {
 		return err
 	}
 	w.r.outbox = append(w.r.outbox, w.pending...)
+	w.r.fga = append(w.r.fga, w.pendingFGA...)
 	w.r.currentWriter = nil
 	w.finalize = true
 	return nil
@@ -684,20 +698,20 @@ func (c *fakeAddressClient) Get(_ context.Context, id string) (*vpcclient.Addres
 
 // fakeInternalAddressClient — in-memory `vpcclient.InternalAddressClient`.
 type fakeInternalAddressClient struct {
-	mu                       sync.Mutex
-	allocExternalCalls       []vpcclient.AllocateExternalIPRequest
-	allocInternalCalls       []vpcclient.AllocateInternalIPRequest
-	freeCalls                []string
-	clearCalls               []string
-	setRefCalls              []setRefCall
-	allocExternalResult      *vpcclient.AllocateResponse
-	allocInternalResult      *vpcclient.AllocateResponse
-	allocErr                 error
-	setRefErr                error
-	freeErr                  error
-	clearErr                 error
-	nextAllocID              string
-	nextAllocValue           string
+	mu                  sync.Mutex
+	allocExternalCalls  []vpcclient.AllocateExternalIPRequest
+	allocInternalCalls  []vpcclient.AllocateInternalIPRequest
+	freeCalls           []string
+	clearCalls          []string
+	setRefCalls         []setRefCall
+	allocExternalResult *vpcclient.AllocateResponse
+	allocInternalResult *vpcclient.AllocateResponse
+	allocErr            error
+	setRefErr           error
+	freeErr             error
+	clearErr            error
+	nextAllocID         string
+	nextAllocValue      string
 }
 type setRefCall struct {
 	addressID string
@@ -778,33 +792,15 @@ func (c *fakeSubnetClient) Get(_ context.Context, id string) (*vpcclient.Subnet,
 	return nil, fmt.Errorf("%w: Subnet %s not found", domain.ErrInvalidArg, id)
 }
 
-// fakeHierarchyWriter — capture-only HierarchyWriter.
-type fakeHierarchyWriter struct {
-	mu             sync.Mutex
-	creatorCalls   []hierarchyTupleCall
-	projectCalls   []hierarchyProjectCall
-	creatorErr     error
-}
-type hierarchyTupleCall struct {
-	Subject  string
-	Relation string
-	Object   string
-}
-type hierarchyProjectCall struct {
-	ObjectType  string
-	ObjectID    string
-	SrcProject  string
-	DstProject  string
+// fakeFGARegisterOutbox records SEC-D FGARegisterOutbox.Emit into the writer's
+// pending buffer (flushed to fakeRepo.fga on Commit, dropped on Abort).
+type fakeFGARegisterOutbox struct{ w *fakeWriter }
+
+func (o *fakeFGARegisterOutbox) Emit(_ context.Context, eventType string, intent domain.FGARegisterIntent) error {
+	o.w.pendingFGA = append(o.w.pendingFGA, fgaIntentEvent{EventType: eventType, Intent: intent})
+	return nil
 }
 
-func newFakeHierarchyWriter() *fakeHierarchyWriter { return &fakeHierarchyWriter{} }
-
-func (w *fakeHierarchyWriter) WriteCreatorTuple(_ context.Context, subjectID, relation, object string) error {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	w.creatorCalls = append(w.creatorCalls, hierarchyTupleCall{Subject: subjectID, Relation: relation, Object: object})
-	return w.creatorErr
-}
 // contextWithSubject — helper для тестов: кладёт `operations.Principal` в
 // ctx так, чтобы `principalSubjectAccessor.SubjectFromContext(ctx)` вернул
 // `subject` (формат `<type>:<id>`). Используется create_test.go для проверки,
@@ -832,11 +828,12 @@ func splitSubject(s string) [2]string {
 	return out
 }
 
-func (w *fakeHierarchyWriter) RewriteProjectTuple(_ context.Context, objectType, objectID, srcProject, dstProject string) error {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	w.projectCalls = append(w.projectCalls, hierarchyProjectCall{
-		ObjectType: objectType, ObjectID: objectID, SrcProject: srcProject, DstProject: dstProject,
-	})
-	return nil
+// committedFGA — SEC-D: all FGA-register/unregister intents flushed by committed
+// writers (parity with loadbalancer test pkg `repo.fga` direct access).
+func (r *fakeRepo) committedFGA() []fgaIntentEvent {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]fgaIntentEvent, len(r.fga))
+	copy(out, r.fga)
+	return out
 }

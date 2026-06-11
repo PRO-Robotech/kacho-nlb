@@ -1,8 +1,6 @@
 package targetgroup
 
 import (
-	"log/slog"
-
 	"github.com/H-BF/corlib/pkg/option"
 	"google.golang.org/protobuf/types/known/anypb"
 
@@ -104,12 +102,4 @@ func marshalTargetGroup(rec *kachorepo.TargetGroupRecord) (*anypb.Any, error) {
 		return nil, err
 	}
 	return anypb.New(pb)
-}
-
-// loggerOrDiscard — defensive nil-logger guard.
-func loggerOrDiscard(l *slog.Logger) *slog.Logger {
-	if l != nil {
-		return l
-	}
-	return slog.Default()
 }

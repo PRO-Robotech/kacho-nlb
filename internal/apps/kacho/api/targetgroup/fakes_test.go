@@ -39,6 +39,7 @@ type fakeRepo struct {
 	targets          map[string]map[string]*kachorepo.TargetRecord // tgID → target.ID → row
 	pivot            map[string]bool                               // "lbID/tgID" → attached
 	outbox           []fakeOutboxEvent
+	fga              []fgaIntentEvent // SEC-D FGARegisterOutbox intents (flushed on Commit)
 	failOnInsert     error
 	failOnUpdate     error
 	failOnDelete     error
@@ -116,13 +117,20 @@ func (rd *fakeReader) AttachedTargetGroups() kachorepo.AttachedTargetGroupReader
 func (rd *fakeReader) Close() error { return nil }
 
 type fakeWriter struct {
-	r              *fakeRepo
-	committed      bool
-	pendingOutbox  []fakeOutboxEvent
-	pendingTGs     []*kachorepo.TargetGroupRecord
-	pendingTGDel   []string
-	pendingAddTgt  []pendingAddTarget
-	pendingMark    []pendingMarkDraining
+	r             *fakeRepo
+	committed     bool
+	pendingOutbox []fakeOutboxEvent
+	pendingFGA    []fgaIntentEvent
+	pendingTGs    []*kachorepo.TargetGroupRecord
+	pendingTGDel  []string
+	pendingAddTgt []pendingAddTarget
+	pendingMark   []pendingMarkDraining
+}
+
+// fgaIntentEvent records one FGARegisterOutbox.Emit (SEC-D) for assertions.
+type fgaIntentEvent struct {
+	EventType string
+	Intent    domain.FGARegisterIntent
 }
 
 type pendingAddTarget struct {
@@ -137,11 +145,16 @@ type pendingMarkDraining struct {
 
 func (w *fakeWriter) LoadBalancers() kachorepo.LoadBalancerWriterIface { return &fakeLBStub{} }
 func (w *fakeWriter) Listeners() kachorepo.ListenerWriterIface         { return &fakeListenerStub{} }
-func (w *fakeWriter) TargetGroups() kachorepo.TargetGroupWriterIface   { return &fakeTGWriter{r: w.r, w: w} }
+func (w *fakeWriter) TargetGroups() kachorepo.TargetGroupWriterIface {
+	return &fakeTGWriter{r: w.r, w: w}
+}
 func (w *fakeWriter) AttachedTargetGroups() kachorepo.AttachedTargetGroupWriterIface {
 	return &fakeATGWriter{r: w.r}
 }
 func (w *fakeWriter) Outbox() kachorepo.OutboxEmitter { return &fakeOutbox{r: w.r, w: w} }
+func (w *fakeWriter) FGARegisterOutbox() kachorepo.FGARegisterEmitter {
+	return &fakeFGARegisterOutbox{w: w}
+}
 
 func (w *fakeWriter) Commit() error {
 	if w.committed {
@@ -195,6 +208,7 @@ func (w *fakeWriter) Commit() error {
 		}
 	}
 	w.r.outbox = append(w.r.outbox, w.pendingOutbox...)
+	w.r.fga = append(w.r.fga, w.pendingFGA...)
 	return nil
 }
 
@@ -204,6 +218,7 @@ func (w *fakeWriter) Abort() {
 	}
 	w.committed = true
 	w.pendingOutbox = nil
+	w.pendingFGA = nil
 	w.pendingTGs = nil
 	w.pendingTGDel = nil
 	w.pendingAddTgt = nil
@@ -544,8 +559,8 @@ func (fakeLBStub) List(context.Context, kachorepo.LoadBalancerFilter, kachorepo.
 func (fakeLBStub) ListByProject(context.Context, string, kachorepo.Pagination) ([]*kachorepo.LoadBalancerRecord, string, error) {
 	return nil, "", nil
 }
-func (fakeLBStub) HasListeners(context.Context, string) (bool, error)             { return false, nil }
-func (fakeLBStub) HasAttachedTargetGroups(context.Context, string) (bool, error)  { return false, nil }
+func (fakeLBStub) HasListeners(context.Context, string) (bool, error)            { return false, nil }
+func (fakeLBStub) HasAttachedTargetGroups(context.Context, string) (bool, error) { return false, nil }
 func (fakeLBStub) Insert(context.Context, *domain.LoadBalancer) (*kachorepo.LoadBalancerRecord, error) {
 	return nil, errors.New("not used")
 }
@@ -761,38 +776,27 @@ func (f *fakeSubnetClient) Get(ctx context.Context, id string) (*vpc.Subnet, err
 	return &vpc.Subnet{ID: id, ZoneID: "ru-central1-a", V4CIDRBlocks: []string{"10.0.0.0/24"}}, nil
 }
 
-type fakeHierarchy struct {
-	mu               sync.Mutex
-	writeCreatorErr  error
-	rewriteProjectErr error
-	creatorCalls     []string // "<subject> <relation> <object>"
-	rewriteCalls     []string // "<objType>:<objID> <src>→<dst>"
-}
+// fakeFGARegisterOutbox records SEC-D FGARegisterOutbox.Emit into the writer's
+// pending buffer (flushed to fakeRepo.fga on Commit, dropped on Abort).
+type fakeFGARegisterOutbox struct{ w *fakeWriter }
 
-func (f *fakeHierarchy) WriteCreatorTuple(_ context.Context, subjectID, relation, object string) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.creatorCalls = append(f.creatorCalls, fmt.Sprintf("%s %s %s", subjectID, relation, object))
-	return f.writeCreatorErr
-}
-
-func (f *fakeHierarchy) RewriteProjectTuple(_ context.Context, objectType, objectID, srcProject, dstProject string) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.rewriteCalls = append(f.rewriteCalls, fmt.Sprintf("%s:%s %s→%s", objectType, objectID, srcProject, dstProject))
-	return f.rewriteProjectErr
+func (o *fakeFGARegisterOutbox) Emit(_ context.Context, eventType string, intent domain.FGARegisterIntent) error {
+	if o.w.r.failOnOutbox != nil {
+		return o.w.r.failOnOutbox
+	}
+	o.w.pendingFGA = append(o.w.pendingFGA, fgaIntentEvent{EventType: eventType, Intent: intent})
+	return nil
 }
 
 // ensure interface conformance.
 var (
-	_ kachorepo.Repository = (*fakeRepo)(nil)
-	_ operations.Repo      = (*fakeOpsRepo)(nil)
-	_ ProjectClient        = (*fakeProjectClient)(nil)
-	_ RegionClient         = (*fakeRegionClient)(nil)
-	_ InstanceClient       = (*fakeInstanceClient)(nil)
+	_ kachorepo.Repository   = (*fakeRepo)(nil)
+	_ operations.Repo        = (*fakeOpsRepo)(nil)
+	_ ProjectClient          = (*fakeProjectClient)(nil)
+	_ RegionClient           = (*fakeRegionClient)(nil)
+	_ InstanceClient         = (*fakeInstanceClient)(nil)
 	_ NetworkInterfaceClient = (*fakeNICClient)(nil)
-	_ SubnetClient         = (*fakeSubnetClient)(nil)
-	_ HierarchyWriter      = (*fakeHierarchy)(nil)
+	_ SubnetClient           = (*fakeSubnetClient)(nil)
 )
 
 // ---- Shared test helpers ----

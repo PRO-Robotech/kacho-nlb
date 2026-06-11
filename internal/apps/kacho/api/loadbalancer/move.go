@@ -13,7 +13,7 @@ import (
 	"github.com/PRO-Robotech/kacho-corelib/operations"
 	lbv1 "github.com/PRO-Robotech/kacho-proto/gen/go/kacho/cloud/loadbalancer/v1"
 
-	"github.com/PRO-Robotech/kacho-nlb/internal/fgawrite"
+	"github.com/PRO-Robotech/kacho-nlb/internal/domain"
 	kachopg "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho/pg"
 )
 
@@ -25,28 +25,29 @@ import (
 //     TG attach запрещён — Move заблокирован если есть).
 //
 // Worker: Writer-TX → repo.MoveProject (UPDATE LB + cascade UPDATE listeners) +
-// outbox MOVED → Commit → fgaWriter.RewriteProjectTuple (best-effort).
+// outbox MOVED + FGA-register(dst project) + FGA-unregister(src project) → Commit
+// (SEC-D Вариант A: project-rewrite = register new-project tuple + unregister
+// old-project tuple, both in the same writer-tx as MoveProject — no dual-write).
 //
 // Acceptance: GWT-NLB-026..GWT-NLB-031.
 type MoveLoadBalancerUseCase struct {
 	repo          Repo
 	opsRepo       operations.Repo
 	projectClient ProjectClient
-	fgaWriter     HierarchyWriter
 	logger        *slog.Logger
 }
 
 // NewMoveLoadBalancerUseCase конструктор.
 func NewMoveLoadBalancerUseCase(
 	repo Repo, opsRepo operations.Repo,
-	pc ProjectClient, fga HierarchyWriter, logger *slog.Logger,
+	pc ProjectClient, logger *slog.Logger,
 ) *MoveLoadBalancerUseCase {
 	if logger == nil {
 		logger = slog.Default()
 	}
 	return &MoveLoadBalancerUseCase{
 		repo: repo, opsRepo: opsRepo,
-		projectClient: pc, fgaWriter: fga, logger: logger,
+		projectClient: pc, logger: logger,
 	}
 }
 
@@ -131,9 +132,9 @@ func (u *MoveLoadBalancerUseCase) doMove(ctx context.Context, id, srcProject, ds
 	if err := w.Outbox().Emit(ctx,
 		kachopg.OutboxResourceLoadBalancer, string(moved.ID), string(moved.ProjectID),
 		kachopg.OutboxActionMoved, map[string]any{
-			"id":               string(moved.ID),
-			"src_project_id":   srcProject,
-			"dst_project_id":   dstProject,
+			"id":             string(moved.ID),
+			"src_project_id": srcProject,
+			"dst_project_id": dstProject,
 		},
 	); err != nil {
 		return nil, mapDomainErr(err)
@@ -145,14 +146,18 @@ func (u *MoveLoadBalancerUseCase) doMove(ctx context.Context, id, srcProject, ds
 	); err != nil {
 		return nil, mapDomainErr(err)
 	}
+	// SEC-D: project-rewrite as register(dst) + unregister(src) in the SAME tx.
+	if err := w.FGARegisterOutbox().Emit(ctx, domain.FGAEventRegister,
+		lbUnregisterIntent(id, dstProject)); err != nil {
+		return nil, mapDomainErr(err)
+	}
+	if err := w.FGARegisterOutbox().Emit(ctx, domain.FGAEventUnregister,
+		lbUnregisterIntent(id, srcProject)); err != nil {
+		return nil, mapDomainErr(err)
+	}
 	if err := w.Commit(); err != nil {
 		return nil, mapDomainErr(err)
 	}
-
-	// FGA rewrite (best-effort).
-	fgawrite.EmitProjectRewrite(ctx, u.fgaWriter,
-		u.logger.With("lb_id", id),
-		fgawrite.ObjectTypeLoadBalancer, id, srcProject, dstProject)
 
 	pb, err := lbRecordToProto(moved)
 	if err != nil {

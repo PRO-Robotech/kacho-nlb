@@ -15,7 +15,6 @@ import (
 	lbv1 "github.com/PRO-Robotech/kacho-proto/gen/go/kacho/cloud/loadbalancer/v1"
 
 	"github.com/PRO-Robotech/kacho-nlb/internal/domain"
-	"github.com/PRO-Robotech/kacho-nlb/internal/fgawrite"
 	kachorepo "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho"
 	kachopg "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho/pg"
 )
@@ -31,16 +30,17 @@ import (
 // Async part (worker):
 //   - peer-check `project_id` (`InvalidArgument`/`Unavailable` on failure);
 //   - peer-check `region_id`;
-//   - open Writer-TX → Insert(LB) + Outbox.Emit("CREATED") → Commit;
-//   - D-11 sync hierarchy tuple write (`nlb_load_balancer:<id>#project@project:<pid>`
-//     + creator tuple if subject extractable from ctx);
+//   - open Writer-TX → Insert(LB) + Outbox.Emit("CREATED") +
+//     FGARegisterOutbox.Emit(fga.register) → Commit (SEC-D Вариант A: the
+//     owner-hierarchy + creator tuple intent is written in the SAME writer-tx
+//     as the Insert — no dual-write; a register-drainer applies it through
+//     kacho-iam InternalIAMService.RegisterResource);
 //   - return Operation.Response = NetworkLoadBalancer.
 type CreateLoadBalancerUseCase struct {
 	repo          Repo
 	opsRepo       operations.Repo
 	projectClient ProjectClient
 	regionClient  RegionClient
-	fgaWriter     HierarchyWriter
 	logger        *slog.Logger
 }
 
@@ -48,7 +48,7 @@ type CreateLoadBalancerUseCase struct {
 func NewCreateLoadBalancerUseCase(
 	repo Repo, opsRepo operations.Repo,
 	pc ProjectClient, rc RegionClient,
-	fga HierarchyWriter, logger *slog.Logger,
+	logger *slog.Logger,
 ) *CreateLoadBalancerUseCase {
 	if logger == nil {
 		logger = slog.Default()
@@ -56,7 +56,7 @@ func NewCreateLoadBalancerUseCase(
 	return &CreateLoadBalancerUseCase{
 		repo: repo, opsRepo: opsRepo,
 		projectClient: pc, regionClient: rc,
-		fgaWriter: fga, logger: logger,
+		logger: logger,
 	}
 }
 
@@ -168,15 +168,18 @@ func (u *CreateLoadBalancerUseCase) doCreate(
 	); err != nil {
 		return nil, mapDomainErr(err)
 	}
+	// SEC-D: FGA-register-intent (project-hierarchy + creator) in the SAME tx as
+	// the Insert — durable, applied async by the register-drainer (epic §3.1
+	// Вариант A; replaces the former best-effort post-commit fgawrite, Issue N5).
+	if err := w.FGARegisterOutbox().Emit(ctx, domain.FGAEventRegister,
+		lbRegisterIntent(created, principal)); err != nil {
+		return nil, mapDomainErr(err)
+	}
 	if err := w.Commit(); err != nil {
 		return nil, mapDomainErr(err)
 	}
 
-	// 4. D-11 sync hierarchy tuple write (best-effort: log on failure, do not
-	// abort op — row already committed).
-	u.emitHierarchyTuples(ctx, created, principal)
-
-	// 5. Marshal response.
+	// 4. Marshal response.
 	pb, err := lbRecordToProto(created)
 	if err != nil {
 		return nil, err
@@ -212,23 +215,20 @@ func (u *CreateLoadBalancerUseCase) assertNameUnique(ctx context.Context, projec
 	return nil
 }
 
-// emitHierarchyTuples — D-11 sync write tuple-ов. Delegates to the shared
-// `internal/fgawrite` helper (best-effort, non-fatal: row already committed;
-// subscriber D-13 backfills any tuple-write hiccups).
-func (u *CreateLoadBalancerUseCase) emitHierarchyTuples(
-	ctx context.Context, lb *kachorepo.LoadBalancerRecord, principal operations.Principal,
-) {
-	if lb == nil {
-		return
+// lbRegisterIntent builds the SEC-D FGA-register-intent for a freshly created
+// LoadBalancer: a project-hierarchy tuple plus, if the principal is an
+// authenticated (non-system) user, a creator (admin) tuple. The empty-subject
+// creator tuple is skipped (parity with the former EmitCreator skip-on-empty-
+// subject — system-initiated resources have no human owner).
+func lbRegisterIntent(lb *kachorepo.LoadBalancerRecord, principal operations.Principal) domain.FGARegisterIntent {
+	id := string(lb.ID)
+	tuples := []domain.FGATuple{
+		domain.FGAProjectTuple(domain.FGAObjectTypeLoadBalancer, id, string(lb.ProjectID)),
 	}
-	logger := u.logger.With("lb_id", string(lb.ID), "project_id", string(lb.ProjectID))
-	// project → object (hierarchy).
-	fgawrite.EmitProjectRewrite(ctx, u.fgaWriter, logger,
-		fgawrite.ObjectTypeLoadBalancer, string(lb.ID), "", string(lb.ProjectID))
-	// creator → object (owner).
-	fgawrite.EmitCreator(ctx, u.fgaWriter, logger,
-		fgawrite.SubjectFromPrincipal(principal),
-		fgawrite.RelationOwner, fgawrite.ObjectTypeLoadBalancer, string(lb.ID))
+	if subject := domain.FGASubjectFromPrincipal(principal.Type, principal.ID); subject != "" {
+		tuples = append(tuples, domain.FGACreatorTuple(subject, domain.FGAObjectTypeLoadBalancer, id))
+	}
+	return domain.FGARegisterIntent{Kind: "NetworkLoadBalancer", ResourceID: id, Tuples: tuples}
 }
 
 // ---- Helpers ----

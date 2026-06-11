@@ -3,7 +3,6 @@ package loadbalancer
 import (
 	"context"
 	"errors"
-	"log/slog"
 	"testing"
 
 	"github.com/H-BF/corlib/pkg/option"
@@ -63,22 +62,30 @@ func TestSubnetOfTarget(t *testing.T) {
 	}))
 }
 
-func TestEmitHierarchyTuples_NilWriter_NoOp(t *testing.T) {
+// TestLBRegisterIntent_SystemPrincipal_ProjectTupleOnly — SEC-D: a system /
+// unauthenticated principal yields only the project-hierarchy tuple (no creator).
+func TestLBRegisterIntent_SystemPrincipal_ProjectTupleOnly(t *testing.T) {
 	t.Parallel()
-	uc := NewCreateLoadBalancerUseCase(newFakeRepo(), newFakeOpsRepo(), nil, nil, nil, slog.Default())
-	// Should not panic.
-	uc.emitHierarchyTuples(context.Background(),
+	intent := lbRegisterIntent(
 		&kachorepo.LoadBalancerRecord{LoadBalancer: domain.LoadBalancer{ID: "nlb-x", ProjectID: "prj"}},
 		operations.SystemPrincipal())
+	require.Equal(t, "NetworkLoadBalancer", intent.Kind)
+	require.Len(t, intent.Tuples, 1)
+	require.Equal(t, domain.FGARelationProject, intent.Tuples[0].Relation)
+	require.Equal(t, "project:prj", intent.Tuples[0].SubjectID)
 }
 
-func TestEmitHierarchyTuples_PartialFailure_Logged(t *testing.T) {
+// TestLBRegisterIntent_UserPrincipal_ProjectAndCreator — SEC-D: an authenticated
+// user principal yields project-hierarchy + creator (admin) tuples.
+func TestLBRegisterIntent_UserPrincipal_ProjectAndCreator(t *testing.T) {
 	t.Parallel()
-	fga := &fakeHierarchy{rewriteProjectErr: errors.New("project failed")}
-	uc := NewCreateLoadBalancerUseCase(newFakeRepo(), newFakeOpsRepo(), nil, nil, fga, slog.Default())
-	uc.emitHierarchyTuples(context.Background(),
+	intent := lbRegisterIntent(
 		&kachorepo.LoadBalancerRecord{LoadBalancer: domain.LoadBalancer{ID: "nlb-x", ProjectID: "prj"}},
 		operations.Principal{Type: "user", ID: "usr-1"})
+	require.Len(t, intent.Tuples, 2)
+	require.Equal(t, "user:usr-1", intent.Tuples[1].SubjectID)
+	require.Equal(t, domain.FGARelationAdmin, intent.Tuples[1].Relation)
+	require.Equal(t, "lb_network_load_balancer:nlb-x", intent.Tuples[1].Object)
 }
 
 func TestPeerErrToStatus_ProjectClientCaller(t *testing.T) {

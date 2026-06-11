@@ -17,7 +17,6 @@ import (
 
 	vpcclient "github.com/PRO-Robotech/kacho-nlb/internal/clients/vpc"
 	"github.com/PRO-Robotech/kacho-nlb/internal/domain"
-	"github.com/PRO-Robotech/kacho-nlb/internal/fgawrite"
 	kachorepo "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho"
 )
 
@@ -71,15 +70,27 @@ func TestCreateListener_GWT_LST_001_AutoExternal_HappyPath(t *testing.T) {
 	require.Equal(t, outboxResourceTypeLoadBalancer, events[1].ResourceType)
 	require.Equal(t, outboxActionUpdated, events[1].Action)
 
-	// FGA tuples written: creator (owner) + parent-link (load_balancer).
-	require.Len(t, suite.fga.creatorCalls, 2)
-	creator := suite.fga.creatorCalls[0]
-	require.Equal(t, "user:test-actor", creator.Subject)
-	require.Equal(t, fgawrite.RelationOwner, creator.Relation)
-	require.Contains(t, creator.Object, fgawrite.ObjectTypeListener+":")
-	parent := suite.fga.creatorCalls[1]
-	require.Equal(t, fgawrite.ObjectTypeLoadBalancer+":"+string(suite.lb.ID), parent.Subject)
-	require.Equal(t, fgawrite.RelationLoadBalancer, parent.Relation)
+	// SEC-D: one fga.register intent written in the SAME writer-tx as the Insert
+	// (not a direct best-effort FGA call). The intent carries the creator tuple
+	// (#admin) + the parent-link tuple (#load_balancer).
+	intents := suite.repo.committedFGA()
+	require.Len(t, intents, 1, "expected one fga.register intent in writer-tx")
+	require.Equal(t, domain.FGAEventRegister, intents[0].EventType)
+	require.Equal(t, "Listener", intents[0].Intent.Kind)
+	require.Equal(t, string(got.ID), intents[0].Intent.ResourceID)
+
+	tuples := intents[0].Intent.Tuples
+	require.Len(t, tuples, 2, "creator + parent-link tuples")
+
+	creator := tuples[0]
+	require.Equal(t, "user:test-actor", creator.SubjectID)
+	require.Equal(t, domain.FGARelationAdmin, creator.Relation)
+	require.Equal(t, domain.FGAObjectRef(domain.FGAObjectTypeListener, string(got.ID)), creator.Object)
+
+	parent := tuples[1]
+	require.Equal(t, domain.FGAObjectRef(domain.FGAObjectTypeLoadBalancer, string(suite.lb.ID)), parent.SubjectID)
+	require.Equal(t, domain.FGARelationLoadBalancer, parent.Relation)
+	require.Equal(t, domain.FGAObjectRef(domain.FGAObjectTypeListener, string(got.ID)), parent.Object)
 }
 
 // TestCreateListener_GWT_LST_002_BYO_HappyPath — BYO address_id: AddressService.Get
@@ -596,7 +607,6 @@ type createSuite struct {
 	addresses     *fakeAddressClient
 	internalAddrs *fakeInternalAddressClient
 	subnets       *fakeSubnetClient
-	fga           *fakeHierarchyWriter
 	lb            *kachorepo.LoadBalancerRecord
 	uc            *CreateUseCase
 }
@@ -610,8 +620,7 @@ func newCreateSuite(t *testing.T, lbType domain.LBType) *createSuite {
 	addresses := newFakeAddressClient()
 	internalAddrs := newFakeInternalAddressClient()
 	subnets := newFakeSubnetClient()
-	fga := newFakeHierarchyWriter()
-	uc := NewCreateUseCase(repo, ops, addresses, internalAddrs, subnets, fga, slog.Default())
+	uc := NewCreateUseCase(repo, ops, addresses, internalAddrs, subnets, slog.Default())
 	return &createSuite{
 		t:             t,
 		repo:          repo,
@@ -619,7 +628,6 @@ func newCreateSuite(t *testing.T, lbType domain.LBType) *createSuite {
 		addresses:     addresses,
 		internalAddrs: internalAddrs,
 		subnets:       subnets,
-		fga:           fga,
 		lb:            lb,
 		uc:            uc,
 	}
