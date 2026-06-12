@@ -82,7 +82,7 @@ func RegisterDefaults(v *viper.Viper) {
 	v.SetDefault("mtls.server.certfile", "")
 	v.SetDefault("mtls.server.keyfile", "")
 	v.SetDefault("mtls.server.clientcafiles", []string{})
-	for _, edge := range []string{"iam-register", "vpc", "compute"} {
+	for _, edge := range []string{"iam-register", "iam-project", "vpc", "compute"} {
 		v.SetDefault("mtls."+edge+".enable", false)
 		v.SetDefault("mtls."+edge+".certfile", "")
 		v.SetDefault("mtls."+edge+".keyfile", "")

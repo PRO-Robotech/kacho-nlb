@@ -465,6 +465,71 @@ func listenEndpoint(endpoint string) (net.Listener, error) {
 	return net.Listen("tcp", addr)
 }
 
+// peerDialSpec — декларативная единица wiring одного peer-conn'а: имя, dial-addr,
+// legacy system-trust TLS-bool и per-edge SEC-B mTLS-config (grpcclient.TLSClient).
+// mtls имеет приоритет над tls в dialOne (см. dialPeers): при mtls.Enable=true dial
+// предъявляет client-cert и верифицирует server по CA + server_name.
+//
+// Вынесен из dialPeers как чистая (без side-effect'ов) проекция wiring'а — это
+// единственный testable seam, фиксирующий контракт «каждое cross-service ребро
+// предъявляет СВОИ per-edge mTLS-creds» (SEC-M: nlb→vpc / nlb→compute зеркалят
+// nlb→iam mtls.iam-register). Регрессия к zero-value (insecure) TLSClient на vpc/
+// compute ребре ловится тестом peerDialSpecs (cmd/.../dialpeers_mtls_test.go).
+type peerDialSpec struct {
+	name string               // лог-имя ребра (iam-public / vpc-internal / compute / …)
+	addr string               // host:port (уже резолвнутый firstNonEmpty)
+	tls  bool                 // legacy system-trust TLS (перебивается mtls при Enable)
+	mtls grpcclient.TLSClient // per-edge SEC-B client-cert config (приоритет над tls)
+}
+
+// peerDialSpecs строит таблицу peer-conn'ов из config'а. Чистая функция:
+// никаких dial'ов / I/O — только маппинг cfg → []peerDialSpec. Порядок conn'ов:
+//   - iam-public  (:9090, ProjectService.Get)        ← cfg.MTLS.IAMProject
+//   - iam-internal(:9091, Check + Register)           ← cfg.MTLS.IAMRegister
+//   - compute     (:9090, Region/Instance)            ← cfg.MTLS.Compute
+//   - vpc-public  (:9090, Address/Subnet/NIC)         ← cfg.MTLS.VPC
+//   - vpc-internal(:9091, InternalAddressService)     ← cfg.MTLS.VPC
+//
+// Per-listener split для iam (iam-public≠iam-internal по ServerName) обязателен под
+// SEC-H RequireAndVerifyClientCert (I6 / latent-bug D-04). vpc-public и vpc-internal
+// дилят один Service `vpc` (SAN serverHosts=[vpc] покрывает оба порта) → общий
+// cfg.MTLS.VPC. Адрес каждого ребра — firstNonEmpty(public, internal) и наоборот,
+// чтобы single-addr dev-config продолжал работать.
+func peerDialSpecs(cfg *config.Config) []peerDialSpec {
+	return []peerDialSpec{
+		{
+			name: "iam-public",
+			addr: firstNonEmpty(cfg.ExtAPI.IAM.Addr, cfg.ExtAPI.IAM.InternalAddr),
+			tls:  cfg.ExtAPI.IAM.TLS,
+			mtls: cfg.MTLS.IAMProject,
+		},
+		{
+			name: "iam-internal",
+			addr: firstNonEmpty(cfg.ExtAPI.IAM.InternalAddr, cfg.ExtAPI.IAM.Addr),
+			tls:  cfg.ExtAPI.IAM.TLS,
+			mtls: cfg.MTLS.IAMRegister,
+		},
+		{
+			name: "compute",
+			addr: firstNonEmpty(cfg.ExtAPI.Compute.Addr, cfg.ExtAPI.Compute.InternalAddr),
+			tls:  cfg.ExtAPI.Compute.TLS,
+			mtls: cfg.MTLS.Compute,
+		},
+		{
+			name: "vpc-public",
+			addr: firstNonEmpty(cfg.ExtAPI.VPC.Addr, cfg.ExtAPI.VPC.InternalAddr),
+			tls:  cfg.ExtAPI.VPC.TLS,
+			mtls: cfg.MTLS.VPC,
+		},
+		{
+			name: "vpc-internal",
+			addr: firstNonEmpty(cfg.ExtAPI.VPC.InternalAddr, cfg.ExtAPI.VPC.Addr),
+			tls:  cfg.ExtAPI.VPC.TLS,
+			mtls: cfg.MTLS.VPC,
+		},
+	}
+}
+
 // dialPeers открывает gRPC connections к vpc/compute/iam через corlib client-builder
 // и собирает типизированные adapter'ы (Clean Architecture outbound adapters).
 //
@@ -530,27 +595,41 @@ func dialPeers(
 
 	peers := &peerClients{}
 
-	// kacho-iam — два conn'а:
-	//   - PUBLIC (9090): ProjectService.Get — публичный RPC.
-	//   - INTERNAL (9091): InternalIAMService.{Check,RegisterResource,
-	//     UnregisterResource} — internal-only admin RPC, registered только на
-	//     internal listener.
-	// KAC-178 §2 follow-up: до этого split'а оба клиента шли на INTERNAL,
-	// что для ProjectService давало Unimplemented → "project lookup failed".
-	// SEC-D edge nlb→iam: register-drainer + Check + Project use the iam mTLS
-	// client-cert (cfg.MTLS.IAMRegister) when enabled.
-	iamPublicAddr := firstNonEmpty(cfg.ExtAPI.IAM.Addr, cfg.ExtAPI.IAM.InternalAddr)
-	iamPublicConn, err := dialOne("iam-public", iamPublicAddr, cfg.ExtAPI.IAM.TLS, cfg.MTLS.IAMRegister)
-	if err != nil {
-		closeAll(conns, logger)
-		return nil, nil, err
+	// Dial every peer-conn from the declarative spec table (peerDialSpecs). The
+	// table is the single source of truth for per-edge mTLS wiring: each spec
+	// carries its OWN grpcclient.TLSClient (iam-public→IAMProject, iam-internal→
+	// IAMRegister, compute→Compute, vpc-public/internal→VPC). dialOne applies the
+	// mtls precedence (Enable=true → client-cert + server verify; fail-closed on
+	// cred-build error). conns are appended for defer'd Close in the composition
+	// root. A dial error closes everything opened so far and propagates.
+	//
+	// Топология (см. peerDialSpecs doc + workspace CLAUDE.md «Запреты» #6):
+	//   - kacho-iam: два conn'а ПЕР-LISTENER. PUBLIC (:9090) — ProjectService.Get;
+	//     INTERNAL (:9091) — InternalIAMService.{Check,RegisterResource,Unregister}.
+	//     Раздельные mTLS-поля (IAMProject vs IAMRegister) обязательны: единый
+	//     ServerName не корректен для обоих listener'ов под SEC-H
+	//     RequireAndVerifyClientCert (I6, latent-bug D-04). KAC-178 §2: до split'а
+	//     оба шли на INTERNAL → ProjectService Unimplemented ("project lookup failed").
+	//   - kacho-compute: один conn (:9090) — Region/Instance read RPC.
+	//   - kacho-vpc: два conn'а — public (Address/Subnet/NIC/Operation) + internal
+	//     (InternalAddressService). Оба предъявляют cfg.MTLS.VPC (vpc Service `vpc`,
+	//     SAN serverHosts=[vpc] покрывает оба порта).
+	dialedConns := make(map[string]clients.Conn, 5)
+	for _, spec := range peerDialSpecs(cfg) {
+		cc, derr := dialOne(spec.name, spec.addr, spec.tls, spec.mtls)
+		if derr != nil {
+			closeAll(conns, logger)
+			return nil, nil, derr
+		}
+		dialedConns[spec.name] = cc
 	}
-	iamInternalAddr := firstNonEmpty(cfg.ExtAPI.IAM.InternalAddr, cfg.ExtAPI.IAM.Addr)
-	iamInternalConn, err := dialOne("iam-internal", iamInternalAddr, cfg.ExtAPI.IAM.TLS, cfg.MTLS.IAMRegister)
-	if err != nil {
-		closeAll(conns, logger)
-		return nil, nil, err
-	}
+
+	iamPublicConn := dialedConns["iam-public"]
+	iamInternalConn := dialedConns["iam-internal"]
+	computeConn := dialedConns["compute"]
+	vpcPublicConn := dialedConns["vpc-public"]
+	vpcInternalConn := dialedConns["vpc-internal"]
+
 	if iamPublicConn != nil {
 		peers.Project = iamclient.NewProjectClient(iamPublicConn)
 	}
@@ -561,33 +640,23 @@ func dialPeers(
 		// :9091). Replaces the former direct WriteCreatorTuple (Issue N5).
 		peers.Register = iamclient.NewRegisterResourceClient(iamInternalConn)
 	}
+	// SEC-I: report the per-listener mTLS state of the iam read/authz edges
+	// (mirror of the register-drainer fga_register_drainer_started "mtls" log).
+	// iam-project (:9090, ProjectService.Get) and iam-internal (:9091, Check) are
+	// the read/authz edges; each enables independently with its own ServerName.
+	logger.Info("iam_read_authz_mtls",
+		"project_mtls", cfg.MTLS.IAMProject.Enable,
+		"project_server_name", cfg.MTLS.IAMProject.ServerName,
+		"authz_mtls", cfg.MTLS.IAMRegister.Enable,
+		"authz_server_name", cfg.MTLS.IAMRegister.ServerName)
 
 	// kacho-compute — один conn на public listener (Region/Zone/Instance — публичные).
-	computeAddr := firstNonEmpty(cfg.ExtAPI.Compute.Addr, cfg.ExtAPI.Compute.InternalAddr)
-	computeConn, err := dialOne("compute", computeAddr, cfg.ExtAPI.Compute.TLS, cfg.MTLS.Compute)
-	if err != nil {
-		closeAll(conns, logger)
-		return nil, nil, err
-	}
 	if computeConn != nil {
 		peers.Region = computeclient.NewRegionClient(computeConn)
 		peers.Instance = computeclient.NewInstanceClient(computeConn)
 	}
 
-	// kacho-vpc — два conn'а: public (Address/Subnet/NIC/Operation) +
-	// internal (InternalAddressService).
-	vpcPublicAddr := firstNonEmpty(cfg.ExtAPI.VPC.Addr, cfg.ExtAPI.VPC.InternalAddr)
-	vpcPublicConn, err := dialOne("vpc-public", vpcPublicAddr, cfg.ExtAPI.VPC.TLS, cfg.MTLS.VPC)
-	if err != nil {
-		closeAll(conns, logger)
-		return nil, nil, err
-	}
-	vpcInternalAddr := firstNonEmpty(cfg.ExtAPI.VPC.InternalAddr, cfg.ExtAPI.VPC.Addr)
-	vpcInternalConn, err := dialOne("vpc-internal", vpcInternalAddr, cfg.ExtAPI.VPC.TLS, cfg.MTLS.VPC)
-	if err != nil {
-		closeAll(conns, logger)
-		return nil, nil, err
-	}
+	// kacho-vpc — public (Address/Subnet/NIC/Operation) + internal (InternalAddressService).
 	if vpcPublicConn != nil {
 		peers.Subnet = vpcclient.NewSubnetClient(vpcPublicConn)
 		peers.NetworkInterface = vpcclient.NewNetworkInterfaceClient(vpcPublicConn)

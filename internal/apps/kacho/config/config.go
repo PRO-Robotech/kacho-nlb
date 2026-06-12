@@ -215,17 +215,29 @@ type FGARegisterDrainerConfig struct {
 //
 //	KACHO_NLB_MTLS__SERVER__ENABLE                 → server listener mTLS
 //	KACHO_NLB_MTLS__SERVER__CERTFILE / __KEYFILE / __CLIENTCAFILES
-//	KACHO_NLB_MTLS__IAM-REGISTER__ENABLE           → nlb→iam (RegisterResource)
+//	KACHO_NLB_MTLS__IAM-REGISTER__ENABLE           → nlb→iam internal :9091
 //	KACHO_NLB_MTLS__IAM-REGISTER__CERTFILE / __KEYFILE / __CAFILES / __SERVERNAME
+//	KACHO_NLB_MTLS__IAM-PROJECT__ENABLE            → nlb→iam public :9090
+//	KACHO_NLB_MTLS__IAM-PROJECT__CERTFILE / __KEYFILE / __CAFILES / __SERVERNAME
 //	KACHO_NLB_MTLS__VPC__*                         → nlb→vpc
 //	KACHO_NLB_MTLS__COMPUTE__*                     → nlb→compute
 type MTLSConfig struct {
 	// Server — server-cert на public+internal listener'ах (RequireAndVerify-
 	// ClientCert при enable=true).
 	Server grpcsrv.TLSServer `mapstructure:"server"`
-	// IAMRegister — client-cert на ребре nlb→iam (register-drainer →
-	// RegisterResource/UnregisterResource по mTLS, SEC-D-17/21).
+	// IAMRegister — client-cert на ВНУТРЕННЕМ ребре nlb→iam-internal (:9091):
+	// InternalIAMService.Check (per-RPC authz-gate) + RegisterResource/
+	// UnregisterResource (register-drainer, SEC-D-17/21). ServerName =
+	// kacho-iam-internal.* (фактический :9091 dial-host). SEC-I (I6/OQ-5):
+	// этот же conn несёт Check, поэтому read/authz authz-ребро покрыто им.
 	IAMRegister grpcclient.TLSClient `mapstructure:"iam-register"`
+	// IAMProject — client-cert на ПУБЛИЧНОМ ребре nlb→iam (:9090):
+	// ProjectService.Get (existence + leaf-owner). SEC-I (OQ-5 (b),
+	// per-listener split): отдельное поле, потому что public dial-host =
+	// kacho-iam.* (≠ kacho-iam-internal.*) и единый ServerName не может быть
+	// корректен для обоих listener'ов под SEC-H RequireAndVerifyClientCert (I6,
+	// latent-bug D-04). ServerName = kacho-iam.* (фактический :9090 dial-host).
+	IAMProject grpcclient.TLSClient `mapstructure:"iam-project"`
 	// VPC — client-cert на ребре nlb→vpc (Address/Subnet/NIC IPAM, SEC-D-18).
 	VPC grpcclient.TLSClient `mapstructure:"vpc"`
 	// Compute — client-cert на ребре nlb→compute (Region/Instance, SEC-D-19).

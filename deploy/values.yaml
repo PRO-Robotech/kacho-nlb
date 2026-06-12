@@ -137,21 +137,27 @@ authz:
 # текущее insecure dev (нулевая регрессия, SEC-F-05). umbrella прокидывает
 # .mtls.enable + per-edge флаги (КРИТ#3). config.go MTLSConfig (viper mapstructure):
 #   mtls.server       → server-cert на public+internal listener'ах
-#   mtls.iam-register → nlb→iam (RegisterResource drainer)
+#   mtls.iam-register → nlb→iam-internal :9091 (Check + RegisterResource drainer)
+#   mtls.iam-project  → nlb→iam :9090 (ProjectService.Get read edge, SEC-I)
 #   mtls.vpc          → nlb→vpc (Address/Subnet/NIC IPAM)
 #   mtls.compute      → nlb→compute (Region/Instance)
 # serverName на dial-стороне = реальный dial-host (∈ server-SAN пира, КРИТ#1).
+# SEC-I (OQ-5 (b)): iam-register=kacho-iam-internal.* (:9091), iam-project=
+# kacho-iam.* (:9090) — per-listener split (единый ServerName не покрывает оба
+# iam-listener'а под SEC-H RequireAndVerifyClientCert; I6 / latent-bug D-04).
 mtls:
   enable: false
   serverSecretName: kacho-nlb-server-tls   # cert key = kacho-nlb (КРИТ#1)
   clientSecretName: kacho-nlb-client-tls
   mountPath: /etc/kacho-nlb/tls            # <mp>/server|client/{tls.crt,tls.key,ca.crt}
   edges:
-    iamRegister: false   # nlb→iam InternalIAMService.Register (drainer)
+    iamRegister: false   # nlb→iam-internal :9091 (Check + RegisterResource drainer)
+    iamProject: false    # nlb→iam :9090 ProjectService.Get (SEC-I read edge)
     vpc: false           # nlb→vpc Address/Subnet/NIC
     compute: false       # nlb→compute Region/Instance
   serverName:
     iamRegister: kacho-iam-internal.kacho.svc.cluster.local
+    iamProject: kacho-iam.kacho.svc.cluster.local
     vpc: vpc.kacho.svc.cluster.local
     compute: compute.kacho.svc.cluster.local
 

@@ -119,6 +119,20 @@ data:
           - {{ printf "%s/ca.crt" $cli | quote }}
         servername: {{ .Values.mtls.serverName.iamRegister | quote }}
         {{- end }}
+      # SEC-I — nlb→iam PUBLIC read edge (:9090, ProjectService.Get). Separate
+      # ServerName=kacho-iam.* (∈ iam SAN) so it verifies the :9090 dial-host
+      # correctly under SEC-H — the internal iam-register edge above is
+      # kacho-iam-internal.* (:9091). Reuses the SAME mounted kacho-nlb-client-tls
+      # ($cli) — no new secret/mount (I1).
+      iam-project:
+        enable: {{ .Values.mtls.edges.iamProject }}
+        {{- if .Values.mtls.edges.iamProject }}
+        certfile: {{ printf "%s/tls.crt" $cli | quote }}
+        keyfile: {{ printf "%s/tls.key" $cli | quote }}
+        cafiles:
+          - {{ printf "%s/ca.crt" $cli | quote }}
+        servername: {{ .Values.mtls.serverName.iamProject | quote }}
+        {{- end }}
       vpc:
         enable: {{ .Values.mtls.edges.vpc }}
         {{- if .Values.mtls.edges.vpc }}
