@@ -147,6 +147,19 @@ authz:
 # iam-listener'а под SEC-H RequireAndVerifyClientCert; I6 / latent-bug D-04).
 mtls:
   enable: false
+  # ─── internal-CA leaf-cert issuance (this chart owns its Certificate, rule #1) ─
+  # client-cert URI-SAN saName MUST match the IAM module-SA seed (SEC-C migration
+  # 0009): kacho-nlb → sva(md5("kacho-nlb")) holds fga_writer@iam_fgaproxy.
+  issuer:
+    name: kacho-internal-ca
+    kind: ClusterIssuer   # ClusterIssuer (cluster-scoped), NOT namespaced Issuer
+  serverHosts: ["kacho-nlb", "kacho-nlb-internal"]   # public + internal Service dial-hosts
+  spiffe:
+    trustDomain: kacho.cloud
+    namespace: kacho
+    saName: kacho-nlb
+  leafDuration: 2160h
+  leafRenewBefore: 720h
   serverSecretName: kacho-nlb-server-tls   # cert key = kacho-nlb (КРИТ#1)
   clientSecretName: kacho-nlb-client-tls
   mountPath: /etc/kacho-nlb/tls            # <mp>/server|client/{tls.crt,tls.key,ca.crt}
