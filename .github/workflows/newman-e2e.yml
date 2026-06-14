@@ -153,7 +153,11 @@ jobs:
           # OpenFGA store/model id. `helm --wait` would block on the pre-restart
           # generation. The explicit rollout waits below sequence it correctly.
           helm upgrade --install kacho-umbrella . -n kacho --create-namespace \
-            -f values.dev.yaml --timeout 20m
+            -f values.dev.yaml --timeout 20m \
+            --set cert-manager.enabled=false --set mtls.enabled=false \
+            --set vpc.mtls.enable=false --set compute.mtls.enable=false \
+            --set api-gateway.mtls.enable=false --set kacho-nlb.mtls.enable=false \
+            --set kacho-iam.mtls.enable=false
 
       # Phase 1 — wait for the data-plane Deployments + Postgres to converge.
       - name: wait for core deployments
