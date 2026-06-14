@@ -1,0 +1,83 @@
+{{- if .Values.mtls.enable }}
+{{- $m := .Values.mtls }}
+{{- $issuer := $m.issuer | default dict }}
+{{- $issuerName := $issuer.name | default "kacho-internal-ca" }}
+{{- $issuerKind := $issuer.kind | default "ClusterIssuer" }}
+{{- $ns := .Release.Namespace }}
+{{- $sp := $m.spiffe | default dict }}
+{{- $trust := $sp.trustDomain | default "kacho.cloud" }}
+{{- $spNs := $sp.namespace | default $ns }}
+{{- $sa := $sp.saName | default .Chart.Name }}
+{{- $dur := $m.leafDuration | default "2160h" }}
+{{- $renew := $m.leafRenewBefore | default "720h" }}
+{{- $hosts := $m.serverHosts | default (list .Chart.Name) }}
+{{/*
+SEC-F internal-CA LEAF certificate(s) for this component (rule #1: a component's
+own certs live in its own chart). Issued by the umbrella mTLS ClusterIssuer
+({{ $issuerKind }}/{{ $issuerName }}). NORMAL resources (not Helm hooks): cert-manager
+is installed and Ready BEFORE these are applied (dev-up two-phase / pre-existing
+controller), so the webhook admits them and the Secret is issued while `--wait`
+converges the consuming pod. A server cert is emitted when mtls.serverSecretName
+is set; a client cert when mtls.clientSecretName is set. This template is identical
+across every component chart — behaviour is driven entirely by mtls.* values.
+*/}}
+{{- if $m.serverSecretName }}
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ $m.serverSecretName | quote }}
+  namespace: {{ $ns | quote }}
+  labels:
+    kacho.cloud/component: cert-manager-internal-ca
+    app.kubernetes.io/name: {{ $sa | quote }}
+    app.kubernetes.io/managed-by: helm
+spec:
+  secretName: {{ $m.serverSecretName | quote }}
+  duration: {{ $dur | quote }}
+  renewBefore: {{ $renew | quote }}
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+    rotationPolicy: Always
+  issuerRef:
+    name: {{ $issuerName | quote }}
+    kind: {{ $issuerKind | quote }}
+    group: cert-manager.io
+  dnsNames:
+    {{- range $h := $hosts }}
+    - {{ printf "%s.%s.svc.cluster.local" $h $ns | quote }}
+    - {{ printf "%s.%s.svc" $h $ns | quote }}
+    - {{ printf "%s.%s" $h $ns | quote }}
+    {{- end }}
+  usages:
+    - server auth        # server-only — NO client auth on the server leaf
+{{- end }}
+{{- if $m.clientSecretName }}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ $m.clientSecretName | quote }}
+  namespace: {{ $ns | quote }}
+  labels:
+    kacho.cloud/component: cert-manager-internal-ca
+    app.kubernetes.io/name: {{ $sa | quote }}
+    app.kubernetes.io/managed-by: helm
+spec:
+  secretName: {{ $m.clientSecretName | quote }}
+  duration: {{ $dur | quote }}
+  renewBefore: {{ $renew | quote }}
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+    rotationPolicy: Always
+  issuerRef:
+    name: {{ $issuerName | quote }}
+    kind: {{ $issuerKind | quote }}
+    group: cert-manager.io
+  uris:
+    - {{ printf "spiffe://%s/ns/%s/sa/%s" $trust $spNs $sa | quote }}
+  usages:
+    - client auth
+{{- end }}
+{{- end }}
