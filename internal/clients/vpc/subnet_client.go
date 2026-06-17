@@ -19,7 +19,7 @@ import (
 // необходимыми consumer'ам NLB (Listener.subnet_id / Target.ip_ref validation).
 //
 // RegionID — нет на vpc.Subnet (Subnet привязан к ZoneId; Region резолвится
-// дополнительным compute.ZoneService.Get у NLB Wave 6); поле оставлено в
+// дополнительным geo.ZoneService.Get у NLB Wave 6); поле оставлено в
 // projection как denormalised mirror (заполняется consumer'ом, не adapter'ом).
 type Subnet struct {
 	ID           string

@@ -1,4 +1,4 @@
-package compute
+package geo
 
 import (
 	"context"
@@ -9,22 +9,18 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
-	computepb "github.com/PRO-Robotech/kacho-proto/gen/go/kacho/cloud/compute/v1"
+	geopb "github.com/PRO-Robotech/kacho-proto/gen/go/kacho/cloud/geo/v1"
 )
 
-// startFakeCompute поднимает gRPC server in-memory (TCP loopback :0).
-// nil-fake — service не регистрируется. После выноса Geography в kacho-geo
-// (epic kacho-geo S4) kacho-nlb зовёт у compute только InstanceService.
-func startFakeCompute(
-	t *testing.T,
-	instances computepb.InstanceServiceServer,
-) *grpc.ClientConn {
+// startFakeGeo поднимает gRPC server in-memory (TCP loopback :0).
+// nil-fake — service не регистрируется.
+func startFakeGeo(t *testing.T, regions geopb.RegionServiceServer) *grpc.ClientConn {
 	t.Helper()
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	srv := grpc.NewServer()
-	if instances != nil {
-		computepb.RegisterInstanceServiceServer(srv, instances)
+	if regions != nil {
+		geopb.RegisterRegionServiceServer(srv, regions)
 	}
 	go func() { _ = srv.Serve(lis) }()
 	t.Cleanup(func() { srv.GracefulStop() })

@@ -137,6 +137,13 @@ type ExtAPIConfig struct {
 	VPC             ExtAPIEndpoint `mapstructure:"vpc"`
 	Compute         ExtAPIEndpoint `mapstructure:"compute"`
 	IAM             ExtAPIEndpoint `mapstructure:"iam"`
+	// Geo — kacho-geo (Geography Region/Zone, leaf-owner; epic kacho-geo S4).
+	// NetworkLoadBalancer.region_id / TargetGroup.region_id валидируются через
+	// geo.RegionService.Get (sync precheck). Ребро nlb→geo заменяет прежнее
+	// nlb→compute «ради region»; nlb→compute остаётся для InstanceService
+	// (instance-resolve — НЕ geography). Addr биндится также из явной ENV
+	// `KACHO_NLB_GEO_GRPC_ADDR` (BindEnv в defaults.go).
+	Geo ExtAPIEndpoint `mapstructure:"geo"`
 }
 
 // ExtAPIEndpoint — параметры одного peer-сервиса. Public/Internal — два
@@ -220,7 +227,8 @@ type FGARegisterDrainerConfig struct {
 //	KACHO_NLB_MTLS__IAM-PROJECT__ENABLE            → nlb→iam public :9090
 //	KACHO_NLB_MTLS__IAM-PROJECT__CERTFILE / __KEYFILE / __CAFILES / __SERVERNAME
 //	KACHO_NLB_MTLS__VPC__*                         → nlb→vpc
-//	KACHO_NLB_MTLS__COMPUTE__*                     → nlb→compute
+//	KACHO_NLB_MTLS__COMPUTE__*                     → nlb→compute (Instance-resolve)
+//	KACHO_NLB_MTLS__GEO__*                         → nlb→geo (RegionService.Get)
 type MTLSConfig struct {
 	// Server — server-cert на public+internal listener'ах (RequireAndVerify-
 	// ClientCert при enable=true).
@@ -240,8 +248,11 @@ type MTLSConfig struct {
 	IAMProject grpcclient.TLSClient `mapstructure:"iam-project"`
 	// VPC — client-cert на ребре nlb→vpc (Address/Subnet/NIC IPAM, SEC-D-18).
 	VPC grpcclient.TLSClient `mapstructure:"vpc"`
-	// Compute — client-cert на ребре nlb→compute (Region/Instance, SEC-D-19).
+	// Compute — client-cert на ребре nlb→compute (Instance-resolve; geography
+	// region-валидация перенесена на ребро nlb→geo, см. Geo ниже).
 	Compute grpcclient.TLSClient `mapstructure:"compute"`
+	// Geo — client-cert на ребре nlb→geo (RegionService.Get, epic kacho-geo S4).
+	Geo grpcclient.TLSClient `mapstructure:"geo"`
 }
 
 // ─── Jobs (background workers) ───────────────────────────────────────────────

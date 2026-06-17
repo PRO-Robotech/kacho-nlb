@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/PRO-Robotech/kacho-nlb/internal/clients/compute"
+	"github.com/PRO-Robotech/kacho-nlb/internal/clients/geo"
 	"github.com/PRO-Robotech/kacho-nlb/internal/clients/iam"
 	"github.com/PRO-Robotech/kacho-nlb/internal/domain"
 	// dto/type2pb init()-registrations — handler-слой строит proto через DTO-реестр.
@@ -579,14 +579,14 @@ func (f *fakeProjectClient) Get(ctx context.Context, projectID string) (*iam.Pro
 }
 
 type fakeRegionClient struct {
-	getFunc func(ctx context.Context, regionID string) (*compute.Region, error)
+	getFunc func(ctx context.Context, regionID string) (*geo.Region, error)
 }
 
-func (f *fakeRegionClient) Get(ctx context.Context, regionID string) (*compute.Region, error) {
+func (f *fakeRegionClient) Get(ctx context.Context, regionID string) (*geo.Region, error) {
 	if f.getFunc != nil {
 		return f.getFunc(ctx, regionID)
 	}
-	return &compute.Region{ID: regionID, Name: "fake-region"}, nil
+	return &geo.Region{ID: regionID, Name: "fake-region"}, nil
 }
 
 // fakeFGARegisterOutbox records SEC-D FGARegisterOutbox.Emit into the writer's

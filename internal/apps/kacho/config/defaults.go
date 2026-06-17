@@ -47,6 +47,13 @@ func RegisterDefaults(v *viper.Viper) {
 	v.SetDefault("extapi.vpc.dial-duration", "0s") // 0 → берёт def-dial-duration
 	v.SetDefault("extapi.compute.dial-duration", "0s")
 	v.SetDefault("extapi.iam.dial-duration", "0s")
+	v.SetDefault("extapi.geo.dial-duration", "0s")
+	// extapi.geo.addr — kacho-geo endpoint (epic kacho-geo S4). Помимо
+	// стандартного KACHO_NLB_EXTAPI__GEO__ADDR биндим ЯВНУЮ ENV
+	// `KACHO_NLB_GEO_GRPC_ADDR` (короткое каноническое имя geo-эндпоинта,
+	// согласованное с deploy). BindEnv с явным именем обходит prefix/replacer.
+	v.SetDefault("extapi.geo.addr", "")
+	_ = v.BindEnv("extapi.geo.addr", "KACHO_NLB_GEO_GRPC_ADDR")
 
 	// Authz (FGA Check + cache + listen-invalidator)
 	v.SetDefault("authz.iam.addr", "") // empty → AutomaticEnv binds KACHO_NLB_AUTHZ__IAM__ADDR
@@ -82,7 +89,7 @@ func RegisterDefaults(v *viper.Viper) {
 	v.SetDefault("mtls.server.certfile", "")
 	v.SetDefault("mtls.server.keyfile", "")
 	v.SetDefault("mtls.server.clientcafiles", []string{})
-	for _, edge := range []string{"iam-register", "iam-project", "vpc", "compute"} {
+	for _, edge := range []string{"iam-register", "iam-project", "vpc", "compute", "geo"} {
 		v.SetDefault("mtls."+edge+".enable", false)
 		v.SetDefault("mtls."+edge+".certfile", "")
 		v.SetDefault("mtls."+edge+".keyfile", "")

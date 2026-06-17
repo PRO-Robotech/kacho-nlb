@@ -51,6 +51,7 @@ import (
 	"github.com/PRO-Robotech/kacho-nlb/internal/check"
 	"github.com/PRO-Robotech/kacho-nlb/internal/clients"
 	computeclient "github.com/PRO-Robotech/kacho-nlb/internal/clients/compute"
+	geoclient "github.com/PRO-Robotech/kacho-nlb/internal/clients/geo"
 	iamclient "github.com/PRO-Robotech/kacho-nlb/internal/clients/iam"
 	vpcclient "github.com/PRO-Robotech/kacho-nlb/internal/clients/vpc"
 	"github.com/PRO-Robotech/kacho-nlb/internal/domain"
@@ -71,8 +72,9 @@ type peerClients struct {
 	Project  iamclient.ProjectClient
 	Check    iamclient.CheckClient
 	Register iamclient.RegisterResourceClient // SEC-D FGA-proxy (register-drainer)
-	// Compute
-	Region   computeclient.RegionClient
+	// Geo (Region-валидация — ребро nlb→geo, epic kacho-geo S4)
+	Region geoclient.RegionClient
+	// Compute (Instance-resolve — НЕ geography, ребро nlb→compute остаётся)
 	Instance computeclient.InstanceClient
 	// VPC
 	Subnet           vpcclient.SubnetClient
@@ -486,7 +488,8 @@ type peerDialSpec struct {
 // никаких dial'ов / I/O — только маппинг cfg → []peerDialSpec. Порядок conn'ов:
 //   - iam-public  (:9090, ProjectService.Get)        ← cfg.MTLS.IAMProject
 //   - iam-internal(:9091, Check + Register)           ← cfg.MTLS.IAMRegister
-//   - compute     (:9090, Region/Instance)            ← cfg.MTLS.Compute
+//   - geo         (:9090, RegionService.Get)          ← cfg.MTLS.Geo
+//   - compute     (:9090, InstanceService.Get)        ← cfg.MTLS.Compute
 //   - vpc-public  (:9090, Address/Subnet/NIC)         ← cfg.MTLS.VPC
 //   - vpc-internal(:9091, InternalAddressService)     ← cfg.MTLS.VPC
 //
@@ -508,6 +511,12 @@ func peerDialSpecs(cfg *config.Config) []peerDialSpec {
 			addr: firstNonEmpty(cfg.ExtAPI.IAM.InternalAddr, cfg.ExtAPI.IAM.Addr),
 			tls:  cfg.ExtAPI.IAM.TLS,
 			mtls: cfg.MTLS.IAMRegister,
+		},
+		{
+			name: "geo",
+			addr: firstNonEmpty(cfg.ExtAPI.Geo.Addr, cfg.ExtAPI.Geo.InternalAddr),
+			tls:  cfg.ExtAPI.Geo.TLS,
+			mtls: cfg.MTLS.Geo,
 		},
 		{
 			name: "compute",
@@ -546,8 +555,10 @@ func peerDialSpecs(cfg *config.Config) []peerDialSpec {
 //     на public, и (через scope-filter) на internal; InternalIAMService.{Check,
 //     RegisterResource, UnregisterResource} — только на internal. Используем
 //     internal listener.
-//   - kacho-compute: один conn на public Addr — RegionService / ZoneService /
-//     InstanceService — публичные read RPC.
+//   - kacho-geo: один conn на public Addr — RegionService.Get (region-валидация,
+//     epic kacho-geo S4). Geography выделена из compute в leaf-сервис geo.
+//   - kacho-compute: один conn на public Addr — InstanceService.Get
+//     (instance-resolve; НЕ geography).
 //   - kacho-vpc: ДВА conn'а. public (Addr) — AddressService / OperationService;
 //     internal (InternalAddr) — InternalAddressService.{Set,Clear}Reference,
 //     SubnetService / NetworkInterfaceService живут на public, но edge consumer
@@ -610,11 +621,12 @@ func dialPeers(
 	//     ServerName не корректен для обоих listener'ов под SEC-H
 	//     RequireAndVerifyClientCert (I6, latent-bug D-04). KAC-178 §2: до split'а
 	//     оба шли на INTERNAL → ProjectService Unimplemented ("project lookup failed").
-	//   - kacho-compute: один conn (:9090) — Region/Instance read RPC.
+	//   - kacho-geo: один conn (:9090) — RegionService.Get (region-валидация).
+	//   - kacho-compute: один conn (:9090) — InstanceService.Get (instance-resolve).
 	//   - kacho-vpc: два conn'а — public (Address/Subnet/NIC/Operation) + internal
 	//     (InternalAddressService). Оба предъявляют cfg.MTLS.VPC (vpc Service `vpc`,
 	//     SAN serverHosts=[vpc] покрывает оба порта).
-	dialedConns := make(map[string]clients.Conn, 5)
+	dialedConns := make(map[string]clients.Conn, 6)
 	for _, spec := range peerDialSpecs(cfg) {
 		cc, derr := dialOne(spec.name, spec.addr, spec.tls, spec.mtls)
 		if derr != nil {
@@ -626,6 +638,7 @@ func dialPeers(
 
 	iamPublicConn := dialedConns["iam-public"]
 	iamInternalConn := dialedConns["iam-internal"]
+	geoConn := dialedConns["geo"]
 	computeConn := dialedConns["compute"]
 	vpcPublicConn := dialedConns["vpc-public"]
 	vpcInternalConn := dialedConns["vpc-internal"]
@@ -650,9 +663,16 @@ func dialPeers(
 		"authz_mtls", cfg.MTLS.IAMRegister.Enable,
 		"authz_server_name", cfg.MTLS.IAMRegister.ServerName)
 
-	// kacho-compute — один conn на public listener (Region/Zone/Instance — публичные).
+	// kacho-geo — один conn на public listener (RegionService.Get — публичный
+	// read-only Geography-справочник). Ребро nlb→geo (epic kacho-geo S4) заменило
+	// прежнюю region-валидацию через nlb→compute.
+	if geoConn != nil {
+		peers.Region = geoclient.NewRegionClient(geoConn)
+	}
+
+	// kacho-compute — один conn на public listener (InstanceService.Get —
+	// instance-resolve для TargetGroup-таргетов; НЕ geography).
 	if computeConn != nil {
-		peers.Region = computeclient.NewRegionClient(computeConn)
 		peers.Instance = computeclient.NewInstanceClient(computeConn)
 	}
 

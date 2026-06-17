@@ -48,7 +48,7 @@ func TestInstanceClient_Get_HappyPath(t *testing.T) {
 			},
 		},
 	}
-	conn := startFakeCompute(t, nil, nil, &fakeInstanceService{resp: inst})
+	conn := startFakeCompute(t, &fakeInstanceService{resp: inst})
 	c := NewInstanceClient(conn)
 
 	got, err := c.Get(ctxBackground(), "epd-1")
@@ -63,7 +63,7 @@ func TestInstanceClient_Get_HappyPath(t *testing.T) {
 
 func TestInstanceClient_Get_NoNICReturnsEmptyAddress(t *testing.T) {
 	inst := &computepb.Instance{Id: "epd-2", ProjectId: "p", Status: computepb.Instance_PROVISIONING}
-	conn := startFakeCompute(t, nil, nil, &fakeInstanceService{resp: inst})
+	conn := startFakeCompute(t, &fakeInstanceService{resp: inst})
 	c := NewInstanceClient(conn)
 
 	got, err := c.Get(ctxBackground(), "epd-2")
@@ -72,7 +72,7 @@ func TestInstanceClient_Get_NoNICReturnsEmptyAddress(t *testing.T) {
 }
 
 func TestInstanceClient_Get_NotFoundMapsToInvalidArg(t *testing.T) {
-	conn := startFakeCompute(t, nil, nil, &fakeInstanceService{err: status.Error(codes.NotFound, "no instance")})
+	conn := startFakeCompute(t, &fakeInstanceService{err: status.Error(codes.NotFound, "no instance")})
 	c := NewInstanceClient(conn)
 	_, err := c.Get(ctxBackground(), "epd-missing")
 	require.Error(t, err)
@@ -80,7 +80,7 @@ func TestInstanceClient_Get_NotFoundMapsToInvalidArg(t *testing.T) {
 }
 
 func TestInstanceClient_Get_PermissionDeniedMapsToInvalidArg(t *testing.T) {
-	conn := startFakeCompute(t, nil, nil, &fakeInstanceService{err: status.Error(codes.PermissionDenied, "denied")})
+	conn := startFakeCompute(t, &fakeInstanceService{err: status.Error(codes.PermissionDenied, "denied")})
 	c := NewInstanceClient(conn)
 	_, err := c.Get(ctxBackground(), "epd-other")
 	require.Error(t, err)
@@ -89,7 +89,7 @@ func TestInstanceClient_Get_PermissionDeniedMapsToInvalidArg(t *testing.T) {
 }
 
 func TestInstanceClient_Get_FailedPrecondition(t *testing.T) {
-	conn := startFakeCompute(t, nil, nil,
+	conn := startFakeCompute(t,
 		&fakeInstanceService{err: status.Error(codes.FailedPrecondition, "DELETING")})
 	c := NewInstanceClient(conn)
 	_, err := c.Get(ctxBackground(), "epd-x")
@@ -98,7 +98,7 @@ func TestInstanceClient_Get_FailedPrecondition(t *testing.T) {
 }
 
 func TestInstanceClient_Get_Unavailable(t *testing.T) {
-	conn := startFakeCompute(t, nil, nil,
+	conn := startFakeCompute(t,
 		&fakeInstanceService{err: status.Error(codes.Unavailable, "down")})
 	c := NewInstanceClient(conn)
 	ctx, cancel := context.WithTimeout(ctxBackground(), 200*time.Millisecond)
@@ -112,7 +112,7 @@ func TestInstanceClient_Get_Unavailable(t *testing.T) {
 }
 
 func TestInstanceClient_Get_EmptyID(t *testing.T) {
-	c := NewInstanceClient(startFakeCompute(t, nil, nil, &fakeInstanceService{}))
+	c := NewInstanceClient(startFakeCompute(t, &fakeInstanceService{}))
 	_, err := c.Get(ctxBackground(), "")
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, domain.ErrInvalidArg))
