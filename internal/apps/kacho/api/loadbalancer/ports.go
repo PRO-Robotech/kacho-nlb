@@ -1,7 +1,7 @@
 package loadbalancer
 
 import (
-	computeclient "github.com/PRO-Robotech/kacho-nlb/internal/clients/compute"
+	geoclient "github.com/PRO-Robotech/kacho-nlb/internal/clients/geo"
 	iamclient "github.com/PRO-Robotech/kacho-nlb/internal/clients/iam"
 	kachorepo "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho"
 )
@@ -23,9 +23,10 @@ type Repo = kachorepo.Repository
 // peer вернул NotFound; `Unavailable` если peer недоступен).
 type ProjectClient = iamclient.ProjectClient
 
-// RegionClient — Get(regionID) → *computeclient.Region. Используется sync-precheck
-// в Create use-case'е для валидации `region_id`.
-type RegionClient = computeclient.RegionClient
+// RegionClient — Get(regionID) → *geoclient.Region. Используется sync-precheck
+// в Create use-case'е для валидации `region_id` через geo.RegionService.Get
+// (epic kacho-geo S4; ребро nlb→geo заменило nlb→compute «ради region»).
+type RegionClient = geoclient.RegionClient
 
 // Logger — узкий port логгера; вся работа use-case'ов и worker'ов идёт через
 // этот интерфейс — concrete *slog.Logger удовлетворяет его автоматически.

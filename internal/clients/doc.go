@@ -9,9 +9,10 @@
 //   - iam     — ProjectClient / CheckClient / HierarchyWriter
 //     (iam.ProjectService.Get + iam.InternalIAMService.{Check, WriteCreatorTuple}).
 //     Project existence + per-RPC FGA Check + D-11 sync creator-tuple write.
-//   - compute — RegionClient / InstanceClient
-//     (compute.RegionService.Get/ListZones + compute.InstanceService.Get).
-//     Region/zone validation + Target.instance_id resolve.
+//   - geo     — RegionClient (geo.RegionService.Get).
+//     region_id validation (stateless pass-through, без кэша; epic kacho-geo S4).
+//   - compute — InstanceClient (compute.InstanceService.Get).
+//     Target.instance_id resolve (instance-resolve — НЕ geography).
 //   - vpc     — SubnetClient / NetworkInterfaceClient / AddressClient /
 //     InternalAddressClient (vpc.SubnetService.Get + NetworkInterfaceService.Get +
 //     AddressService.{Get,Create,Delete} + InternalAddressService.{AllocateExternalIP,

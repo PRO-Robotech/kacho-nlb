@@ -28,7 +28,7 @@ import (
 //
 // Async worker:
 //   - peer-check project_id (iam ProjectService.Get);
-//   - peer-check region_id (compute RegionService.Get);
+//   - peer-check region_id (geo RegionService.Get);
 //   - Writer-TX → Insert TG (+ inline targets) + outbox CREATED +
 //     FGARegisterOutbox.Emit(fga.register) → Commit (SEC-D Вариант A: owner-
 //     hierarchy + creator tuple intent written in the SAME tx as Insert — no

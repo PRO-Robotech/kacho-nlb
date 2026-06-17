@@ -13,7 +13,7 @@ import (
 
 	lbv1 "github.com/PRO-Robotech/kacho-proto/gen/go/kacho/cloud/loadbalancer/v1"
 
-	"github.com/PRO-Robotech/kacho-nlb/internal/clients/compute"
+	"github.com/PRO-Robotech/kacho-nlb/internal/clients/geo"
 	"github.com/PRO-Robotech/kacho-nlb/internal/clients/iam"
 	"github.com/PRO-Robotech/kacho-nlb/internal/domain"
 )
@@ -123,7 +123,7 @@ func TestCreateLoadBalancer_RegionNotFound(t *testing.T) {
 	repo := newFakeRepo()
 	opsRepo := newFakeOpsRepo()
 	rc := &fakeRegionClient{
-		getFunc: func(ctx context.Context, regionID string) (*compute.Region, error) {
+		getFunc: func(ctx context.Context, regionID string) (*geo.Region, error) {
 			return nil, fmt.Errorf("%w: Region %s not found", domain.ErrInvalidArg, regionID)
 		},
 	}
