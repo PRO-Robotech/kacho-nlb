@@ -119,7 +119,17 @@ peers:
     tls: false
     dialDuration: 10s
   compute:
-    addr: kacho-compute.kacho.svc.cluster.local:9090          # RegionService / InstanceService
+    addr: kacho-compute.kacho.svc.cluster.local:9090          # InstanceService (instance-resolve — NOT geography)
+    internalAddr: ""
+    tls: false
+    dialDuration: 10s
+  geo:
+    # nlb→geo (epic kacho-geo): RegionService.Get на PUBLIC geo listener (9090).
+    # Region-валидация NetworkLoadBalancer.region_id / TargetGroup.region_id
+    # переехала с compute на kacho-geo (leaf-owner Geography). Этот addr
+    # рендерится в config.yaml как extapi.geo.addr (override пустого default'а
+    # из config/defaults.go) → config.go также читает KACHO_NLB_GEO_GRPC_ADDR.
+    addr: kacho-geo.kacho.svc.cluster.local:9090
     internalAddr: ""
     tls: false
     dialDuration: 10s
@@ -140,7 +150,8 @@ authz:
 #   mtls.iam-register → nlb→iam-internal :9091 (Check + RegisterResource drainer)
 #   mtls.iam-project  → nlb→iam :9090 (ProjectService.Get read edge, SEC-I)
 #   mtls.vpc          → nlb→vpc (Address/Subnet/NIC IPAM)
-#   mtls.compute      → nlb→compute (Region/Instance)
+#   mtls.compute      → nlb→compute (Instance-resolve — NOT geography)
+#   mtls.geo          → nlb→geo :9090 (RegionService.Get, epic kacho-geo)
 # serverName на dial-стороне = реальный dial-host (∈ server-SAN пира, КРИТ#1).
 # SEC-I (OQ-5 (b)): iam-register=kacho-iam-internal.* (:9091), iam-project=
 # kacho-iam.* (:9090) — per-listener split (единый ServerName не покрывает оба
@@ -167,12 +178,15 @@ mtls:
     iamRegister: false   # nlb→iam-internal :9091 (Check + RegisterResource drainer)
     iamProject: false    # nlb→iam :9090 ProjectService.Get (SEC-I read edge)
     vpc: false           # nlb→vpc Address/Subnet/NIC
-    compute: false       # nlb→compute Region/Instance
+    compute: false       # nlb→compute Instance-resolve (NOT geography)
+    geo: false           # nlb→geo :9090 RegionService.Get (epic kacho-geo)
   serverName:
     iamRegister: kacho-iam-internal.kacho.svc.cluster.local
     iamProject: kacho-iam.kacho.svc.cluster.local
     vpc: vpc.kacho.svc.cluster.local
     compute: compute.kacho.svc.cluster.local
+    # serverName = реальный :9090 dial-host (∈ geo server-SAN, КРИТ#1).
+    geo: kacho-geo.kacho.svc.cluster.local
 
 # ─── Resource requests/limits + probes ────────────────────────────────────────
 resources:
