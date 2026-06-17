@@ -4,7 +4,7 @@ CMD_API        := ./cmd/kacho-loadbalancer
 CMD_MIG        := ./cmd/migrator
 IMAGE          := kacho-nlb:dev
 
-.PHONY: build build-api build-migrator test test-short vet lint docker sync-migrations
+.PHONY: build build-api build-migrator test test-short vet lint docker sync-migrations helm-lint helm-render-guard
 
 build: build-api build-migrator
 
@@ -31,6 +31,16 @@ sync-migrations:
 
 docker:
 	cd .. && docker build -f kacho-nlb/Dockerfile -t $(IMAGE) .
+
+# ---- Helm deploy-chart render guards (offline `helm template`/`lint`) -------
+
+helm-lint:
+	helm lint deploy/ --set db.password=test
+
+# Asserts cross-service peer-edge wiring (vpc/compute/iam/geo) actually renders
+# into config.yaml + mTLS. Pure chart render — no cluster contact.
+helm-render-guard:
+	bash deploy/tests/render-guard.sh
 
 .PHONY: migrate-up migrate-down migrate-status
 migrate-up:

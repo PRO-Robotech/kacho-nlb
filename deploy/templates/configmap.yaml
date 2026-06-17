@@ -63,6 +63,16 @@ data:
         internal-addr: {{ .Values.peers.compute.internalAddr | quote }}
         dial-duration: {{ .Values.peers.compute.dialDuration }}
         tls: {{ .Values.peers.compute.tls }}
+      # nlb→geo (epic kacho-geo): RegionService.Get на PUBLIC geo listener (:9090).
+      # Заменяет прежнюю region-валидацию через compute; compute остаётся для
+      # InstanceService (instance-resolve — НЕ geography). addr биндится в
+      # config.yaml (extapi.geo.addr); config.go также читает явную
+      # KACHO_NLB_GEO_GRPC_ADDR (BindEnv), но canonical-источник — этот ключ.
+      geo:
+        addr: {{ .Values.peers.geo.addr | quote }}
+        internal-addr: {{ .Values.peers.geo.internalAddr | quote }}
+        dial-duration: {{ .Values.peers.geo.dialDuration }}
+        tls: {{ .Values.peers.geo.tls }}
       iam:
         addr: {{ .Values.peers.iam.addr | quote }}
         internal-addr: {{ .Values.peers.iam.internalAddr | quote }}
@@ -150,5 +160,17 @@ data:
         cafiles:
           - {{ printf "%s/ca.crt" $cli | quote }}
         servername: {{ .Values.mtls.serverName.compute | quote }}
+        {{- end }}
+      # nlb→geo edge (RegionService.Get :9090). Mirror of the compute edge:
+      # reuses the SAME mounted kacho-nlb-client-tls ($cli) — no new Certificate.
+      # serverName = kacho-geo.* (real :9090 dial-host ∈ geo server-SAN).
+      geo:
+        enable: {{ .Values.mtls.edges.geo }}
+        {{- if .Values.mtls.edges.geo }}
+        certfile: {{ printf "%s/tls.crt" $cli | quote }}
+        keyfile: {{ printf "%s/tls.key" $cli | quote }}
+        cafiles:
+          - {{ printf "%s/ca.crt" $cli | quote }}
+        servername: {{ .Values.mtls.serverName.geo | quote }}
         {{- end }}
     {{- end }}

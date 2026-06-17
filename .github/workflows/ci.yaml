@@ -86,3 +86,16 @@ jobs:
         with: { go-version-file: kacho-nlb/go.mod, cache-dependency-path: kacho-nlb/go.sum }
       - run: go mod download
       - run: go test ./internal/repo/... -race -count=1 -timeout 300s
+
+  helm-render-guard:
+    name: helm lint + render guard (deploy chart)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with: { path: kacho-nlb }
+      - uses: azure/setup-helm@v4
+        with: { version: v3.14.4 }
+      # Offline chart render only — no cluster. Asserts peer-edge wiring
+      # (vpc/compute/iam/geo) lands in config.yaml + mTLS.
+      - run: make helm-lint
+      - run: make helm-render-guard
