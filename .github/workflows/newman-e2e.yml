@@ -63,6 +63,10 @@ jobs:
         with: { repository: PRO-Robotech/kacho-vpc, ref: main, path: kacho-vpc }
       - uses: actions/checkout@v4
         with: { repository: PRO-Robotech/kacho-iam, ref: main, path: kacho-iam }
+      # kacho-geo leaf-service (Geography Region/Zone, extracted from compute):
+      # helm dep (vendored sub-chart) + Dockerfile build context for kacho-geo:dev.
+      - uses: actions/checkout@v4
+        with: { repository: PRO-Robotech/kacho-geo, ref: main, path: kacho-geo }
       - uses: actions/checkout@v4
         with: { repository: PRO-Robotech/kacho-api-gateway, ref: main, path: kacho-api-gateway }
       - uses: actions/checkout@v4
@@ -112,7 +116,7 @@ jobs:
         working-directory: ${{ github.workspace }}
         run: |
           set -euo pipefail
-          for svc in vpc iam compute api-gateway nlb; do
+          for svc in vpc iam compute geo api-gateway nlb; do
             echo "=== build kacho-$svc:dev ==="
             docker build -f "kacho-$svc/Dockerfile" -t "kacho-$svc:dev" .
           done
@@ -129,7 +133,7 @@ jobs:
       - name: load images into kind
         run: |
           set -euo pipefail
-          for img in kacho-vpc:dev kacho-iam:dev kacho-compute:dev kacho-api-gateway:dev kacho-nlb:dev; do
+          for img in kacho-vpc:dev kacho-iam:dev kacho-compute:dev kacho-geo:dev kacho-api-gateway:dev kacho-nlb:dev; do
             kind load docker-image "$img" --name kacho
           done
           docker image inspect kacho-ui:dev >/dev/null 2>&1 \
@@ -157,7 +161,8 @@ jobs:
             --set cert-manager.enabled=false --set mtls.enabled=false \
             --set vpc.mtls.enable=false --set compute.mtls.enable=false \
             --set api-gateway.mtls.enable=false --set kacho-nlb.mtls.enable=false \
-            --set kacho-iam.mtls.enable=false
+            --set kacho-iam.mtls.enable=false \
+            --set kacho-geo.mtls.enable=false
 
       # Phase 1 — wait for the data-plane Deployments + Postgres to converge.
       - name: wait for core deployments
