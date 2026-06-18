@@ -76,6 +76,11 @@ func RegisterDefaults(v *viper.Viper) {
 	v.SetDefault("fga.register-drainer.max-attempts", 10)
 	v.SetDefault("fga.register-drainer.backoff-min", "1s")
 	v.SetDefault("fga.register-drainer.backoff-max", "30s")
+	// sub-phase 1.4 S3 fail-closed boot-gate (D-8). Default off (dev back-compat);
+	// production sets KACHO_NLB_REQUIRE_IAM=true. Explicit BindEnv → the canonical
+	// short env name (KACHO_<SVC>_REQUIRE_IAM) shared across the fleet.
+	v.SetDefault("fga.require-iam", false)
+	_ = v.BindEnv("fga.require-iam", "KACHO_NLB_REQUIRE_IAM")
 
 	// mTLS (SEC-B opt-in, per-edge). Default OFF on every edge → insecure
 	// (dev backward-compat, эпик §5). corelib field names lowercased by
