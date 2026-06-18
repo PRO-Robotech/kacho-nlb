@@ -36,7 +36,9 @@ import (
 	"github.com/PRO-Robotech/kacho-corelib/grpcsrv"
 	"github.com/PRO-Robotech/kacho-corelib/observability"
 	"github.com/PRO-Robotech/kacho-corelib/operations"
+	"github.com/PRO-Robotech/kacho-corelib/outbox/bootgate"
 	"github.com/PRO-Robotech/kacho-corelib/outbox/drainer"
+	"github.com/PRO-Robotech/kacho-corelib/outbox/metrics"
 
 	lbv1 "github.com/PRO-Robotech/kacho-proto/gen/go/kacho/cloud/loadbalancer/v1"
 	operationpb "github.com/PRO-Robotech/kacho-proto/gen/go/kacho/cloud/operation"
@@ -55,6 +57,7 @@ import (
 	iamclient "github.com/PRO-Robotech/kacho-nlb/internal/clients/iam"
 	vpcclient "github.com/PRO-Robotech/kacho-nlb/internal/clients/vpc"
 	"github.com/PRO-Robotech/kacho-nlb/internal/domain"
+	"github.com/PRO-Robotech/kacho-nlb/internal/fgaboot"
 	// dto/type2pb init() регистрирует все DTO трансферы (domain ↔ proto) в реестре.
 	// Импортируется здесь (composition root), чтобы registry был полон до старта
 	// gRPC server'ов; handler'ы вызывают dto.Transfer(...) и предполагают, что
@@ -194,6 +197,14 @@ func runServe(configPath string) error {
 		return fmt.Errorf("build authz interceptor: %w", err)
 	}
 
+	// SEC-D S3 fail-closed boot-gate (D-8 / 1.4-31): KACHO_NLB_REQUIRE_IAM=true →
+	// mutating Create refused (UNAVAILABLE) + readiness NotReady until the
+	// register-drainer is IAM-connected. Starts NOT connected; SetConnected(true)
+	// fires once the drainer task starts with a real iam peer (below). The metrics
+	// recorder (D-7) feeds the outbox backstop gauges/poison-counter.
+	bootGate := bootgate.New(bootgate.Config{RequireIAM: cfg.FGA.RequireIAM, Service: "kacho-nlb"})
+	outboxRec := metrics.NewMemRecorder()
+
 	// gRPC servers (public :9090 + internal :9091).
 	// OperationService зарегистрирован здесь как полный end-to-end путь (KAC-155).
 	// Per-resource handler'ы (load_balancer / listener / target_group) подключаются
@@ -217,9 +228,14 @@ func runServe(configPath string) error {
 	if err != nil {
 		return fmt.Errorf("build server TLS creds: %w", err)
 	}
+	// SEC-D S3 boot-gate (D-8 / 1.4-31): fgaboot.GuardCreateUnary FIRST on the
+	// public chain — a mutating tenant-resource Create is refused (UNAVAILABLE)
+	// when require-iam is armed and the register-drainer is not IAM-connected, so
+	// no resource is created without a deliverable owner-tuple intent. Read RPCs
+	// are untouched.
 	publicSrv := grpcsrv.NewServer(
 		serverCreds,
-		grpc.ChainUnaryInterceptor(grpcsrv.UnaryPrincipalExtract(), authzIntr.Unary()),
+		grpc.ChainUnaryInterceptor(fgaboot.GuardCreateUnary(bootGate), grpcsrv.UnaryPrincipalExtract(), authzIntr.Unary()),
 		grpc.ChainStreamInterceptor(grpcsrv.StreamPrincipalExtract(), authzIntr.Stream()),
 	)
 	internalSrv := grpcsrv.NewServer(
@@ -429,8 +445,8 @@ func runServe(configPath string) error {
 			d, derr := drainer.New[domain.FGARegisterIntent](
 				pool,
 				drainer.Config{
-					Table:        "kacho_nlb.fga_register_outbox",
-					Channel:      "kacho_nlb_fga_register_outbox",
+					Table:        nlbFGAOutboxTable,
+					Channel:      nlbFGAOutboxChannel,
 					BatchSize:    cfg.FGA.RegisterDrainer.BatchSize,
 					PollFallback: cfg.FGA.RegisterDrainer.PollFallback,
 					MaxAttempts:  cfg.FGA.RegisterDrainer.MaxAttempts,
@@ -440,9 +456,19 @@ func runServe(configPath string) error {
 				iamclient.DecodeFGARegisterIntent,
 				iamclient.NewRegisterApplier(peers.Register),
 				logger,
+				// D-7: each poisoned row bumps outbox_poisoned_total{table=…}.
+				drainer.WithPoisonObserver[domain.FGARegisterIntent](func() {
+					outboxRec.IncPoisoned(nlbFGAOutboxTable)
+				}),
 			)
 			if derr != nil {
 				return fmt.Errorf("build fga register-drainer: %w", derr)
+			}
+			// Drainer wired with a real iam peer → IAM-register delivery path is up:
+			// open the boot-gate (D-8) + start the reconciler/metrics backstop (S3).
+			bootGate.SetConnected(true)
+			if berr := startBackstop(ctx, pool, outboxRec, logger); berr != nil {
+				return fmt.Errorf("start outbox backstop: %w", berr)
 			}
 			logger.Info("fga_register_drainer_started",
 				"mtls", cfg.MTLS.IAMRegister.Enable)

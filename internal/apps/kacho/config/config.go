@@ -195,6 +195,14 @@ type FGAConfig struct {
 	// RegisterResource/UnregisterResource). OQ-SEC-D-5: default-on (без него
 	// созданные ресурсы не получат owner-tuple — деградация хуже текущей).
 	RegisterDrainer FGARegisterDrainerConfig `mapstructure:"register-drainer"`
+
+	// RequireIAM — sub-phase 1.4 S3 fail-closed boot-gate (D-8). Когда true,
+	// мутирующий Create отказывает (UNAVAILABLE) и readiness=NotReady, пока
+	// register-drainer не подключён к IAM — ни один ресурс не создаётся без
+	// доставляемого owner-tuple-intent'а. Default false (dev back-compat). В
+	// production: true (единый канонический режим, N5). ENV
+	// `KACHO_NLB_REQUIRE_IAM` (явный BindEnv в defaults.go).
+	RequireIAM bool `mapstructure:"require-iam"`
 }
 
 // FGARegisterDrainerConfig — параметры corelib outbox/drainer на таблице
