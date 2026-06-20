@@ -31,9 +31,18 @@ func (e *fgaRegisterEmitter) Emit(ctx context.Context, eventType string, intent 
 	if err != nil {
 		return mapPgErr(err, "fga_register_outbox", "")
 	}
+	// epic-rsab T3 (β-hardening): stamp the monotonic source_version into the
+	// payload from the DB clock (now()) AT INSERT TIME, inside this writer-tx — the
+	// exact instant the source-state is recorded. jsonb_set merges it into the
+	// encoded payload so the register-drainer forwards it to
+	// RegisterResourceRequest.source_version (last-source-state-wins: a reordered
+	// stale intent → no-op in IAM, not an overwrite). For sequential mutations of
+	// one object a later writer-tx commits-after the earlier → its now() is strictly
+	// greater → monotonic per-object. now() === transaction_timestamp(), matching
+	// the row's own created_at default (same tx instant).
 	const q = `INSERT INTO kacho_nlb.fga_register_outbox
         (event_type, payload, resource_kind, resource_id)
-        VALUES ($1, $2::jsonb, $3, $4)`
+        VALUES ($1, jsonb_set($2::jsonb, '{source_version}', to_jsonb(now())), $3, $4)`
 	if _, err := e.tx.Exec(ctx, q, eventType, payload, intent.Kind, intent.ResourceID); err != nil {
 		return mapPgErr(err, "fga_register_outbox", "")
 	}

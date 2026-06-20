@@ -211,7 +211,34 @@ func tgRegisterIntent(tg *kachorepo.TargetGroupRecord, principal operations.Prin
 	if subject := domain.FGASubjectFromPrincipal(principal.Type, principal.ID); subject != "" {
 		tuples = append(tuples, domain.FGACreatorTuple(subject, domain.FGAObjectTypeTargetGroup, id))
 	}
-	return domain.FGARegisterIntent{Kind: "TargetGroup", ResourceID: id, Tuples: tuples}
+	// epic-rsab T3 (D4): carry tenant labels + parent-project so kacho-iam feeds its
+	// resource_mirror (γ selector matchLabels / containment). source_version is
+	// stamped by the outbox emitter from the DB clock inside the writer-tx.
+	return domain.FGARegisterIntent{
+		Kind:            "TargetGroup",
+		ResourceID:      id,
+		Tuples:          tuples,
+		Labels:          domain.LabelsToMap(tg.Labels),
+		ParentProjectID: string(tg.ProjectID),
+	}
+}
+
+// tgMirrorIntent builds the epic-rsab T3 (D4) mirror-feed register-intent for an
+// UPDATED TargetGroup: the project-hierarchy tuple (re-register is idempotent in
+// IAM per SEC-A) carrying the refreshed labels + parent so kacho-iam updates its
+// resource_mirror. No creator tuple — Update never re-assigns ownership; this is a
+// pure labels-refresh feed. source_version is stamped by the outbox emitter.
+func tgMirrorIntent(tg *kachorepo.TargetGroupRecord) domain.FGARegisterIntent {
+	id := string(tg.ID)
+	return domain.FGARegisterIntent{
+		Kind:       "TargetGroup",
+		ResourceID: id,
+		Tuples: []domain.FGATuple{
+			domain.FGAProjectTuple(domain.FGAObjectTypeTargetGroup, id, string(tg.ProjectID)),
+		},
+		Labels:          domain.LabelsToMap(tg.Labels),
+		ParentProjectID: string(tg.ProjectID),
+	}
 }
 
 // tgUnregisterIntent builds the SEC-D FGA-unregister-intent (project-hierarchy)

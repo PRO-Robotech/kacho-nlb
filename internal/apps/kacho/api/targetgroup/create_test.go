@@ -254,4 +254,10 @@ func TestCreate_EmitsFGARegisterIntent(t *testing.T) {
 	require.Equal(t, "project:prj-fga", ev.Intent.Tuples[0].SubjectID)
 	require.Equal(t, "user:alice", ev.Intent.Tuples[1].SubjectID)
 	require.Equal(t, domain.FGARelationAdmin, ev.Intent.Tuples[1].Relation)
+
+	// epic-rsab T3 (D4, T3-02 nlb-side): the Create register-intent carries the
+	// tenant labels + parent-project so kacho-iam feeds resource_mirror for the
+	// γ selector matchLabels.
+	require.Equal(t, map[string]string{"tier": "web"}, ev.Intent.Labels, "labels in create intent")
+	require.Equal(t, "prj-fga", ev.Intent.ParentProjectID, "parent_project_id in create intent")
 }
