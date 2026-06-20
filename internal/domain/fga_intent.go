@@ -3,6 +3,7 @@ package domain
 import (
 	"encoding/json"
 	"fmt"
+	"time"
 )
 
 // FGA-register-intent (SEC-D) — pure-Go domain value-types for the
@@ -79,6 +80,36 @@ type FGARegisterIntent struct {
 	ResourceID string `json:"resource_id"`
 	// Tuples is the set of tuple intents to register/unregister.
 	Tuples []FGATuple `json:"tuples"`
+
+	// ---- epic-rsab T3 (D4): tenant labels + parent-scope mirror feed ----
+	//
+	// nlb forwards these to kacho-iam InternalIAMService.RegisterResource so IAM
+	// populates its output-only `resource_mirror` (label+parent zeркало; source of
+	// truth = nlb), which feeds the γ `bySelector{matchLabels}` selector and
+	// containment gate SAME-DB in IAM (no iam→nlb edge — data is pushed by the
+	// consumer, IAM never pulls). All fields are additive/optional — legacy
+	// payloads decode with empty values (graceful back-compat). NOT new edge: the
+	// nlb→iam RegisterResource edge already exists (SEC-A owner-tuple); this only
+	// extends the payload. Mirror carries ONLY tenant-facing labels+parent — never
+	// underlay/placement (security.md инфра-чувствительные).
+
+	// Labels — copy of the owner resource's labels (for the γ selector matchLabels).
+	Labels map[string]string `json:"labels,omitempty"`
+	// ParentProjectID — the owning project id (γ containment "object under scope").
+	ParentProjectID string `json:"parent_project_id,omitempty"`
+	// ParentAccountID — the owning account id, when resolvable (γ account-scope
+	// containment). nlb leaves it empty today (no project→account resolve on the
+	// resource hot-path); IAM handles an empty parent gracefully.
+	ParentAccountID string `json:"parent_account_id,omitempty"`
+	// SourceVersion — monotonic per-object marker (β-hardening). Stamped from the DB
+	// clock (now()) by the outbox emitter INSIDE the resource writer-tx (see
+	// repo/kacho/pg fgaRegisterEmitter). For sequential mutations of one object a
+	// later mutation's tx commits-after the earlier, so its now() is strictly
+	// greater → monotonic per-object. The register-drainer forwards it as
+	// RegisterResourceRequest.source_version so kacho-iam applies the mirror UPSERT
+	// last-SOURCE-state-wins (a reordered stale intent → no-op, not an overwrite).
+	// Zero (legacy payload / decode of an old row) → IAM treats as '-infinity'.
+	SourceVersion time.Time `json:"source_version,omitempty"`
 }
 
 // Marshal serialises the intent to the JSONB payload stored in

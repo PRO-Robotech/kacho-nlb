@@ -107,14 +107,36 @@ func (u *UpdateTargetGroupUseCase) Execute(
 		return nil, status.Errorf(codes.Internal, "operation persist: %v", err)
 	}
 
+	// epic-rsab T3 (D4, parity with compute-β-04): re-emit the FGA-register intent
+	// (carrying the new labels) ONLY when labels change — labels in mask, or empty
+	// mask (full PATCH always reapplies labels). A non-labels Update is a mirror
+	// no-op (skip the intent to avoid a useless RegisterResource round-trip).
+	emitMirror := labelsInMaskTG(mask)
 	operations.Run(ctx, u.opsRepo, op.ID, func(workerCtx context.Context) (*anypb.Any, error) {
-		return u.doUpdate(workerCtx, updated)
+		return u.doUpdate(workerCtx, updated, emitMirror)
 	})
 	return &op, nil
 }
 
-// doUpdate — worker: Writer-TX → Update + outbox UPDATED → Commit.
-func (u *UpdateTargetGroupUseCase) doUpdate(ctx context.Context, tg domain.TargetGroup) (*anypb.Any, error) {
+// labelsInMaskTG reports whether the Update touches labels: explicit "labels" in
+// the mask, or an empty mask (full-object PATCH reapplies all mutable fields).
+func labelsInMaskTG(mask []string) bool {
+	if len(mask) == 0 {
+		return true
+	}
+	for _, p := range mask {
+		if p == "labels" {
+			return true
+		}
+	}
+	return false
+}
+
+// doUpdate — worker: Writer-TX → Update + outbox UPDATED (+ FGA-register intent
+// when labels changed, T3 D4) → Commit. The mirror-feed intent is written in the
+// SAME writer-tx as the resource UPDATE (no dual-write); the emitter stamps a
+// monotonic source_version so IAM applies the mirror last-source-state-wins.
+func (u *UpdateTargetGroupUseCase) doUpdate(ctx context.Context, tg domain.TargetGroup, emitMirror bool) (*anypb.Any, error) {
 	w, err := u.repo.Writer(ctx)
 	if err != nil {
 		return nil, mapDomainErr(err)
@@ -130,6 +152,12 @@ func (u *UpdateTargetGroupUseCase) doUpdate(ctx context.Context, tg domain.Targe
 		kachopg.OutboxActionUpdated, tgOutboxPayload(updated),
 	); err != nil {
 		return nil, mapDomainErr(err)
+	}
+	if emitMirror {
+		if err := w.FGARegisterOutbox().Emit(ctx, domain.FGAEventRegister,
+			tgMirrorIntent(updated)); err != nil {
+			return nil, mapDomainErr(err)
+		}
 	}
 	if err := w.Commit(); err != nil {
 		return nil, mapDomainErr(err)

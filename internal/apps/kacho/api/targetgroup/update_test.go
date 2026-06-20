@@ -12,8 +12,56 @@ import (
 
 	lbv1 "github.com/PRO-Robotech/kacho-proto/gen/go/kacho/cloud/loadbalancer/v1"
 
+	"github.com/PRO-Robotech/kacho-nlb/internal/domain"
 	kachopg "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho/pg"
 )
+
+// epic-rsab T3 (D4, T3-02 nlb-side): Update(labels) re-emits the FGA-register
+// mirror-feed intent (carrying the new labels + parent) in the writer-tx so
+// kacho-iam keeps its resource_mirror current under label-change reconcile.
+func TestUpdate_LabelsMask_EmitsMirrorIntent(t *testing.T) {
+	repo := newFakeRepo()
+	tg := makeTG("prj-acme", "tg-mirror")
+	repo.seedTG(tg)
+	opsRepo := newFakeOpsRepo()
+	uc := NewUpdateTargetGroupUseCase(repo, opsRepo, nil)
+
+	op, err := uc.Execute(context.Background(), &lbv1.UpdateTargetGroupRequest{
+		TargetGroupId: string(tg.ID),
+		UpdateMask:    &fieldmaskpb.FieldMask{Paths: []string{"labels"}},
+		Labels:        map[string]string{"tier": "critical"},
+	})
+	require.NoError(t, err)
+	final := awaitOpDone(t, opsRepo, op.ID)
+	require.Nil(t, final.Error)
+
+	require.Len(t, repo.fga, 1, "Update(labels) emits one fga.register mirror intent")
+	ev := repo.fga[0]
+	assert.Equal(t, domain.FGAEventRegister, ev.EventType)
+	assert.Equal(t, map[string]string{"tier": "critical"}, ev.Intent.Labels, "new labels in intent")
+	assert.Equal(t, "prj-acme", ev.Intent.ParentProjectID)
+}
+
+// epic-rsab T3 (D4, compute-β-04 parity): a non-labels Update is a mirror no-op —
+// no FGA-register intent (avoids a useless RegisterResource round-trip).
+func TestUpdate_NonLabelsMask_NoMirrorIntent(t *testing.T) {
+	repo := newFakeRepo()
+	tg := makeTG("prj-acme", "tg-nomirror")
+	repo.seedTG(tg)
+	opsRepo := newFakeOpsRepo()
+	uc := NewUpdateTargetGroupUseCase(repo, opsRepo, nil)
+
+	op, err := uc.Execute(context.Background(), &lbv1.UpdateTargetGroupRequest{
+		TargetGroupId:              string(tg.ID),
+		UpdateMask:                 &fieldmaskpb.FieldMask{Paths: []string{"deregistration_delay_seconds"}},
+		DeregistrationDelaySeconds: 600,
+	})
+	require.NoError(t, err)
+	final := awaitOpDone(t, opsRepo, op.ID)
+	require.Nil(t, final.Error)
+
+	require.Empty(t, repo.fga, "non-labels Update emits no mirror intent")
+}
 
 // GWT-TGR-018 — Update mutable fields via mask.
 func TestUpdate_MutableFields(t *testing.T) {

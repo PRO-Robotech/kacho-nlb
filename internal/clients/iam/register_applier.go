@@ -28,10 +28,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/PRO-Robotech/kacho-corelib/auth"
 	"github.com/PRO-Robotech/kacho-corelib/outbox/drainer"
@@ -106,14 +108,23 @@ func NewRegisterApplier(cli RegisterResourceClient) drainer.Applier[domain.FGARe
 		// the fgaproxy least-priv gate comes from the mTLS client-cert (SEC-B/C).
 		ctx = auth.PropagateOutgoing(ctx)
 
+		// epic-rsab T3 (D4): forward the owner labels + parent-scope + monotonic
+		// source_version so kacho-iam populates its output-only resource_mirror
+		// (label+parent sync feeding the γ selector). Fields are additive/optional —
+		// empty values mirror gracefully; zero source_version → nil (IAM '-infinity').
+		srcVer := sourceVersionPB(intent.SourceVersion)
 		switch eventType {
 		case domain.FGAEventRegister:
 			for _, t := range intent.Tuples {
 				_, err := cli.RegisterResource(ctx, &iampb.RegisterResourceRequest{
-					SubjectId: t.SubjectID,
-					Relation:  t.Relation,
-					Object:    t.Object,
-					TraceId:   intent.ResourceID,
+					SubjectId:       t.SubjectID,
+					Relation:        t.Relation,
+					Object:          t.Object,
+					TraceId:         intent.ResourceID,
+					Labels:          intent.Labels,
+					ParentProjectId: intent.ParentProjectID,
+					ParentAccountId: intent.ParentAccountID,
+					SourceVersion:   srcVer,
 				})
 				if cerr := classifyRegisterErr(err); cerr != nil {
 					return cerr
@@ -122,11 +133,19 @@ func NewRegisterApplier(cli RegisterResourceClient) drainer.Applier[domain.FGARe
 			return nil
 		case domain.FGAEventUnregister:
 			for _, t := range intent.Tuples {
+				// Symmetry: Unregister removes the mirror row by object; mirror fields
+				// are carried for message-shape symmetry but IAM uses only object +
+				// source_version (tombstone-version: a stale tombstone won't wipe a
+				// fresher row — β-hardening parity with compute).
 				_, err := cli.UnregisterResource(ctx, &iampb.UnregisterResourceRequest{
-					SubjectId: t.SubjectID,
-					Relation:  t.Relation,
-					Object:    t.Object,
-					TraceId:   intent.ResourceID,
+					SubjectId:       t.SubjectID,
+					Relation:        t.Relation,
+					Object:          t.Object,
+					TraceId:         intent.ResourceID,
+					Labels:          intent.Labels,
+					ParentProjectId: intent.ParentProjectID,
+					ParentAccountId: intent.ParentAccountID,
+					SourceVersion:   srcVer,
 				})
 				if cerr := classifyRegisterErr(err); cerr != nil {
 					return cerr
@@ -137,6 +156,16 @@ func NewRegisterApplier(cli RegisterResourceClient) drainer.Applier[domain.FGARe
 			return fmt.Errorf("%w: fga_register_outbox: unknown event_type %q", drainer.ErrPermanent, eventType)
 		}
 	}
+}
+
+// sourceVersionPB converts the decoded intent source_version to a proto
+// Timestamp. A zero time (legacy payload / decode of an old outbox row) → nil,
+// which kacho-iam treats as '-infinity' (applies unconditionally — back-compat).
+func sourceVersionPB(t time.Time) *timestamppb.Timestamp {
+	if t.IsZero() {
+		return nil
+	}
+	return timestamppb.New(t)
 }
 
 // classifyRegisterErr maps the kacho-iam RegisterResource/UnregisterResource

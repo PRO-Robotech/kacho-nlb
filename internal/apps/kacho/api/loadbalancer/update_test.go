@@ -32,6 +32,46 @@ func TestUpdate_HappyPath_PatchName(t *testing.T) {
 	require.Equal(t, "edge-v2", string(repo.lbs[lbID].Name))
 }
 
+// epic-rsab T3 (D4, T3-02 nlb-side): Update(labels) re-emits the FGA-register
+// mirror-feed intent (carrying the new labels + parent) so kacho-iam keeps its
+// resource_mirror current under label-change reconcile.
+func TestUpdate_LabelsMask_EmitsMirrorIntent(t *testing.T) {
+	t.Parallel()
+	repo := newFakeRepo()
+	lbID := seedLB(t, repo, "prj-a", "edge")
+	opsRepo := newFakeOpsRepo()
+	uc := NewUpdateLoadBalancerUseCase(repo, opsRepo, slog.Default())
+	op, err := uc.Execute(context.Background(), &lbv1.UpdateNetworkLoadBalancerRequest{
+		NetworkLoadBalancerId: lbID,
+		Labels:                map[string]string{"tier": "critical"},
+		UpdateMask:            &fieldmaskpb.FieldMask{Paths: []string{"labels"}},
+	})
+	require.NoError(t, err)
+	require.Nil(t, awaitOpDone(t, opsRepo, op.ID).Error)
+
+	require.Len(t, repo.fga, 1, "Update(labels) emits one fga.register mirror intent")
+	require.Equal(t, domain.FGAEventRegister, repo.fga[0].EventType)
+	require.Equal(t, map[string]string{"tier": "critical"}, repo.fga[0].Intent.Labels)
+	require.Equal(t, "prj-a", repo.fga[0].Intent.ParentProjectID)
+}
+
+// epic-rsab T3 (D4, compute-β-04 parity): a non-labels Update is a mirror no-op.
+func TestUpdate_NonLabelsMask_NoMirrorIntent(t *testing.T) {
+	t.Parallel()
+	repo := newFakeRepo()
+	lbID := seedLB(t, repo, "prj-a", "edge")
+	opsRepo := newFakeOpsRepo()
+	uc := NewUpdateLoadBalancerUseCase(repo, opsRepo, slog.Default())
+	op, err := uc.Execute(context.Background(), &lbv1.UpdateNetworkLoadBalancerRequest{
+		NetworkLoadBalancerId: lbID,
+		Name:                  "edge-v2",
+		UpdateMask:            &fieldmaskpb.FieldMask{Paths: []string{"name"}},
+	})
+	require.NoError(t, err)
+	require.Nil(t, awaitOpDone(t, opsRepo, op.ID).Error)
+	require.Empty(t, repo.fga, "non-labels Update emits no mirror intent")
+}
+
 func TestUpdate_ImmutableType(t *testing.T) {
 	t.Parallel()
 	repo := newFakeRepo()

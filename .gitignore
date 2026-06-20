@@ -21,3 +21,4 @@ tests/k6/*.summary.json
 .idea/
 .vscode/
 .DS_Store
+.claude/worktrees/

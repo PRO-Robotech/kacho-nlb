@@ -228,7 +228,34 @@ func lbRegisterIntent(lb *kachorepo.LoadBalancerRecord, principal operations.Pri
 	if subject := domain.FGASubjectFromPrincipal(principal.Type, principal.ID); subject != "" {
 		tuples = append(tuples, domain.FGACreatorTuple(subject, domain.FGAObjectTypeLoadBalancer, id))
 	}
-	return domain.FGARegisterIntent{Kind: "NetworkLoadBalancer", ResourceID: id, Tuples: tuples}
+	// epic-rsab T3 (D4): carry tenant labels + parent-project so kacho-iam feeds its
+	// resource_mirror (γ selector matchLabels / containment). source_version is
+	// stamped by the outbox emitter from the DB clock inside the writer-tx.
+	return domain.FGARegisterIntent{
+		Kind:            "NetworkLoadBalancer",
+		ResourceID:      id,
+		Tuples:          tuples,
+		Labels:          domain.LabelsToMap(lb.Labels),
+		ParentProjectID: string(lb.ProjectID),
+	}
+}
+
+// lbMirrorIntent builds the epic-rsab T3 (D4) mirror-feed register-intent for an
+// UPDATED LoadBalancer: the project-hierarchy tuple (re-register is idempotent in
+// IAM per SEC-A) carrying the refreshed labels + parent so kacho-iam updates its
+// resource_mirror. No creator tuple — Update never re-assigns ownership; this is a
+// pure labels-refresh feed. source_version is stamped by the outbox emitter.
+func lbMirrorIntent(lb *kachorepo.LoadBalancerRecord) domain.FGARegisterIntent {
+	id := string(lb.ID)
+	return domain.FGARegisterIntent{
+		Kind:       "NetworkLoadBalancer",
+		ResourceID: id,
+		Tuples: []domain.FGATuple{
+			domain.FGAProjectTuple(domain.FGAObjectTypeLoadBalancer, id, string(lb.ProjectID)),
+		},
+		Labels:          domain.LabelsToMap(lb.Labels),
+		ParentProjectID: string(lb.ProjectID),
+	}
 }
 
 // ---- Helpers ----
