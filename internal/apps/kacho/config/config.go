@@ -162,7 +162,30 @@ type AuthzConfig struct {
 	IAM               AuthzIAMConfig               `mapstructure:"iam"`
 	Cache             AuthzCacheConfig             `mapstructure:"cache"`
 	ListenInvalidator AuthzListenInvalidatorConfig `mapstructure:"listen-invalidator"`
+	ListFilter        AuthzListFilterConfig        `mapstructure:"list-filter"`
 	Breakglass        bool                         `mapstructure:"breakglass"` // dev-only; production validation rejects
+}
+
+// AuthzListFilterConfig — per-object filtered List (RBAC sub-phase D §11; issue
+// #111). Каждый публичный List<Resource> прогоняет id-set через
+// iam.AuthorizeService.ListObjects(subject, action, "lb_*") и отдаёт пересечение
+// (только доступные объекты), read==enforce, fail-closed (security.md). Endpoint
+// — iam (там AuthorizeService); по умолчанию переиспользуется conn, которым nlb
+// уже зовёт iam (см. main.go buildListFilter), mTLS — через mtls.iam-register.
+type AuthzListFilterConfig struct {
+	// Enabled — master-switch. default true (D §11 «применяется во всех доменах»).
+	// false → use-case'ы получают nil-Filter → нефильтрованный project-scoped
+	// passthrough (dev / graceful start без iam).
+	Enabled bool `mapstructure:"enabled"`
+	// Timeout — per-request deadline к iam.ListObjects (default 500ms).
+	Timeout time.Duration `mapstructure:"timeout"`
+	// CacheTTL — TTL decision-cache (default 5s; NFR ≤10s).
+	CacheTTL time.Duration `mapstructure:"cache-ttl"`
+	// CacheMaxEntries — bound cache + MaxResults cap (default 10000).
+	CacheMaxEntries int `mapstructure:"cache-max-entries"`
+	// FailOpen — на FGA error: false (default) → Unavailable (fail-closed,
+	// security.md); true → bypass + audit-warn (dev escape-hatch).
+	FailOpen bool `mapstructure:"fail-open"`
 }
 
 type AuthzIAMConfig struct {

@@ -35,4 +35,9 @@ type LoadBalancerFilter struct {
 	ProjectID string
 	Name      string
 	Filter    string
+	// AllowedIDs — per-object FGA allow-set (RBAC sub-phase D §11; iam ListObjects).
+	// nil → фильтр не применяется (bypass / authz disabled). len==0 → пустой
+	// результат (no-leak). len>0 → `WHERE id = ANY($allowed)` ВНУТРИ SQL ДО LIMIT,
+	// чтобы keyset-пагинация была плотной по отфильтрованному набору (D-46).
+	AllowedIDs []string
 }

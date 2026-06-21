@@ -198,6 +198,18 @@ func (q *fakeLBReader) List(ctx context.Context, f kachorepo.LoadBalancerFilter,
 	}
 	q.r.mu.Lock()
 	defer q.r.mu.Unlock()
+	// RBAC sub-phase D §11: per-object FGA allow-set push-down (parity с pg repo).
+	// nil → no filter; len==0 → пусто (no-leak); len>0 → id ∈ AllowedIDs.
+	var allowed map[string]struct{}
+	if f.AllowedIDs != nil {
+		if len(f.AllowedIDs) == 0 {
+			return nil, "", nil
+		}
+		allowed = make(map[string]struct{}, len(f.AllowedIDs))
+		for _, id := range f.AllowedIDs {
+			allowed[id] = struct{}{}
+		}
+	}
 	var out []*kachorepo.LoadBalancerRecord
 	for _, lb := range q.r.lbs {
 		if f.ProjectID != "" && string(lb.ProjectID) != f.ProjectID {
@@ -205,6 +217,11 @@ func (q *fakeLBReader) List(ctx context.Context, f kachorepo.LoadBalancerFilter,
 		}
 		if f.Name != "" && string(lb.Name) != f.Name {
 			continue
+		}
+		if allowed != nil {
+			if _, ok := allowed[string(lb.ID)]; !ok {
+				continue
+			}
 		}
 		c := *lb
 		out = append(out, &c)

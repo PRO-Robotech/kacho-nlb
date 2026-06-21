@@ -4,7 +4,7 @@ CMD_API        := ./cmd/kacho-loadbalancer
 CMD_MIG        := ./cmd/migrator
 IMAGE          := kacho-nlb:dev
 
-.PHONY: build build-api build-migrator test test-short vet lint docker sync-migrations helm-lint helm-render-guard
+.PHONY: build build-api build-migrator test test-short vet lint docker sync-migrations helm-lint helm-render-guard audit-list-filter
 
 build: build-api build-migrator
 
@@ -25,6 +25,13 @@ vet:
 
 lint:
 	golangci-lint run ./...
+
+# audit-list-filter — RBAC sub-phase D §11 (issue #111) CI gate. Asserts every
+# public List<Resource> use-case filters per-object through authzfilter.Filter
+# (kacho-iam AuthorizeService.ListObjects backend). security.md: публичный
+# List<Resource> обязан фильтровать результат через listauthz.
+audit-list-filter:
+	@./tools/audit-list-filter.sh
 
 sync-migrations:
 	cp ../kacho-corelib/migrations/common/*.sql internal/migrations/

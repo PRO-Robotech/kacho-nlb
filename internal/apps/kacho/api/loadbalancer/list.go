@@ -5,6 +5,7 @@ import (
 
 	lbv1 "github.com/PRO-Robotech/kacho-proto/gen/go/kacho/cloud/loadbalancer/v1"
 
+	"github.com/PRO-Robotech/kacho-nlb/internal/authzfilter"
 	kachorepo "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho"
 )
 
@@ -18,15 +19,22 @@ import (
 // перенесём в filter.Parse в Wave 7+ или через дополнительный helper). В тех
 // тестах, где filter не передан, используется ListByProject.
 type ListLoadBalancersUseCase struct {
-	repo Repo
+	repo  Repo
+	authz authzfilter.Filter
 }
 
-// NewListLoadBalancersUseCase конструктор.
-func NewListLoadBalancersUseCase(repo Repo) *ListLoadBalancersUseCase {
-	return &ListLoadBalancersUseCase{repo: repo}
+// NewListLoadBalancersUseCase конструктор. authz может быть nil
+// (list-filter disabled / dev) → нефильтрованный project-scoped passthrough.
+func NewListLoadBalancersUseCase(repo Repo, authz authzfilter.Filter) *ListLoadBalancersUseCase {
+	return &ListLoadBalancersUseCase{repo: repo, authz: authz}
 }
 
 // Execute — open reader, repo.List, DTO transfer per row.
+//
+// RBAC sub-phase D §11: per-object FGA filter. subject из ctx → iam ListObjects
+// (relation viewer) → пересечение в SQL (filter.AllowedIDs), pagination ПОСЛЕ
+// фильтра (D-46). Пустой грант → пустой ответ (no-leak). iam недоступен →
+// Unavailable (fail-closed, D-47).
 func (u *ListLoadBalancersUseCase) Execute(
 	ctx context.Context, req *lbv1.ListNetworkLoadBalancersRequest,
 ) (*lbv1.ListNetworkLoadBalancersResponse, error) {
@@ -41,6 +49,18 @@ func (u *ListLoadBalancersUseCase) Execute(
 	}
 	if name := parseFilterName(req.GetFilter()); name != "" {
 		filter.Name = name
+	}
+
+	dec, err := authzfilter.Resolve(ctx, u.authz,
+		authzfilter.ResourceTypeLoadBalancer, authzfilter.ActionLoadBalancerList)
+	if err != nil {
+		return nil, err
+	}
+	if !dec.IsBypass() {
+		if dec.IsEmpty() {
+			return &lbv1.ListNetworkLoadBalancersResponse{}, nil
+		}
+		filter.AllowedIDs = dec.IDs()
 	}
 
 	rd, err := u.repo.Reader(ctx)

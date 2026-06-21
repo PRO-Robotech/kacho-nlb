@@ -75,6 +75,15 @@ config:
       enable: false
       channel: kacho_iam_subjects
       iamDsn: ""              # required when listenInvalidator.enable=true
+    # RBAC sub-phase D §11 (issue #111): per-object filtered List via kacho-iam
+    # AuthorizeService.ListObjects (public :9090; reuse peers.iam conn). default on.
+    # fail-closed (security.md) — failOpen=false; iam down → List → UNAVAILABLE.
+    listFilter:
+      enabled: true
+      timeout: 500ms
+      cacheTtl: 5s
+      cacheMaxEntries: 10000
+      failOpen: false
     breakglass: false         # production validation forbids true
   fga:
     endpoint: ""              # OpenFGA HTTP/gRPC endpoint (empty → tuple-write disabled)

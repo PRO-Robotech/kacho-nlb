@@ -106,6 +106,15 @@ func (r *listenerReader) List(ctx context.Context, f kacho.ListenerFilter, p kac
 		args = append(args, f.Name)
 		argIdx++
 	}
+	// RBAC sub-phase D §11: per-object FGA filter push-down (см. load_balancer_repo.go).
+	if f.AllowedIDs != nil {
+		if len(f.AllowedIDs) == 0 {
+			return nil, "", nil
+		}
+		conditions = append(conditions, fmt.Sprintf("id = ANY($%d::text[])", argIdx))
+		args = append(args, f.AllowedIDs)
+		argIdx++
+	}
 	if p.PageToken != "" {
 		cur, err := decodePageToken(p.PageToken)
 		if err != nil {

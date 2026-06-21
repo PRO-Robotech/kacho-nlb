@@ -91,6 +91,15 @@ authz:
     enable: false             # LISTEN kacho_iam_subjects (если iam-pool доступен)
     channel: kacho_iam_subjects
     iam-dsn: ""               # dedicated pgx conn к iam-DB (если listen-invalidator.enable=true)
+  # RBAC sub-phase D §11 (issue #111): per-object filtered List через kacho-iam
+  # AuthorizeService.ListObjects (public :9090; reuse iam conn). default on,
+  # fail-closed (security.md). ENV: KACHO_NLB_AUTHZ__LIST_FILTER__ENABLED etc.
+  list-filter:
+    enabled: true             # отдаёт ТОЛЬКО доступные объекты (read==enforce)
+    timeout: 500ms            # per-request deadline к iam.ListObjects
+    cache-ttl: 5s             # decision-cache TTL (NFR ≤ 10s)
+    cache-max-entries: 10000  # cache bound + MaxResults cap
+    fail-open: false          # iam down → List → UNAVAILABLE (НЕ нефильтрованный)
   breakglass: false           # dev-only; production validation rejects true
 
 # ─── FGA tuple write (D-11 sync hierarchy tuples) ───────────────────────────

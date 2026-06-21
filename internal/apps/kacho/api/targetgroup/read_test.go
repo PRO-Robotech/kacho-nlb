@@ -62,7 +62,7 @@ func TestList_FilterByProject(t *testing.T) {
 	repo.seedTG(makeTG("prj-a", "tg-a2"))
 	repo.seedTG(makeTG("prj-b", "tg-b1"))
 
-	uc := NewListTargetGroupsUseCase(repo)
+	uc := NewListTargetGroupsUseCase(repo, nil)
 	resp, err := uc.Execute(context.Background(), &lbv1.ListTargetGroupsRequest{
 		ProjectId: "prj-a",
 	})
@@ -80,7 +80,7 @@ func TestList_FilterByProject(t *testing.T) {
 }
 
 func TestList_EmptyProjectID_InvalidArg(t *testing.T) {
-	uc := NewListTargetGroupsUseCase(newFakeRepo())
+	uc := NewListTargetGroupsUseCase(newFakeRepo(), nil)
 	_, err := uc.Execute(context.Background(), &lbv1.ListTargetGroupsRequest{})
 	require.Equal(t, codes.InvalidArgument, status.Code(err))
 }

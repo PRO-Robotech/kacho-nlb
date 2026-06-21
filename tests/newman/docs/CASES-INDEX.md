@@ -387,6 +387,17 @@ These extended patterns saturate the RPC × class matrix to ≥320 total cases f
 - `*-CR-CRUD-SLOW-START-MIN-0` — BVA,CRUD/P2 — slow_start_seconds=0 → OK
 - `*-CR-CRUD-SLOW-START-MAX-900` — BVA,CRUD/P2 — slow_start_seconds=900 → OK
 
+### D-consumer per-object filtered List (§11, D-40..D-47; `list-filter.py`)
+
+RBAC sub-phase D — `List<Resource>` отдаёт ТОЛЬКО доступные объекты (per-object
+FGA `ListObjects(subject, action, "lb_*")`), read==enforce, fail-closed, no-leak.
+Источник: `docs/specs/rbac-rules-model-2026-acceptance.md` (LST-1..6); issue #111.
+
+- `*-NLB-LST-READ-ENFORCE-OWNER-SEES-OWN` — AZD,LSG/P0 — editor sees own NLB in filtered List (D-40/D-45 read==enforce)
+- `*-TGR-LST-READ-ENFORCE-OWNER-SEES-OWN` — AZD,LSG/P0 — editor sees own TargetGroup in filtered List (D-40/D-45)
+- `*-NLB-GET-NOLEAK-404-NOT-403` — AZD,NEG,LSG/P0 — Get absent id → 404 NOT_FOUND, not 403 (D-44 no-leak)
+- `*-NLB-LST-STRANGER-NO-LEAK` — AZD,NEG,LSG/P1 — stranger List → owner's NLB not visible (D-44 per-object isolation)
+
 ## 7. Helper-generated patterns (cannot be tagged in case files)
 
 These ids come from gen.py helper blocks and pass validation via the
@@ -407,5 +418,6 @@ These ids come from gen.py helper blocks and pass validation via the
 | `targets.py` | `TGT-*` | ~22 | 22-28 |
 | `operation.py` | `OP-*` | 6 | 6 |
 | `authz-deny.py` | `AZD-*` | ~42 | 42-50 |
+| `list-filter.py` | `LF-*` | 4 | 4 |
 
 Total ≥320 unique catalogued cases (production-readiness target per acceptance §12.1).
