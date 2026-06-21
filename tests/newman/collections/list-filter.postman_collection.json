@@ -1,7 +1,7 @@
 {
   "info": {
-    "_postman_id": "69ab7b93-8d28-4aa3-b841-bff2f9ec23a0",
-    "name": "kacho-nlb / newman / operation",
+    "_postman_id": "2e83a730-fdb4-4d4e-9cae-f60be21f7fd4",
+    "name": "kacho-nlb / newman / list-filter",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "event": [
@@ -31,11 +31,11 @@
   ],
   "item": [
     {
-      "name": "OP-GET-CRUD-IN-FLIGHT — Get just-created operation eventually polls to done=true",
-      "description": "class:CRUD | priority:P0",
+      "name": "LF-NLB-LST-READ-ENFORCE-OWNER-SEES-OWN — [D-40/D-45] editor creates NLB and sees it in filtered List (read==enforce)",
+      "description": "class:AZD | class:LSG | priority:P0",
       "item": [
         {
-          "name": "trigger-create",
+          "name": "create-own",
           "request": {
             "method": "POST",
             "header": [
@@ -57,7 +57,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\"projectId\": \"{{_suiteProjectId}}\", \"regionId\": \"{{_suiteRegionId}}\", \"name\": \"opget-inflight-{{runId}}\", \"type\": \"EXTERNAL\"}",
+              "raw": "{\"projectId\": \"{{_suiteProjectId}}\", \"regionId\": \"{{_suiteRegionId}}\", \"name\": \"lf-nlb-own-{{runId}}\", \"type\": \"EXTERNAL\"}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -66,6 +66,21 @@
             }
           },
           "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// AZD per-step: bearer from env 'jwtProjectEditorA'",
+                  "const __t = pm.environment.get('jwtProjectEditorA') || pm.variables.get('jwtProjectEditorA') || '';",
+                  "if (__t) {",
+                  "  pm.request.headers.upsert({key: 'Authorization', value: 'Bearer ' + __t});",
+                  "} else {",
+                  "  pm.request.headers.remove('Authorization');",
+                  "}"
+                ]
+              }
+            },
             {
               "listen": "test",
               "script": {
@@ -80,45 +95,8 @@
                   "try {",
                   "  const j = pm.response.json();",
                   "  const v = (j.metadata && j.metadata.networkLoadBalancerId);",
-                  "  if (v !== undefined && v !== null) pm.environment.set('nlbId', String(v));",
-                  "} catch (e) {}",
-                  "pm.test('done initially false or true', () => {  const j = pm.response.json();  pm.expect(typeof j.done).to.eql('boolean');});"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "get-op-immediate",
-          "request": {
-            "method": "GET",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "url": {
-              "raw": "{{baseUrl}}/operations/{{opId}}",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "operations",
-                "{{opId}}"
-              ]
-            }
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test('status 200', () => pm.expect(pm.response.code).to.eql(200));",
-                  "const j = pm.response.json();",
-                  "pm.test('has metadata', () => pm.expect(j.metadata).to.be.an('object'));",
-                  "pm.test('id matches', () => pm.expect(j.id).to.eql(pm.environment.get('opId')));"
+                  "  if (v !== undefined && v !== null) pm.environment.set('lfNlbId', String(v));",
+                  "} catch (e) {}"
                 ]
               }
             }
@@ -174,7 +152,60 @@
           ]
         },
         {
-          "name": "cleanup",
+          "name": "list-own",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/nlb/v1/networkLoadBalancers?projectId={{_suiteProjectId}}&pageSize=1000",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "nlb",
+                "v1",
+                "networkLoadBalancers?projectId={{_suiteProjectId}}&pageSize=1000"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// AZD per-step: bearer from env 'jwtProjectEditorA'",
+                  "const __t = pm.environment.get('jwtProjectEditorA') || pm.variables.get('jwtProjectEditorA') || '';",
+                  "if (__t) {",
+                  "  pm.request.headers.upsert({key: 'Authorization', value: 'Bearer ' + __t});",
+                  "} else {",
+                  "  pm.request.headers.remove('Authorization');",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.expect(pm.response.code).to.eql(200));",
+                  "const lbs = pm.response.json().networkLoadBalancers || [];",
+                  "pm.test('[D-45] filtered List returns 200 (not 503 from list-filter)', () => pm.expect(pm.response.code).to.eql(200));",
+                  "const mine = lbs.find(x => x.id === pm.environment.get('lfNlbId'));",
+                  "pm.test('[D-40] owner sees own NLB in filtered List (read==enforce)', () => pm.expect(mine, JSON.stringify(lbs.map(i=>i.id))).to.be.an('object'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "del-own",
           "request": {
             "method": "DELETE",
             "header": [
@@ -184,7 +215,7 @@
               }
             ],
             "url": {
-              "raw": "{{baseUrl}}/nlb/v1/networkLoadBalancers/{{nlbId}}",
+              "raw": "{{baseUrl}}/nlb/v1/networkLoadBalancers/{{lfNlbId}}",
               "host": [
                 "{{baseUrl}}"
               ],
@@ -192,16 +223,32 @@
                 "nlb",
                 "v1",
                 "networkLoadBalancers",
-                "{{nlbId}}"
+                "{{lfNlbId}}"
               ]
             }
           },
           "event": [
             {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// AZD per-step: bearer from env 'jwtProjectEditorA'",
+                  "const __t = pm.environment.get('jwtProjectEditorA') || pm.variables.get('jwtProjectEditorA') || '';",
+                  "if (__t) {",
+                  "  pm.request.headers.upsert({key: 'Authorization', value: 'Bearer ' + __t});",
+                  "} else {",
+                  "  pm.request.headers.remove('Authorization');",
+                  "}"
+                ]
+              }
+            },
+            {
               "listen": "test",
               "script": {
                 "type": "text/javascript",
                 "exec": [
+                  "pm.test('status 200', () => pm.expect(pm.response.code).to.eql(200));",
                   "try {",
                   "  const j = pm.response.json();",
                   "  const v = (j.id);",
@@ -264,11 +311,11 @@
       ]
     },
     {
-      "name": "OP-GET-CRUD-COMPLETED — Get of completed Create-LB op returns done=true with response payload",
-      "description": "class:CRUD | priority:P0",
+      "name": "LF-TGR-LST-READ-ENFORCE-OWNER-SEES-OWN — [D-40/D-45] editor creates TargetGroup and sees it in filtered List",
+      "description": "class:AZD | class:LSG | priority:P0",
       "item": [
         {
-          "name": "create",
+          "name": "create-tg",
           "request": {
             "method": "POST",
             "header": [
@@ -278,19 +325,19 @@
               }
             ],
             "url": {
-              "raw": "{{baseUrl}}/nlb/v1/networkLoadBalancers",
+              "raw": "{{baseUrl}}/nlb/v1/targetGroups",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
                 "nlb",
                 "v1",
-                "networkLoadBalancers"
+                "targetGroups"
               ]
             },
             "body": {
               "mode": "raw",
-              "raw": "{\"projectId\": \"{{_suiteProjectId}}\", \"regionId\": \"{{_suiteRegionId}}\", \"name\": \"opget-done-{{runId}}\", \"type\": \"EXTERNAL\"}",
+              "raw": "{\"projectId\": \"{{_suiteProjectId}}\", \"regionId\": \"{{_suiteRegionId}}\", \"name\": \"lf-tg-own-{{runId}}\", \"healthCheck\": {\"name\": \"hc\", \"tcp\": {\"port\": 80}}}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -299,6 +346,21 @@
             }
           },
           "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// AZD per-step: bearer from env 'jwtProjectEditorA'",
+                  "const __t = pm.environment.get('jwtProjectEditorA') || pm.variables.get('jwtProjectEditorA') || '';",
+                  "if (__t) {",
+                  "  pm.request.headers.upsert({key: 'Authorization', value: 'Bearer ' + __t});",
+                  "} else {",
+                  "  pm.request.headers.remove('Authorization');",
+                  "}"
+                ]
+              }
+            },
             {
               "listen": "test",
               "script": {
@@ -312,8 +374,8 @@
                   "} catch (e) {}",
                   "try {",
                   "  const j = pm.response.json();",
-                  "  const v = (j.metadata && j.metadata.networkLoadBalancerId);",
-                  "  if (v !== undefined && v !== null) pm.environment.set('nlbId', String(v));",
+                  "  const v = (j.metadata && j.metadata.targetGroupId);",
+                  "  if (v !== undefined && v !== null) pm.environment.set('lfTgId', String(v));",
                   "} catch (e) {}"
                 ]
               }
@@ -370,7 +432,7 @@
           ]
         },
         {
-          "name": "get-op-done",
+          "name": "list-tg",
           "request": {
             "method": "GET",
             "header": [
@@ -380,34 +442,50 @@
               }
             ],
             "url": {
-              "raw": "{{baseUrl}}/operations/{{opId}}",
+              "raw": "{{baseUrl}}/nlb/v1/targetGroups?projectId={{_suiteProjectId}}&pageSize=1000",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
-                "operations",
-                "{{opId}}"
+                "nlb",
+                "v1",
+                "targetGroups?projectId={{_suiteProjectId}}&pageSize=1000"
               ]
             }
           },
           "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// AZD per-step: bearer from env 'jwtProjectEditorA'",
+                  "const __t = pm.environment.get('jwtProjectEditorA') || pm.variables.get('jwtProjectEditorA') || '';",
+                  "if (__t) {",
+                  "  pm.request.headers.upsert({key: 'Authorization', value: 'Bearer ' + __t});",
+                  "} else {",
+                  "  pm.request.headers.remove('Authorization');",
+                  "}"
+                ]
+              }
+            },
             {
               "listen": "test",
               "script": {
                 "type": "text/javascript",
                 "exec": [
                   "pm.test('status 200', () => pm.expect(pm.response.code).to.eql(200));",
-                  "const j = pm.response.json();",
-                  "pm.test('done=true', () => pm.expect(j.done).to.eql(true));",
-                  "pm.test('has response or error', () => pm.expect(j.response || j.error).to.exist);",
-                  "if (j.response) pm.test('metadata has networkLoadBalancerId',   () => pm.expect(j.metadata && j.metadata.networkLoadBalancerId).to.match(/^nlb/));"
+                  "const tgs = pm.response.json().targetGroups || [];",
+                  "pm.test('[D-45] filtered TG List returns 200', () => pm.expect(pm.response.code).to.eql(200));",
+                  "const mine = tgs.find(x => x.id === pm.environment.get('lfTgId'));",
+                  "pm.test('[D-40] owner sees own TG in filtered List', () => pm.expect(mine, JSON.stringify(tgs.map(i=>i.id))).to.be.an('object'));"
                 ]
               }
             }
           ]
         },
         {
-          "name": "cleanup",
+          "name": "del-tg",
           "request": {
             "method": "DELETE",
             "header": [
@@ -417,24 +495,40 @@
               }
             ],
             "url": {
-              "raw": "{{baseUrl}}/nlb/v1/networkLoadBalancers/{{nlbId}}",
+              "raw": "{{baseUrl}}/nlb/v1/targetGroups/{{lfTgId}}",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
                 "nlb",
                 "v1",
-                "networkLoadBalancers",
-                "{{nlbId}}"
+                "targetGroups",
+                "{{lfTgId}}"
               ]
             }
           },
           "event": [
             {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// AZD per-step: bearer from env 'jwtProjectEditorA'",
+                  "const __t = pm.environment.get('jwtProjectEditorA') || pm.variables.get('jwtProjectEditorA') || '';",
+                  "if (__t) {",
+                  "  pm.request.headers.upsert({key: 'Authorization', value: 'Bearer ' + __t});",
+                  "} else {",
+                  "  pm.request.headers.remove('Authorization');",
+                  "}"
+                ]
+              }
+            },
+            {
               "listen": "test",
               "script": {
                 "type": "text/javascript",
                 "exec": [
+                  "pm.test('status 200', () => pm.expect(pm.response.code).to.eql(200));",
                   "try {",
                   "  const j = pm.response.json();",
                   "  const v = (j.id);",
@@ -497,11 +591,11 @@
       ]
     },
     {
-      "name": "OP-GET-NEG-NF-INVALID-PREFIX — Get with malformed opId (no known prefix) → 400 INVALID_ARGUMENT 'invalid operation id'",
-      "description": "class:NEG | priority:P0",
+      "name": "LF-NLB-GET-NOLEAK-404-NOT-403 — [D-44] editor Get well-formed-but-absent NLB id → 404 NOT_FOUND (no-leak, not 403)",
+      "description": "class:AZD | class:NEG | class:LSG | priority:P0",
       "item": [
         {
-          "name": "get-garbage",
+          "name": "get-absent",
           "request": {
             "method": "GET",
             "header": [
@@ -511,61 +605,34 @@
               }
             ],
             "url": {
-              "raw": "{{baseUrl}}/operations/{{garbageInvalidOpId}}",
+              "raw": "{{baseUrl}}/nlb/v1/networkLoadBalancers/{{garbageNlbId}}",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
-                "operations",
-                "{{garbageInvalidOpId}}"
+                "nlb",
+                "v1",
+                "networkLoadBalancers",
+                "{{garbageNlbId}}"
               ]
             }
           },
           "event": [
             {
-              "listen": "test",
+              "listen": "prerequest",
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('status 400', () => pm.expect(pm.response.code).to.eql(400));",
-                  "pm.test('grpc code 3 (INVALID_ARGUMENT)', () => {",
-                  "  const j = pm.response.json();",
-                  "  pm.expect(j.code, JSON.stringify(j)).to.eql(3);",
-                  "});",
-                  "pm.test('mentions invalid operation id', () =>   pm.expect(pm.response.json().message.toLowerCase()).to.include('invalid operation id'));"
+                  "// AZD per-step: bearer from env 'jwtProjectEditorA'",
+                  "const __t = pm.environment.get('jwtProjectEditorA') || pm.variables.get('jwtProjectEditorA') || '';",
+                  "if (__t) {",
+                  "  pm.request.headers.upsert({key: 'Authorization', value: 'Bearer ' + __t});",
+                  "} else {",
+                  "  pm.request.headers.remove('Authorization');",
+                  "}"
                 ]
               }
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "name": "OP-GET-NEG-NF-VALID-PREFIX — Get of well-formed but missing opId → 404 NOT_FOUND",
-      "description": "class:NEG | priority:P1",
-      "item": [
-        {
-          "name": "get-missing",
-          "request": {
-            "method": "GET",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "url": {
-              "raw": "{{baseUrl}}/operations/{{garbageOpId}}",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "operations",
-                "{{garbageOpId}}"
-              ]
-            }
-          },
-          "event": [
+            },
             {
               "listen": "test",
               "script": {
@@ -575,7 +642,8 @@
                   "pm.test('grpc code 5 (NOT_FOUND)', () => {",
                   "  const j = pm.response.json();",
                   "  pm.expect(j.code, JSON.stringify(j)).to.eql(5);",
-                  "});"
+                  "});",
+                  "pm.test('[D-44] no-leak: NOT_FOUND, not PERMISSION_DENIED', () => pm.expect(pm.response.json().code).to.not.eql(7));"
                 ]
               }
             }
@@ -584,51 +652,11 @@
       ]
     },
     {
-      "name": "OP-LST-CRUD-OK — List operations in project — returns array (may be empty)",
-      "description": "class:CRUD | class:LSG | priority:P1",
+      "name": "LF-NLB-LST-STRANGER-NO-LEAK — [D-44] stranger List → editor's NLB not visible (per-object isolation)",
+      "description": "class:AZD | class:NEG | class:LSG | priority:P1",
       "item": [
         {
-          "name": "list-ops",
-          "request": {
-            "method": "GET",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "url": {
-              "raw": "{{baseUrl}}/operations?projectId={{_suiteProjectId}}&pageSize=10",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "operations?projectId={{_suiteProjectId}}&pageSize=10"
-              ]
-            }
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test('status 200', () => pm.expect(pm.response.code).to.eql(200));",
-                  "const j = pm.response.json();",
-                  "pm.test('operations array', () =>   pm.expect(j.operations || j.items || []).to.be.an('array'));"
-                ]
-              }
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "name": "OP-CANCEL-STATE-ALREADY-DONE — Cancel an already-done op → 400/409 FailedPrecondition 'operation is already completed'",
-      "description": "class:STATE | class:NEG | priority:P1",
-      "item": [
-        {
-          "name": "create-fast",
+          "name": "create-a",
           "request": {
             "method": "POST",
             "header": [
@@ -650,7 +678,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\"projectId\": \"{{_suiteProjectId}}\", \"regionId\": \"{{_suiteRegionId}}\", \"name\": \"opcanc-{{runId}}\", \"type\": \"EXTERNAL\"}",
+              "raw": "{\"projectId\": \"{{_suiteProjectId}}\", \"regionId\": \"{{_suiteRegionId}}\", \"name\": \"lf-nlb-xleak-{{runId}}\", \"type\": \"EXTERNAL\"}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -659,6 +687,21 @@
             }
           },
           "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// AZD per-step: bearer from env 'jwtProjectEditorA'",
+                  "const __t = pm.environment.get('jwtProjectEditorA') || pm.variables.get('jwtProjectEditorA') || '';",
+                  "if (__t) {",
+                  "  pm.request.headers.upsert({key: 'Authorization', value: 'Bearer ' + __t});",
+                  "} else {",
+                  "  pm.request.headers.remove('Authorization');",
+                  "}"
+                ]
+              }
+            },
             {
               "listen": "test",
               "script": {
@@ -673,7 +716,7 @@
                   "try {",
                   "  const j = pm.response.json();",
                   "  const v = (j.metadata && j.metadata.networkLoadBalancerId);",
-                  "  if (v !== undefined && v !== null) pm.environment.set('nlbId', String(v));",
+                  "  if (v !== undefined && v !== null) pm.environment.set('lfXleakNlbId', String(v));",
                   "} catch (e) {}"
                 ]
               }
@@ -730,9 +773,9 @@
           ]
         },
         {
-          "name": "cancel-done",
+          "name": "list-stranger",
           "request": {
-            "method": "POST",
+            "method": "GET",
             "header": [
               {
                 "key": "Content-Type",
@@ -740,34 +783,53 @@
               }
             ],
             "url": {
-              "raw": "{{baseUrl}}/operations/{{opId}}:cancel",
+              "raw": "{{baseUrl}}/nlb/v1/networkLoadBalancers?projectId={{_suiteProjectId}}&pageSize=1000",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
-                "operations",
-                "{{opId}}:cancel"
+                "nlb",
+                "v1",
+                "networkLoadBalancers?projectId={{_suiteProjectId}}&pageSize=1000"
               ]
             }
           },
           "event": [
             {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// AZD per-step: bearer from env 'jwtStranger'",
+                  "const __t = pm.environment.get('jwtStranger') || pm.variables.get('jwtStranger') || '';",
+                  "if (__t) {",
+                  "  pm.request.headers.upsert({key: 'Authorization', value: 'Bearer ' + __t});",
+                  "} else {",
+                  "  pm.request.headers.remove('Authorization');",
+                  "}"
+                ]
+              }
+            },
+            {
               "listen": "test",
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('rejected with FailedPrecondition', () =>   pm.expect(pm.response.code).to.be.oneOf([400, 409]));",
-                  "if (pm.response.code === 400 || pm.response.code === 409) {",
-                  "  pm.test('grpc code 9 (FAILED_PRECONDITION)', () =>     pm.expect(pm.response.json().code).to.eql(9));",
-                  "  pm.test('mentions already completed', () =>     pm.expect((pm.response.json().message||'').toLowerCase()).to.include('already'));",
-                  "}"
+                  "pm.test('[D-44] stranger List does not leak NLB (403 or filtered-out)', () => {",
+                  "  if (pm.response.code === 200) {",
+                  "    const ids = (pm.response.json().networkLoadBalancers || []).map(x => x.id);",
+                  "    pm.expect(ids).to.not.include(pm.environment.get('lfXleakNlbId'));",
+                  "  } else {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([403, 404]);",
+                  "  }",
+                  "});"
                 ]
               }
             }
           ]
         },
         {
-          "name": "cleanup",
+          "name": "del-a",
           "request": {
             "method": "DELETE",
             "header": [
@@ -777,7 +839,7 @@
               }
             ],
             "url": {
-              "raw": "{{baseUrl}}/nlb/v1/networkLoadBalancers/{{nlbId}}",
+              "raw": "{{baseUrl}}/nlb/v1/networkLoadBalancers/{{lfXleakNlbId}}",
               "host": [
                 "{{baseUrl}}"
               ],
@@ -785,16 +847,32 @@
                 "nlb",
                 "v1",
                 "networkLoadBalancers",
-                "{{nlbId}}"
+                "{{lfXleakNlbId}}"
               ]
             }
           },
           "event": [
             {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// AZD per-step: bearer from env 'jwtProjectEditorA'",
+                  "const __t = pm.environment.get('jwtProjectEditorA') || pm.variables.get('jwtProjectEditorA') || '';",
+                  "if (__t) {",
+                  "  pm.request.headers.upsert({key: 'Authorization', value: 'Bearer ' + __t});",
+                  "} else {",
+                  "  pm.request.headers.remove('Authorization');",
+                  "}"
+                ]
+              }
+            },
+            {
               "listen": "test",
               "script": {
                 "type": "text/javascript",
                 "exec": [
+                  "pm.test('status 200', () => pm.expect(pm.response.code).to.eql(200));",
                   "try {",
                   "  const j = pm.response.json();",
                   "  const v = (j.id);",

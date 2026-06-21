@@ -5,6 +5,7 @@ import (
 
 	lbv1 "github.com/PRO-Robotech/kacho-proto/gen/go/kacho/cloud/loadbalancer/v1"
 
+	"github.com/PRO-Robotech/kacho-nlb/internal/authzfilter"
 	kachorepo "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho"
 )
 
@@ -12,15 +13,18 @@ import (
 // `name=` filter (parsed from req.Filter, YC-style equality) + cursor-based
 // pagination (acceptance GWT-TGR-016 / GWT-TGR-017).
 type ListTargetGroupsUseCase struct {
-	repo Repo
+	repo  Repo
+	authz authzfilter.Filter
 }
 
-// NewListTargetGroupsUseCase конструктор.
-func NewListTargetGroupsUseCase(repo Repo) *ListTargetGroupsUseCase {
-	return &ListTargetGroupsUseCase{repo: repo}
+// NewListTargetGroupsUseCase конструктор. authz может быть nil (disabled / dev).
+func NewListTargetGroupsUseCase(repo Repo, authz authzfilter.Filter) *ListTargetGroupsUseCase {
+	return &ListTargetGroupsUseCase{repo: repo, authz: authz}
 }
 
 // Execute — open reader → repo.List → DTO transfer per row.
+//
+// RBAC sub-phase D §11: per-object FGA filter (см. loadbalancer/list.go).
 func (u *ListTargetGroupsUseCase) Execute(
 	ctx context.Context, req *lbv1.ListTargetGroupsRequest,
 ) (*lbv1.ListTargetGroupsResponse, error) {
@@ -34,6 +38,18 @@ func (u *ListTargetGroupsUseCase) Execute(
 	}
 	if name := parseFilterName(req.GetFilter()); name != "" {
 		filter.Name = name
+	}
+
+	dec, err := authzfilter.Resolve(ctx, u.authz,
+		authzfilter.ResourceTypeTargetGroup, authzfilter.ActionTargetGroupList)
+	if err != nil {
+		return nil, err
+	}
+	if !dec.IsBypass() {
+		if dec.IsEmpty() {
+			return &lbv1.ListTargetGroupsResponse{}, nil
+		}
+		filter.AllowedIDs = dec.IDs()
 	}
 
 	rd, err := u.repo.Reader(ctx)

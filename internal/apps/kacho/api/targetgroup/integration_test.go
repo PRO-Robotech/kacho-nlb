@@ -109,7 +109,7 @@ func mkHandler(t *testing.T, repo *kachopg.Repository, opsRepo operations.Repo) 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
 	// nil peer-clients — Create/AddTargets/Move skip peer-validate (acceptable
 	// для integration сценариев DB happy-paths).
-	return targetgroup.NewHandler(repo, opsRepo, nil, nil, nil, nil, nil, logger)
+	return targetgroup.NewHandler(repo, opsRepo, nil, nil, nil, nil, nil, nil, logger)
 }
 
 // ---- Integration tests -----------------------------------------------------

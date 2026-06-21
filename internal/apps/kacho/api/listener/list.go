@@ -10,6 +10,7 @@ import (
 
 	lbv1 "github.com/PRO-Robotech/kacho-proto/gen/go/kacho/cloud/loadbalancer/v1"
 
+	"github.com/PRO-Robotech/kacho-nlb/internal/authzfilter"
 	kachorepo "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho"
 )
 
@@ -23,12 +24,13 @@ import (
 //     текущий парсер минимальный: ожидает ровно `name="<value>"` либо `name='<value>'`;
 //     остальные форматы → InvalidArgument).
 type ListUseCase struct {
-	repo RepoFactory
+	repo  RepoFactory
+	authz authzfilter.Filter
 }
 
-// NewListUseCase — конструктор.
-func NewListUseCase(repo RepoFactory) *ListUseCase {
-	return &ListUseCase{repo: repo}
+// NewListUseCase — конструктор. authz может быть nil (list-filter disabled / dev).
+func NewListUseCase(repo RepoFactory, authz authzfilter.Filter) *ListUseCase {
+	return &ListUseCase{repo: repo, authz: authz}
 }
 
 // Run выполняет List.
@@ -50,6 +52,25 @@ func (u *ListUseCase) Run(ctx context.Context, req *lbv1.ListListenersRequest) (
 		return nil, err
 	}
 
+	filter := kachorepo.ListenerFilter{
+		ProjectID:      projectID,
+		LoadBalancerID: req.GetLoadBalancerId(),
+		Name:           name,
+	}
+
+	// RBAC sub-phase D §11: per-object FGA filter (см. loadbalancer/list.go).
+	dec, err := authzfilter.Resolve(ctx, u.authz,
+		authzfilter.ResourceTypeListener, authzfilter.ActionListenerList)
+	if err != nil {
+		return nil, err
+	}
+	if !dec.IsBypass() {
+		if dec.IsEmpty() {
+			return &lbv1.ListListenersResponse{}, nil
+		}
+		filter.AllowedIDs = dec.IDs()
+	}
+
 	rd, err := u.repo.Reader(ctx)
 	if err != nil {
 		return nil, mapDomainErr(err)
@@ -57,11 +78,7 @@ func (u *ListUseCase) Run(ctx context.Context, req *lbv1.ListListenersRequest) (
 	defer func() { _ = rd.Close() }()
 
 	page, nextToken, err := rd.Listeners().List(ctx,
-		kachorepo.ListenerFilter{
-			ProjectID:      projectID,
-			LoadBalancerID: req.GetLoadBalancerId(),
-			Name:           name,
-		},
+		filter,
 		kachorepo.Pagination{
 			PageSize:  req.GetPageSize(),
 			PageToken: req.GetPageToken(),

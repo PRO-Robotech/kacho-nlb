@@ -6,6 +6,8 @@ import (
 
 	lbv1 "github.com/PRO-Robotech/kacho-proto/gen/go/kacho/cloud/loadbalancer/v1"
 	operationpb "github.com/PRO-Robotech/kacho-proto/gen/go/kacho/cloud/operation"
+
+	"github.com/PRO-Robotech/kacho-nlb/internal/authzfilter"
 )
 
 // Handler реализует kacho.cloud.loadbalancer.v1.ListenerServiceServer.
@@ -39,11 +41,12 @@ func NewHandler(
 	addresses AddressClient,
 	internalAddrs InternalAddressClient,
 	subnets SubnetClient,
+	listFilter authzfilter.Filter,
 	logger *slog.Logger,
 ) *Handler {
 	return &Handler{
 		get:            NewGetUseCase(repo),
-		list:           NewListUseCase(repo),
+		list:           NewListUseCase(repo, listFilter),
 		create:         NewCreateUseCase(repo, opsRepo, addresses, internalAddrs, subnets, logger),
 		update:         NewUpdateUseCase(repo, opsRepo, logger),
 		deleteUC:       NewDeleteUseCase(repo, opsRepo, addresses, internalAddrs, logger),

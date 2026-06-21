@@ -20,6 +20,9 @@ type TargetGroupFilter struct {
 	ProjectID string
 	Name      string
 	Filter    string
+	// AllowedIDs — per-object FGA allow-set (RBAC sub-phase D §11; iam ListObjects).
+	// nil → bypass; len==0 → пусто (no-leak); len>0 → `WHERE id = ANY` ДО LIMIT (D-46).
+	AllowedIDs []string
 }
 
 // TargetRecord — repo-entity для одного target внутри TG. domain.Target +

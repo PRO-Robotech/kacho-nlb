@@ -64,6 +64,15 @@ func RegisterDefaults(v *viper.Viper) {
 	v.SetDefault("authz.cache.size", 10000)
 	v.SetDefault("authz.listen-invalidator.enable", false)
 	v.SetDefault("authz.listen-invalidator.channel", "kacho_iam_subjects")
+	// RBAC sub-phase D §11 (issue #111): per-object filtered List. Default ON
+	// («применяется во всех доменах»); fail-closed (security.md). Endpoint —
+	// iam.AuthorizeService (reuse iam conn; mTLS via mtls.iam-register).
+	// ENV: KACHO_NLB_AUTHZ__LIST_FILTER__ENABLED / __TIMEOUT / __CACHE_TTL / etc.
+	v.SetDefault("authz.list-filter.enabled", true)
+	v.SetDefault("authz.list-filter.timeout", "500ms")
+	v.SetDefault("authz.list-filter.cache-ttl", "5s")
+	v.SetDefault("authz.list-filter.cache-max-entries", 10000)
+	v.SetDefault("authz.list-filter.fail-open", false)
 	v.SetDefault("authz.breakglass", false)
 
 	// FGA register-drainer (SEC-D Вариант A). OQ-SEC-D-5: default-on — drainer

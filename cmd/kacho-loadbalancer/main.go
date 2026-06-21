@@ -50,6 +50,7 @@ import (
 	"github.com/PRO-Robotech/kacho-nlb/internal/apps/kacho/api/targetgroup"
 	"github.com/PRO-Robotech/kacho-nlb/internal/apps/kacho/config"
 	"github.com/PRO-Robotech/kacho-nlb/internal/apps/kacho/jobs"
+	"github.com/PRO-Robotech/kacho-nlb/internal/authzfilter"
 	"github.com/PRO-Robotech/kacho-nlb/internal/check"
 	"github.com/PRO-Robotech/kacho-nlb/internal/clients"
 	computeclient "github.com/PRO-Robotech/kacho-nlb/internal/clients/compute"
@@ -84,6 +85,9 @@ type peerClients struct {
 	NetworkInterface vpcclient.NetworkInterfaceClient
 	Address          vpcclient.AddressClient
 	InternalAddress  vpcclient.InternalAddressClient
+	// ListFilter — per-object filtered List (RBAC sub-phase D §11; iam
+	// AuthorizeService.ListObjects). nil → use-case'ы делают unfiltered passthrough.
+	ListFilter authzfilter.Filter
 }
 
 func main() {
@@ -258,6 +262,7 @@ func runServe(configPath string) error {
 	lbHandler := lbhandler.NewHandler(
 		repo, opsRepo,
 		peers.Project, peers.Region,
+		peers.ListFilter,
 		logger,
 	)
 	lbv1.RegisterNetworkLoadBalancerServiceServer(publicSrv, lbHandler)
@@ -271,6 +276,7 @@ func runServe(configPath string) error {
 		peers.Address,
 		peers.InternalAddress,
 		peers.Subnet,
+		peers.ListFilter,
 		logger,
 	))
 
@@ -282,6 +288,7 @@ func runServe(configPath string) error {
 		repo, opsRepo,
 		peers.Project, peers.Region,
 		peers.Instance, peers.NetworkInterface, peers.Subnet,
+		peers.ListFilter,
 		logger,
 	)
 	lbv1.RegisterTargetGroupServiceServer(publicSrv, tgHandler)
@@ -689,6 +696,15 @@ func dialPeers(
 		"authz_mtls", cfg.MTLS.IAMRegister.Enable,
 		"authz_server_name", cfg.MTLS.IAMRegister.ServerName)
 
+	// RBAC sub-phase D §11 (issue #111): per-object filtered List. Каждый публичный
+	// List<Resource> прогоняет id-set через iam.AuthorizeService.ListObjects(subject,
+	// action, "lb_*") и отдаёт пересечение (только доступные объекты), read==enforce
+	// (relation viewer — та же, что per-RPC Check на Get), fail-closed (D-47). nil →
+	// use-case'ы получают unfiltered passthrough (disabled / нет iam conn).
+	// AuthorizeService живёт на iam PUBLIC listener (:9090) → reuse iamPublicConn
+	// (тот же, которым nlb зовёт ProjectService.Get); mTLS — через mtls.iam-project.
+	peers.ListFilter = buildListFilter(cfg, iamPublicConn, logger)
+
 	// kacho-geo — один conn на public listener (RegionService.Get — публичный
 	// read-only Geography-справочник). Ребро nlb→geo (epic kacho-geo S4) заменило
 	// прежнюю region-валидацию через nlb→compute.
@@ -740,4 +756,31 @@ func closeAll(conns []clients.Conn, logger *slog.Logger) {
 			logger.Warn("close peer conn", "err", err)
 		}
 	}
+}
+
+// buildListFilter собирает per-object List-filter (RBAC sub-phase D §11, issue
+// #111). Возвращает nil (→ use-case'ы делают unfiltered project-scoped
+// passthrough), если list-filter выключен в конфиге ИЛИ iam conn недоступен
+// (graceful start без iam). Иначе — FGAFilter поверх iam.AuthorizeService.ListObjects
+// (conn — iamPublicConn, тот же, которым nlb зовёт ProjectService.Get; mTLS — через
+// mtls.iam-project). read==enforce (relation viewer), fail-closed (FailOpen=false).
+func buildListFilter(cfg *config.Config, iamConn clients.Conn, logger *slog.Logger) authzfilter.Filter {
+	lf := cfg.Authz.ListFilter
+	if !lf.Enabled || iamConn == nil {
+		logger.Info("list_filter_disabled",
+			"enabled", lf.Enabled, "iam_conn", iamConn != nil)
+		return nil
+	}
+	fcfg := authzfilter.Config{
+		Enabled:         true,
+		Timeout:         lf.Timeout,
+		CacheTTL:        lf.CacheTTL,
+		CacheMaxEntries: lf.CacheMaxEntries,
+		FailOpen:        lf.FailOpen,
+	}
+	logger.Info("list_filter_enabled",
+		"timeout", lf.Timeout, "cache_ttl", lf.CacheTTL,
+		"cache_max_entries", lf.CacheMaxEntries, "fail_open", lf.FailOpen,
+		"iam_authz_mtls", cfg.MTLS.IAMProject.Enable)
+	return authzfilter.NewFGAFilter(authzfilter.NewIAMAuthorizeClient(iamConn), fcfg)
 }

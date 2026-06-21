@@ -66,7 +66,7 @@ func TestHandler_RoutesEachRPC(t *testing.T) {
 
 	ops := newFakeOpsRepo()
 	internalAddrs := newFakeInternalAddressClient()
-	h := NewHandler(repo, ops, newFakeAddressClient(), internalAddrs, newFakeSubnetClient(), slog.Default())
+	h := NewHandler(repo, ops, newFakeAddressClient(), internalAddrs, newFakeSubnetClient(), nil, slog.Default())
 
 	t.Run("Get", func(t *testing.T) {
 		t.Parallel()

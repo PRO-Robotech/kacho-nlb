@@ -21,6 +21,8 @@ import (
 	"github.com/PRO-Robotech/kacho-corelib/operations"
 	lbv1 "github.com/PRO-Robotech/kacho-proto/gen/go/kacho/cloud/loadbalancer/v1"
 	operationpb "github.com/PRO-Robotech/kacho-proto/gen/go/kacho/cloud/operation"
+
+	"github.com/PRO-Robotech/kacho-nlb/internal/authzfilter"
 )
 
 // Handler реализует lbv1.NetworkLoadBalancerServiceServer.
@@ -58,6 +60,7 @@ func NewHandler(
 	opsRepo operations.Repo,
 	peerProject ProjectClient,
 	peerRegion RegionClient,
+	listFilter authzfilter.Filter,
 	logger *slog.Logger,
 ) *Handler {
 	if logger == nil {
@@ -65,7 +68,7 @@ func NewHandler(
 	}
 	return &Handler{
 		get:             NewGetLoadBalancerUseCase(repo),
-		list:            NewListLoadBalancersUseCase(repo),
+		list:            NewListLoadBalancersUseCase(repo, listFilter),
 		create:          NewCreateLoadBalancerUseCase(repo, opsRepo, peerProject, peerRegion, logger),
 		update:          NewUpdateLoadBalancerUseCase(repo, opsRepo, logger),
 		deleteUC:        NewDeleteLoadBalancerUseCase(repo, opsRepo, logger),

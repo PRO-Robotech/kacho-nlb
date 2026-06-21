@@ -110,7 +110,7 @@ func pollOpDone(t *testing.T, opsRepo operations.Repo, opID string) *operations.
 func makeHandler(t *testing.T, repo *kachopg.Repository, opsRepo operations.Repo) *loadbalancer.Handler {
 	t.Helper()
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
-	return loadbalancer.NewHandler(repo, opsRepo, nil, nil, logger)
+	return loadbalancer.NewHandler(repo, opsRepo, nil, nil, nil, logger)
 }
 
 // ---- Tests -----------------------------------------------------------------
