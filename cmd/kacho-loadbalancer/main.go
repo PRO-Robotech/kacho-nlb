@@ -701,9 +701,12 @@ func dialPeers(
 	// action, "lb_*") и отдаёт пересечение (только доступные объекты), read==enforce
 	// (relation viewer — та же, что per-RPC Check на Get), fail-closed (D-47). nil →
 	// use-case'ы получают unfiltered passthrough (disabled / нет iam conn).
-	// AuthorizeService живёт на iam PUBLIC listener (:9090) → reuse iamPublicConn
-	// (тот же, которым nlb зовёт ProjectService.Get); mTLS — через mtls.iam-project.
-	peers.ListFilter = buildListFilter(cfg, iamPublicConn, logger)
+	// AuthorizeService.ListObjects теперь зарегистрирован и на iam INTERNAL listener
+	// (:9091) — service→service per-object list-filter ходит по тому же mTLS-edge, что
+	// InternalIAMService.Check (reuse iamInternalConn; mTLS — mtls.iam-register). :9091
+	// энфорсит CallerPolicy (verified module-cert), аноним fail-closed — authN+authZ на
+	// каждом вызове (НЕ public :9090, где сервис→сервис без JWT отклонился бы).
+	peers.ListFilter = buildListFilter(cfg, iamInternalConn, logger)
 
 	// kacho-geo — один conn на public listener (RegionService.Get — публичный
 	// read-only Geography-справочник). Ребро nlb→geo (epic kacho-geo S4) заменило
