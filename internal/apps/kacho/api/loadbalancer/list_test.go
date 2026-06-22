@@ -62,18 +62,20 @@ func TestListLoadBalancers_FilterName(t *testing.T) {
 	require.Equal(t, "edge", resp.GetNetworkLoadBalancers()[0].GetName())
 }
 
-func TestParseFilterName(t *testing.T) {
+// TestListLoadBalancers_InvalidFilter — после унификации name=-парсера на
+// shared.ParseNameFilter (kacho-corelib/filter.Parse) malformed / unknown-field
+// filter — InvalidArgument (раньше loadbalancer молча игнорировал такой фильтр и
+// возвращал ВСЕ project-rows; reconciled к строгой канонической семантике —
+// см. shared/namefilter_test.go для полного контракта парсера).
+func TestListLoadBalancers_InvalidFilter(t *testing.T) {
 	t.Parallel()
-	cases := map[string]string{
-		`name="edge"`:  "edge",
-		`name=edge`:    "edge",
-		`name="api-1"`: "api-1",
-		``:             "",
-		`other=foo`:    "",
-	}
-	for in, want := range cases {
-		t.Run(in, func(t *testing.T) {
-			require.Equal(t, want, parseFilterName(in))
+	repo := newFakeRepo()
+	seedLB(t, repo, "prj-a", "edge")
+	uc := NewListLoadBalancersUseCase(repo, nil)
+	for _, bad := range []string{`name=edge`, `other="foo"`, `garbage`} {
+		_, err := uc.Execute(context.Background(), &lbv1.ListNetworkLoadBalancersRequest{
+			ProjectId: "prj-a", Filter: bad,
 		})
+		require.Equalf(t, codes.InvalidArgument, status.Code(err), "filter %q", bad)
 	}
 }

@@ -2,14 +2,13 @@ package listener
 
 import (
 	"context"
-	"fmt"
-	"strings"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
 	lbv1 "github.com/PRO-Robotech/kacho-proto/gen/go/kacho/cloud/loadbalancer/v1"
 
+	"github.com/PRO-Robotech/kacho-nlb/internal/apps/kacho/api/shared"
 	"github.com/PRO-Robotech/kacho-nlb/internal/authzfilter"
 	kachorepo "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho"
 )
@@ -20,9 +19,9 @@ import (
 //
 // Поддерживаемые фильтры (per proto + design):
 //   - load_balancer_id   — required (per proto annotation `(required) = true`)
-//   - filter="name=\"…\"" — optional simple name-equality filter (KAC-160 follow-up;
-//     текущий парсер минимальный: ожидает ровно `name="<value>"` либо `name='<value>'`;
-//     остальные форматы → InvalidArgument).
+//   - filter=`name="…"`  — optional name-equality filter через общий
+//     shared.ParseNameFilter (kacho-corelib/filter.Parse, whitelist {"name"});
+//     unknown-поле / unquoted / malformed → InvalidArgument.
 type ListUseCase struct {
 	repo  RepoFactory
 	authz authzfilter.Filter
@@ -47,7 +46,7 @@ func (u *ListUseCase) Run(ctx context.Context, req *lbv1.ListListenersRequest) (
 		return nil, status.Error(codes.InvalidArgument, "project_id required")
 	}
 
-	name, err := parseNameFilter(req.GetFilter())
+	name, err := shared.ParseNameFilter(req.GetFilter())
 	if err != nil {
 		return nil, err
 	}
@@ -97,34 +96,4 @@ func (u *ListUseCase) Run(ctx context.Context, req *lbv1.ListListenersRequest) (
 		resp.Listeners = append(resp.Listeners, pb)
 	}
 	return resp, nil
-}
-
-// parseNameFilter — поддерживает только `name="<value>"` / `name='<value>'`.
-// Пустой filter → пустая name (no filter). Любой другой формат → InvalidArgument
-// с verbatim text (`"unsupported filter: <input>"`).
-//
-// Полноценный парсер (multi-field, AND, IN) — KAC-160 / `kacho-corelib/filter`
-// follow-up; не входит в scope этого Wave.
-func parseNameFilter(raw string) (string, error) {
-	s := strings.TrimSpace(raw)
-	if s == "" {
-		return "", nil
-	}
-	const prefix = "name="
-	if !strings.HasPrefix(s, prefix) {
-		return "", invalidFilterErr(raw)
-	}
-	v := strings.TrimSpace(s[len(prefix):])
-	if len(v) < 2 {
-		return "", invalidFilterErr(raw)
-	}
-	first, last := v[0], v[len(v)-1]
-	if (first == '"' && last == '"') || (first == '\'' && last == '\'') {
-		return v[1 : len(v)-1], nil
-	}
-	return "", invalidFilterErr(raw)
-}
-
-func invalidFilterErr(raw string) error {
-	return status.Error(codes.InvalidArgument, fmt.Sprintf(`unsupported filter: %s (supported: name="<value>")`, raw))
 }
