@@ -5,19 +5,15 @@ import (
 
 	lbv1 "github.com/PRO-Robotech/kacho-proto/gen/go/kacho/cloud/loadbalancer/v1"
 
+	"github.com/PRO-Robotech/kacho-nlb/internal/apps/kacho/api/shared"
 	"github.com/PRO-Robotech/kacho-nlb/internal/authzfilter"
 	kachorepo "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho"
 )
 
 // ListLoadBalancersUseCase — sync list с фильтром `project_id` (required) +
-// optional `name=` (от proto request.Filter — пока поддерживаем точное равенство
-// `name`) + cursor-based pagination (acceptance GWT-NLB-009 / GWT-NLB-010).
-//
-// Filter-grammar (YC-syntax `name="<value>"`) пока не парсится в одном file —
-// для прямой совместимости с repo.ListByProject принимаем req.Filter как
-// pass-through point (упрощённая семантика — equal-match name; полное парсинг
-// перенесём в filter.Parse в Wave 7+ или через дополнительный helper). В тех
-// тестах, где filter не передан, используется ListByProject.
+// optional `name="<value>"` (от proto request.Filter, через общий
+// shared.ParseNameFilter — kacho-corelib/filter.Parse, whitelist {"name"}) +
+// cursor-based pagination (acceptance GWT-NLB-009 / GWT-NLB-010).
 type ListLoadBalancersUseCase struct {
 	repo  Repo
 	authz authzfilter.Filter
@@ -43,12 +39,14 @@ func (u *ListLoadBalancersUseCase) Execute(
 		return nil, errInvalidArg("project_id", "required")
 	}
 
+	name, err := shared.ParseNameFilter(req.GetFilter())
+	if err != nil {
+		return nil, err
+	}
 	filter := kachorepo.LoadBalancerFilter{
 		ProjectID: projectID,
 		Filter:    req.GetFilter(),
-	}
-	if name := parseFilterName(req.GetFilter()); name != "" {
-		filter.Name = name
+		Name:      name,
 	}
 
 	dec, err := authzfilter.Resolve(ctx, u.authz,
@@ -87,23 +85,4 @@ func (u *ListLoadBalancersUseCase) Execute(
 		resp.NetworkLoadBalancers = append(resp.NetworkLoadBalancers, pb)
 	}
 	return resp, nil
-}
-
-// parseFilterName — минимальный YC-style filter parser: понимает
-// `name="<value>"` (с кавычками или без), возвращает значение либо "".
-// Полный grammar (AND-выражения, escaped quotes, multiple fields) — вне
-// scope NLB MVP (см. design §3.2 — поддерживаем только `name=`).
-func parseFilterName(filter string) string {
-	const prefix1 = `name="`
-	const prefix2 = `name=`
-	switch {
-	case len(filter) > len(prefix1) && filter[:len(prefix1)] == prefix1 &&
-		filter[len(filter)-1] == '"':
-		return filter[len(prefix1) : len(filter)-1]
-	case len(filter) > len(prefix2) && filter[:len(prefix2)] == prefix2:
-		v := filter[len(prefix2):]
-		// strip optional surrounding quotes (covered above).
-		return v
-	}
-	return ""
 }

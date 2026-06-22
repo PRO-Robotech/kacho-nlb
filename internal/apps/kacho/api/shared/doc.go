@@ -1,6 +1,9 @@
 // Package shared — общий код use-cases (filter parsing, pagination, update-mask
 // helpers), не привязанный к одному ресурсу.
 //
-// TODO(KAC-153+): MaskApplier (general update_mask discipline), ListPaginator
-// (cursor (created_at, id) base64 token), filter.Parse whitelist per resource.
+// ParseNameFilter — единый name=-парсер всех List use-cases (делегирует в
+// kacho-corelib/filter.Parse, whitelist {"name"}).
+//
+// KAC-153+ (tracked): MaskApplier (general update_mask discipline), ListPaginator
+// (cursor (created_at, id) base64 token).
 package shared

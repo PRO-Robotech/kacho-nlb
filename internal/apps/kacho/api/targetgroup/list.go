@@ -5,13 +5,15 @@ import (
 
 	lbv1 "github.com/PRO-Robotech/kacho-proto/gen/go/kacho/cloud/loadbalancer/v1"
 
+	"github.com/PRO-Robotech/kacho-nlb/internal/apps/kacho/api/shared"
 	"github.com/PRO-Robotech/kacho-nlb/internal/authzfilter"
 	kachorepo "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho"
 )
 
 // ListTargetGroupsUseCase — sync list filter by project_id (required) + optional
-// `name=` filter (parsed from req.Filter, YC-style equality) + cursor-based
-// pagination (acceptance GWT-TGR-016 / GWT-TGR-017).
+// `name="<value>"` filter (через общий shared.ParseNameFilter —
+// kacho-corelib/filter.Parse, whitelist {"name"}) + cursor-based pagination
+// (acceptance GWT-TGR-016 / GWT-TGR-017).
 type ListTargetGroupsUseCase struct {
 	repo  Repo
 	authz authzfilter.Filter
@@ -32,12 +34,14 @@ func (u *ListTargetGroupsUseCase) Execute(
 	if projectID == "" {
 		return nil, errInvalidArg("project_id", "required")
 	}
+	name, err := shared.ParseNameFilter(req.GetFilter())
+	if err != nil {
+		return nil, err
+	}
 	filter := kachorepo.TargetGroupFilter{
 		ProjectID: projectID,
 		Filter:    req.GetFilter(),
-	}
-	if name := parseFilterName(req.GetFilter()); name != "" {
-		filter.Name = name
+		Name:      name,
 	}
 
 	dec, err := authzfilter.Resolve(ctx, u.authz,
@@ -75,19 +79,4 @@ func (u *ListTargetGroupsUseCase) Execute(
 		resp.TargetGroups = append(resp.TargetGroups, pb)
 	}
 	return resp, nil
-}
-
-// parseFilterName — минимальный YC-style filter parser: понимает `name="<value>"`
-// (с кавычками или без). Возвращает "" если name= не задан.
-func parseFilterName(filter string) string {
-	const prefix1 = `name="`
-	const prefix2 = `name=`
-	switch {
-	case len(filter) > len(prefix1) && filter[:len(prefix1)] == prefix1 &&
-		filter[len(filter)-1] == '"':
-		return filter[len(prefix1) : len(filter)-1]
-	case len(filter) > len(prefix2) && filter[:len(prefix2)] == prefix2:
-		return filter[len(prefix2):]
-	}
-	return ""
 }
