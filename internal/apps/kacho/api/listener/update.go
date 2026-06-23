@@ -178,12 +178,36 @@ func (u *UpdateUseCase) Run(ctx context.Context, req *lbv1.UpdateListenerRequest
 		return nil, status.Errorf(codes.Internal, "ops.Create: %v", err)
 	}
 
+	// epic-rsab T3.1 (#113, REVOKE-04, parity with LB/TG update.go labelsInMask):
+	// re-emit the FGA-register mirror-feed (carrying the NEW labels) ONLY when
+	// labels change — labels in mask, or empty mask (full PATCH always reapplies
+	// labels). A non-labels Update is a mirror no-op (skip the intent, G-2). Full
+	// label removal → mirror.upsert with empty labels (NOT Unregister, G-3) — the
+	// listener still lives; this stales label selectors without dropping the
+	// resource registration.
+	emitMirror := listenerLabelsInMask(mask.GetPaths())
+
 	// Snapshot inputs into worker closure to avoid handler-ctx capture.
 	snap := next
 	operations.Run(ctx, u.opsRepo, op.ID, func(workerCtx context.Context) (*anypb.Any, error) {
-		return u.doUpdate(workerCtx, snap)
+		return u.doUpdate(workerCtx, snap, emitMirror)
 	})
 	return &op, nil
+}
+
+// listenerLabelsInMask reports whether the Update touches labels: explicit
+// "labels" in the mask, or an empty mask (full-object PATCH reapplies all mutable
+// fields). Parity with loadbalancer.labelsInMask / targetgroup.labelsInMaskTG.
+func listenerLabelsInMask(mask []string) bool {
+	if len(mask) == 0 {
+		return true
+	}
+	for _, p := range mask {
+		if p == "labels" {
+			return true
+		}
+	}
+	return false
 }
 
 // validateListenerMask — verifies every path is one of mutable; rejects
@@ -203,8 +227,11 @@ func validateListenerMask(paths []string) error {
 	return nil
 }
 
-// doUpdate — worker-side flow.
-func (u *UpdateUseCase) doUpdate(ctx context.Context, next domain.Listener) (*anypb.Any, error) {
+// doUpdate — worker-side flow. When emitMirror is true (labels changed, T3.1
+// REVOKE-04), the FGA-register mirror-feed intent is written in the SAME
+// writer-tx as the resource UPDATE (no dual-write, SEC-D / G-4); the emitter
+// stamps a monotonic source_version so IAM applies the mirror last-source-wins.
+func (u *UpdateUseCase) doUpdate(ctx context.Context, next domain.Listener, emitMirror bool) (*anypb.Any, error) {
 	// Transient UPDATING status guard. CAS handles concurrent Delete (status
 	// already DELETING → FailedPrecondition; client sees verbatim text).
 	w, err := u.repo.Writer(ctx)
@@ -233,6 +260,16 @@ func (u *UpdateUseCase) doUpdate(ctx context.Context, next domain.Listener) (*an
 	); err != nil {
 		return nil, mapDomainErr(fmt.Errorf("%w: outbox emit listener UPDATED: %v", domain.ErrInternal, err))
 	}
+	// T3.1 (#113, REVOKE-04): refresh the IAM resource_mirror with the current
+	// labels in the SAME writer-tx (G-2 gated, G-3 upsert-not-unregister, G-4
+	// atomic). Label removal → upsert with empty labels, which stales the γ
+	// label selector while keeping the listener registered.
+	if emitMirror {
+		if err := w.FGARegisterOutbox().Emit(ctx, domain.FGAEventRegister,
+			listenerMirrorIntent(updated)); err != nil {
+			return nil, mapDomainErr(fmt.Errorf("%w: fga register-intent emit: %v", domain.ErrInternal, err))
+		}
+	}
 	if err := w.Commit(); err != nil {
 		return nil, mapDomainErr(err)
 	}
@@ -240,6 +277,27 @@ func (u *UpdateUseCase) doUpdate(ctx context.Context, next domain.Listener) (*an
 	return marshalListener(updated)
 }
 
-// _ — sentinel-use kachorepo, avoids unused-import linter complaint when this
-// file is compiled alone in some refactors.
-var _ = kachorepo.Pagination{}
+// listenerMirrorIntent builds the T3.1 (#113) mirror-feed register-intent for an
+// UPDATED Listener: the parent-link tuple (re-register is idempotent in IAM per
+// SEC-A) carrying the refreshed labels + parent-project so kacho-iam updates its
+// resource_mirror. No creator tuple — Update never re-assigns ownership; this is a
+// pure labels-refresh feed (parity with lbMirrorIntent / tgMirrorIntent). Empty
+// labels (full removal) is a valid upsert payload — it stales the label selector
+// without unregistering the listener (G-3). source_version is stamped by the
+// outbox emitter from the DB clock inside the writer-tx.
+func listenerMirrorIntent(l *kachorepo.ListenerRecord) domain.FGARegisterIntent {
+	id := string(l.ID)
+	return domain.FGARegisterIntent{
+		Kind:       "Listener",
+		ResourceID: id,
+		Tuples: []domain.FGATuple{
+			domain.FGAParentLinkTuple(
+				domain.FGAObjectTypeLoadBalancer, string(l.LoadBalancerID),
+				domain.FGARelationLoadBalancer,
+				domain.FGAObjectTypeListener, id,
+			),
+		},
+		Labels:          domain.LabelsToMap(l.Labels),
+		ParentProjectID: string(l.ProjectID),
+	}
+}

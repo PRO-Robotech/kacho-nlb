@@ -17,6 +17,7 @@ import (
 
 	vpcclient "github.com/PRO-Robotech/kacho-nlb/internal/clients/vpc"
 	"github.com/PRO-Robotech/kacho-nlb/internal/domain"
+	kachorepo "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho"
 )
 
 // CreateUseCase инициирует создание Listener'а (acceptance GWT-LST-001..LST-015).
@@ -331,7 +332,7 @@ func (u *CreateUseCase) doCreate(ctx context.Context, in createInput) (*anypb.An
 	// SEC-D: FGA-register-intent (creator + parent-link) in the SAME writer-tx as
 	// the Insert — register-drainer applies it through kacho-iam RegisterResource.
 	if err := w.FGARegisterOutbox().Emit(ctx, domain.FGAEventRegister,
-		listenerRegisterIntent(created.ID, in.lb.ID, in.fgaOwner)); err != nil {
+		listenerRegisterIntent(created, in.fgaOwner)); err != nil {
 		w.Abort()
 		rolledBack = true
 		return nil, mapDomainErr(fmt.Errorf("%w: fga register-intent emit: %v", domain.ErrInternal, err))
@@ -485,18 +486,30 @@ func (u *CreateUseCase) compensateVIP(ctx context.Context, listenerID domain.Res
 // The creator tuple is skipped on empty subject (system-initiated). The listener
 // resolves its project via the parent-link → LB hierarchy cascade, so it has no
 // own project-hierarchy tuple (parity with the former emitHierarchyTuples).
-func listenerRegisterIntent(listenerID, lbID domain.ResourceID, subject string) domain.FGARegisterIntent {
-	id := string(listenerID)
+//
+// epic-rsab T3.1 (#113, REVOKE-04): carry tenant labels + parent-project so
+// kacho-iam feeds its resource_mirror (γ selector matchLabels / containment) —
+// parity with lbMirrorIntent / tgMirrorIntent. Was a bare intent WITHOUT Labels,
+// so label selectors did not match even a freshly created listener (double-bug).
+// source_version is stamped by the outbox emitter from the DB clock in writer-tx.
+func listenerRegisterIntent(l *kachorepo.ListenerRecord, subject string) domain.FGARegisterIntent {
+	id := string(l.ID)
 	var tuples []domain.FGATuple
 	if subject != "" {
 		tuples = append(tuples, domain.FGACreatorTuple(subject, domain.FGAObjectTypeListener, id))
 	}
 	tuples = append(tuples, domain.FGAParentLinkTuple(
-		domain.FGAObjectTypeLoadBalancer, string(lbID),
+		domain.FGAObjectTypeLoadBalancer, string(l.LoadBalancerID),
 		domain.FGARelationLoadBalancer,
 		domain.FGAObjectTypeListener, id,
 	))
-	return domain.FGARegisterIntent{Kind: "Listener", ResourceID: id, Tuples: tuples}
+	return domain.FGARegisterIntent{
+		Kind:            "Listener",
+		ResourceID:      id,
+		Tuples:          tuples,
+		Labels:          domain.LabelsToMap(l.Labels),
+		ParentProjectID: string(l.ProjectID),
+	}
 }
 
 // listenerUnregisterIntent builds the SEC-D FGA-unregister-intent (parent-link)
