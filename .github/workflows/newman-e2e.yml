@@ -116,10 +116,16 @@ jobs:
         working-directory: ${{ github.workspace }}
         run: |
           set -euo pipefail
-          for svc in vpc iam compute geo api-gateway nlb; do
+          for svc in vpc iam compute api-gateway nlb; do
             echo "=== build kacho-$svc:dev ==="
             docker build -f "kacho-$svc/Dockerfile" -t "kacho-$svc:dev" .
           done
+          # kacho-geo is an OSS single-repo: its Dockerfile is COPY-`.`/go-mod-
+          # download (versioned modules from GitHub), NOT the monorepo parent-
+          # context COPY ../kacho-* pattern. Build it standalone with context =
+          # its own checkout dir (same as kacho-ui below), not in the loop above.
+          echo "=== build kacho-geo:dev ==="
+          docker build -t kacho-geo:dev kacho-geo
           if [ -f kacho-ui/Dockerfile ]; then
             echo "=== build kacho-ui:dev ==="
             docker build -t kacho-ui:dev kacho-ui
