@@ -55,7 +55,7 @@ jobs:
       - uses: actions/checkout@v4
         with: { repository: PRO-Robotech/kacho-corelib, ref: main, path: kacho-corelib }
       - uses: actions/checkout@v4
-        with: { repository: PRO-Robotech/kacho-proto, ref: rbac-flat-verb-bearing-proto, path: kacho-proto }
+        with: { repository: PRO-Robotech/kacho-proto, ref: main, path: kacho-proto }
 
       - uses: benjlevesque/short-sha@v3.0
         id: short-sha
