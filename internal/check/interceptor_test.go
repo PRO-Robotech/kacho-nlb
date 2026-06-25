@@ -99,9 +99,9 @@ func TestAZD001_NLBCreate_NoEditor_Denied(t *testing.T) {
 // GWT-AZD-002 — NLB.Get viewer OK
 // ────────────────────────────────────────────────────────────────────────────
 
-func TestAZD002_NLBGet_Viewer_OK(t *testing.T) {
+func TestAZD002_NLBGet_VGet_OK(t *testing.T) {
 	intr, _, _ := newTestInterceptor(t, func(_ context.Context, subj, rel, obj string) (bool, error) {
-		require.Equal(t, "viewer", rel)
+		require.Equal(t, "v_get", rel)
 		require.Equal(t, "lb_network_load_balancer:nlb-1", obj)
 		return true, nil
 	})
@@ -145,9 +145,9 @@ func TestAZD003_NLBGet_Stranger_Denied(t *testing.T) {
 // GWT-AZD-004 — NLB.Start: viewer rejected, editor OK
 // ────────────────────────────────────────────────────────────────────────────
 
-func TestAZD004_NLBStart_Viewer_Denied(t *testing.T) {
+func TestAZD004_NLBStart_VUpdate_Denied(t *testing.T) {
 	intr, _, _ := newTestInterceptor(t, func(_ context.Context, subj, rel, obj string) (bool, error) {
-		require.Equal(t, "editor", rel)
+		require.Equal(t, "v_update", rel)
 		return false, nil
 	})
 	_, err := intr.Unary()(
@@ -160,9 +160,9 @@ func TestAZD004_NLBStart_Viewer_Denied(t *testing.T) {
 	require.Equal(t, codes.PermissionDenied, st.Code())
 }
 
-func TestAZD004_NLBStop_Editor_OK(t *testing.T) {
+func TestAZD004_NLBStop_VUpdate_OK(t *testing.T) {
 	intr, _, _ := newTestInterceptor(t, func(_ context.Context, subj, rel, obj string) (bool, error) {
-		require.Equal(t, "editor", rel)
+		require.Equal(t, "v_update", rel)
 		require.Equal(t, "lb_network_load_balancer:nlb-1", obj)
 		return true, nil
 	})
@@ -180,10 +180,10 @@ func TestAZD004_NLBStop_Editor_OK(t *testing.T) {
 // GWT-AZD-005 — NLB.Delete: editor OK, viewer rejected
 // ────────────────────────────────────────────────────────────────────────────
 
-func TestAZD005_NLBDelete_Editor_OK_ViewerRejected(t *testing.T) {
-	// Editor — OK.
+func TestAZD005_NLBDelete_VDelete_OK_ViewerRejected(t *testing.T) {
+	// v_delete — OK.
 	intr1, _, _ := newTestInterceptor(t, func(_ context.Context, _, rel, _ string) (bool, error) {
-		require.Equal(t, "editor", rel)
+		require.Equal(t, "v_delete", rel)
 		return true, nil
 	})
 	_, err := intr1.Unary()(
@@ -194,7 +194,7 @@ func TestAZD005_NLBDelete_Editor_OK_ViewerRejected(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	// Viewer (FGA Check returns false for editor-relation) — denied.
+	// Без v_delete (FGA Check returns false for v_delete-relation) — denied.
 	intr2, _, _ := newTestInterceptor(t, func(_ context.Context, _, _, _ string) (bool, error) {
 		return false, nil
 	})
@@ -219,7 +219,7 @@ func TestAZD005_NLBDelete_Editor_OK_ViewerRejected(t *testing.T) {
 
 func TestAZD006_NLBMove_PerRPCCheck_OnResourceOnly(t *testing.T) {
 	intr, n, calls := newTestInterceptor(t, func(_ context.Context, subj, rel, obj string) (bool, error) {
-		require.Equal(t, "editor", rel)
+		require.Equal(t, "v_update", rel)
 		require.Equal(t, "lb_network_load_balancer:nlb-src", obj, "interceptor must Check on resource, NOT destination project")
 		return true, nil
 	})
@@ -241,7 +241,7 @@ func TestAZD006_NLBMove_PerRPCCheck_OnResourceOnly(t *testing.T) {
 
 func TestAZD007_NLBAttachTargetGroup_PerRPCCheck_OnLBOnly(t *testing.T) {
 	intr, n, _ := newTestInterceptor(t, func(_ context.Context, _, rel, obj string) (bool, error) {
-		require.Equal(t, "editor", rel)
+		require.Equal(t, "v_update", rel)
 		require.Equal(t, "lb_network_load_balancer:nlb-1", obj)
 		return true, nil
 	})
@@ -262,9 +262,9 @@ func TestAZD007_NLBAttachTargetGroup_PerRPCCheck_OnLBOnly(t *testing.T) {
 // GWT-AZD-008 — TG.AddTargets: editor on TG required, viewer rejected.
 // ────────────────────────────────────────────────────────────────────────────
 
-func TestAZD008_TGAddTargets_Viewer_Denied(t *testing.T) {
+func TestAZD008_TGAddTargets_VUpdate_Denied(t *testing.T) {
 	intr, _, _ := newTestInterceptor(t, func(_ context.Context, _, rel, obj string) (bool, error) {
-		require.Equal(t, "editor", rel)
+		require.Equal(t, "v_update", rel)
 		require.Equal(t, "lb_target_group:tgr-1", obj)
 		return false, nil
 	})
@@ -480,10 +480,10 @@ func TestAZD016_CacheInvalidation_BySubject(t *testing.T) {
 // строка узкая (Custom role).
 // ────────────────────────────────────────────────────────────────────────────
 
-func TestAZD017_CustomRole_ResolvesToEditor(t *testing.T) {
+func TestAZD017_CustomRole_ResolvesToVUpdate(t *testing.T) {
 	intr, _, calls := newTestInterceptor(t, func(_ context.Context, _, rel, obj string) (bool, error) {
-		require.Equal(t, "editor", rel,
-			"Custom role narrowest covering relation = editor (design §6.4)")
+		require.Equal(t, "v_update", rel,
+			"Custom role with start-verb gates object-self Start on v_update (Design B verb-bearing)")
 		require.Equal(t, "lb_network_load_balancer:nlb-1", obj)
 		return true, nil
 	})
@@ -549,10 +549,10 @@ func TestAZD020_AdminRoleCoversAllPermissions(t *testing.T) {
 
 func TestAZD021_OwnerRelation_Valid(t *testing.T) {
 	intr, _, _ := newTestInterceptor(t, func(_ context.Context, _, rel, _ string) (bool, error) {
-		// Owner check — handler-level (D-11 sync write); interceptor
-		// per-RPC использует viewer/editor. Этот test просто sanity-проверяет
-		// fall-through allow-path.
-		require.Contains(t, []string{"viewer", "editor"}, rel)
+		// Owner check — handler-level (D-11 sync write); interceptor per-RPC Get
+		// гейтит object-self `v_get` (Design B verb-bearing). Этот test sanity-
+		// проверяет fall-through allow-path.
+		require.Equal(t, "v_get", rel)
 		return true, nil
 	})
 	_, err := intr.Unary()(
@@ -684,9 +684,9 @@ func TestAZD025_InternalRPC_NotInPermissionMap(t *testing.T) {
 // (Cross-resource ops listing — handler-level scope-filter.)
 // ────────────────────────────────────────────────────────────────────────────
 
-func TestAZD026_NLBListOperations_ViewerOnResource(t *testing.T) {
+func TestAZD026_NLBListOperations_VListOnResource(t *testing.T) {
 	intr, _, _ := newTestInterceptor(t, func(_ context.Context, _, rel, obj string) (bool, error) {
-		require.Equal(t, "viewer", rel)
+		require.Equal(t, "v_list", rel)
 		require.Equal(t, "lb_network_load_balancer:nlb-1", obj)
 		return true, nil
 	})
