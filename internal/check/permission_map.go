@@ -46,8 +46,29 @@ const (
 // `kacho-iam/internal/authzmap` (там — source of truth); тут — backend
 // view-only, чтобы не плодить cross-repo import просто ради двух строк.
 const (
+	// relationViewer / relationEditor — tier-relations. Сохраняются для Create
+	// (parent-scoped, F-7: NLB/TG на project, Listener на parent LB) и top-level
+	// project-List (visibility per-object идёт через iam ListObjects `viewer ∪
+	// v_list`, не через per-RPC Check). Для object-self CRUD энфорс — verb-bearing
+	// relations ниже.
 	relationViewer = "viewer"
 	relationEditor = "editor"
+
+	// verb-bearing relations (v_*) — enforcement резолвит object-self action на
+	// verb, а не на tier (anchor-эпик «Explicit RBAC model 2026», D-6/D-6a:
+	// доступ по verb развязан с tier). Материализуются per-object reconciler'ом
+	// kacho-iam; consumer гейтит ими object-self RPC. Source of truth relation-имён
+	// — kacho-iam/internal/authzmap; тут — backend view-only.
+	//
+	//	v_get    — чтение содержимого самого ресурса (Get / GetTargetStates);
+	//	v_list   — видимость операций на самом ресурсе (ListOperations) — НЕ
+	//	           top-level project-List;
+	//	v_update — мутация самого ресурса (Update + start/stop/move/attach/targets);
+	//	v_delete — удаление самого ресурса.
+	relationVGet    = "v_get"
+	relationVList   = "v_list"
+	relationVUpdate = "v_update"
+	relationVDelete = "v_delete"
 )
 
 // Permission strings (design §6.2). Каждая строка должна совпадать с
@@ -158,7 +179,7 @@ func PermissionMap() authz.RPCMap {
 		// NetworkLoadBalancerService (12 RPCs)
 		// =========================
 		"/kacho.cloud.loadbalancer.v1.NetworkLoadBalancerService/Get": {
-			Relation:   relationViewer,
+			Relation:   relationVGet,
 			Permission: permNLBGet,
 			Extract: authz.StaticExtractor(objectTypeLoadBalancer, func(req any) (string, error) {
 				return req.(*lbv1.GetNetworkLoadBalancerRequest).GetNetworkLoadBalancerId(), nil
@@ -180,28 +201,28 @@ func PermissionMap() authz.RPCMap {
 			}),
 		},
 		"/kacho.cloud.loadbalancer.v1.NetworkLoadBalancerService/Update": {
-			Relation:   relationEditor,
+			Relation:   relationVUpdate,
 			Permission: permNLBUpdate,
 			Extract: authz.StaticExtractor(objectTypeLoadBalancer, func(req any) (string, error) {
 				return req.(*lbv1.UpdateNetworkLoadBalancerRequest).GetNetworkLoadBalancerId(), nil
 			}),
 		},
 		"/kacho.cloud.loadbalancer.v1.NetworkLoadBalancerService/Delete": {
-			Relation:   relationEditor,
+			Relation:   relationVDelete,
 			Permission: permNLBDelete,
 			Extract: authz.StaticExtractor(objectTypeLoadBalancer, func(req any) (string, error) {
 				return req.(*lbv1.DeleteNetworkLoadBalancerRequest).GetNetworkLoadBalancerId(), nil
 			}),
 		},
 		"/kacho.cloud.loadbalancer.v1.NetworkLoadBalancerService/Start": {
-			Relation:   relationEditor,
+			Relation:   relationVUpdate,
 			Permission: permNLBStart,
 			Extract: authz.StaticExtractor(objectTypeLoadBalancer, func(req any) (string, error) {
 				return req.(*lbv1.StartNetworkLoadBalancerRequest).GetNetworkLoadBalancerId(), nil
 			}),
 		},
 		"/kacho.cloud.loadbalancer.v1.NetworkLoadBalancerService/Stop": {
-			Relation:   relationEditor,
+			Relation:   relationVUpdate,
 			Permission: permNLBStop,
 			Extract: authz.StaticExtractor(objectTypeLoadBalancer, func(req any) (string, error) {
 				return req.(*lbv1.StopNetworkLoadBalancerRequest).GetNetworkLoadBalancerId(), nil
@@ -210,7 +231,7 @@ func PermissionMap() authz.RPCMap {
 		"/kacho.cloud.loadbalancer.v1.NetworkLoadBalancerService/Move": {
 			// Per-RPC Check на ресурсе (editor on src LB → cascades через editor on
 			// project src). Destination project Check — handler'ом (см. doc).
-			Relation:   relationEditor,
+			Relation:   relationVUpdate,
 			Permission: permNLBMove,
 			Extract: authz.StaticExtractor(objectTypeLoadBalancer, func(req any) (string, error) {
 				return req.(*lbv1.MoveNetworkLoadBalancerRequest).GetNetworkLoadBalancerId(), nil
@@ -218,28 +239,28 @@ func PermissionMap() authz.RPCMap {
 		},
 		"/kacho.cloud.loadbalancer.v1.NetworkLoadBalancerService/AttachTargetGroup": {
 			// Per-RPC Check — editor on LB. Дополнительный viewer on TG — handler'ом.
-			Relation:   relationEditor,
+			Relation:   relationVUpdate,
 			Permission: permNLBAttachTargetGroup,
 			Extract: authz.StaticExtractor(objectTypeLoadBalancer, func(req any) (string, error) {
 				return req.(*lbv1.AttachNetworkLoadBalancerTargetGroupRequest).GetNetworkLoadBalancerId(), nil
 			}),
 		},
 		"/kacho.cloud.loadbalancer.v1.NetworkLoadBalancerService/DetachTargetGroup": {
-			Relation:   relationEditor,
+			Relation:   relationVUpdate,
 			Permission: permNLBDetachTargetGroup,
 			Extract: authz.StaticExtractor(objectTypeLoadBalancer, func(req any) (string, error) {
 				return req.(*lbv1.DetachNetworkLoadBalancerTargetGroupRequest).GetNetworkLoadBalancerId(), nil
 			}),
 		},
 		"/kacho.cloud.loadbalancer.v1.NetworkLoadBalancerService/GetTargetStates": {
-			Relation:   relationViewer,
+			Relation:   relationVGet,
 			Permission: permNLBGetTargetStates,
 			Extract: authz.StaticExtractor(objectTypeLoadBalancer, func(req any) (string, error) {
 				return req.(*lbv1.GetTargetStatesRequest).GetNetworkLoadBalancerId(), nil
 			}),
 		},
 		"/kacho.cloud.loadbalancer.v1.NetworkLoadBalancerService/ListOperations": {
-			Relation:   relationViewer,
+			Relation:   relationVList,
 			Permission: permNLBListOperations,
 			Extract: authz.StaticExtractor(objectTypeLoadBalancer, func(req any) (string, error) {
 				return req.(*lbv1.ListNetworkLoadBalancerOperationsRequest).GetNetworkLoadBalancerId(), nil
@@ -250,7 +271,7 @@ func PermissionMap() authz.RPCMap {
 		// ListenerService (6 RPCs)
 		// =========================
 		"/kacho.cloud.loadbalancer.v1.ListenerService/Get": {
-			Relation:   relationViewer,
+			Relation:   relationVGet,
 			Permission: permLstGet,
 			Extract: authz.StaticExtractor(objectTypeListener, func(req any) (string, error) {
 				return req.(*lbv1.GetListenerRequest).GetListenerId(), nil
@@ -275,21 +296,21 @@ func PermissionMap() authz.RPCMap {
 			}),
 		},
 		"/kacho.cloud.loadbalancer.v1.ListenerService/Update": {
-			Relation:   relationEditor,
+			Relation:   relationVUpdate,
 			Permission: permLstUpdate,
 			Extract: authz.StaticExtractor(objectTypeListener, func(req any) (string, error) {
 				return req.(*lbv1.UpdateListenerRequest).GetListenerId(), nil
 			}),
 		},
 		"/kacho.cloud.loadbalancer.v1.ListenerService/Delete": {
-			Relation:   relationEditor,
+			Relation:   relationVDelete,
 			Permission: permLstDelete,
 			Extract: authz.StaticExtractor(objectTypeListener, func(req any) (string, error) {
 				return req.(*lbv1.DeleteListenerRequest).GetListenerId(), nil
 			}),
 		},
 		"/kacho.cloud.loadbalancer.v1.ListenerService/ListOperations": {
-			Relation:   relationViewer,
+			Relation:   relationVList,
 			Permission: permLstListOperations,
 			Extract: authz.StaticExtractor(objectTypeListener, func(req any) (string, error) {
 				return req.(*lbv1.ListListenerOperationsRequest).GetListenerId(), nil
@@ -300,7 +321,7 @@ func PermissionMap() authz.RPCMap {
 		// TargetGroupService (9 RPCs)
 		// =========================
 		"/kacho.cloud.loadbalancer.v1.TargetGroupService/Get": {
-			Relation:   relationViewer,
+			Relation:   relationVGet,
 			Permission: permTGRGet,
 			Extract: authz.StaticExtractor(objectTypeTargetGroup, func(req any) (string, error) {
 				return req.(*lbv1.GetTargetGroupRequest).GetTargetGroupId(), nil
@@ -322,14 +343,14 @@ func PermissionMap() authz.RPCMap {
 			}),
 		},
 		"/kacho.cloud.loadbalancer.v1.TargetGroupService/Update": {
-			Relation:   relationEditor,
+			Relation:   relationVUpdate,
 			Permission: permTGRUpdate,
 			Extract: authz.StaticExtractor(objectTypeTargetGroup, func(req any) (string, error) {
 				return req.(*lbv1.UpdateTargetGroupRequest).GetTargetGroupId(), nil
 			}),
 		},
 		"/kacho.cloud.loadbalancer.v1.TargetGroupService/Delete": {
-			Relation:   relationEditor,
+			Relation:   relationVDelete,
 			Permission: permTGRDelete,
 			Extract: authz.StaticExtractor(objectTypeTargetGroup, func(req any) (string, error) {
 				return req.(*lbv1.DeleteTargetGroupRequest).GetTargetGroupId(), nil
@@ -337,28 +358,28 @@ func PermissionMap() authz.RPCMap {
 		},
 		"/kacho.cloud.loadbalancer.v1.TargetGroupService/Move": {
 			// editor on src TG; destination project — handler'ом.
-			Relation:   relationEditor,
+			Relation:   relationVUpdate,
 			Permission: permTGRMove,
 			Extract: authz.StaticExtractor(objectTypeTargetGroup, func(req any) (string, error) {
 				return req.(*lbv1.MoveTargetGroupRequest).GetTargetGroupId(), nil
 			}),
 		},
 		"/kacho.cloud.loadbalancer.v1.TargetGroupService/AddTargets": {
-			Relation:   relationEditor,
+			Relation:   relationVUpdate,
 			Permission: permTGRAddTargets,
 			Extract: authz.StaticExtractor(objectTypeTargetGroup, func(req any) (string, error) {
 				return req.(*lbv1.AddTargetsRequest).GetTargetGroupId(), nil
 			}),
 		},
 		"/kacho.cloud.loadbalancer.v1.TargetGroupService/RemoveTargets": {
-			Relation:   relationEditor,
+			Relation:   relationVUpdate,
 			Permission: permTGRRemoveTargets,
 			Extract: authz.StaticExtractor(objectTypeTargetGroup, func(req any) (string, error) {
 				return req.(*lbv1.RemoveTargetsRequest).GetTargetGroupId(), nil
 			}),
 		},
 		"/kacho.cloud.loadbalancer.v1.TargetGroupService/ListOperations": {
-			Relation:   relationViewer,
+			Relation:   relationVList,
 			Permission: permTGRListOperations,
 			Extract: authz.StaticExtractor(objectTypeTargetGroup, func(req any) (string, error) {
 				return req.(*lbv1.ListTargetGroupOperationsRequest).GetTargetGroupId(), nil

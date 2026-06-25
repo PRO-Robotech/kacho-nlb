@@ -35,6 +35,13 @@ on:
 permissions:
   contents: read
 
+env:
+  # kacho-geo is an external OSS dependency consumed as a PUBLISHED image (not
+  # rebuilt from source in this umbrella). Pin the known-good tag — the one
+  # running on the long-lived fe3455 stand — in one place so the docker-pull,
+  # kind-load and helm --set all stay in lockstep.
+  KACHO_GEO_IMAGE: docker.io/prorobotech/kacho-geo:main-84d9d68f
+
 concurrency:
   group: newman-e2e-${{ github.ref }}
   cancel-in-progress: true
@@ -116,7 +123,7 @@ jobs:
         working-directory: ${{ github.workspace }}
         run: |
           set -euo pipefail
-          for svc in vpc iam compute geo api-gateway nlb; do
+          for svc in vpc iam compute api-gateway nlb; do
             echo "=== build kacho-$svc:dev ==="
             docker build -f "kacho-$svc/Dockerfile" -t "kacho-$svc:dev" .
           done
@@ -124,6 +131,16 @@ jobs:
             echo "=== build kacho-ui:dev ==="
             docker build -t kacho-ui:dev kacho-ui
           fi
+
+      # geo is consumed as a published OSS dependency — pull the known-good
+      # image (the one running on the long-lived fe3455 stand) instead of
+      # building :dev from the OSS source (that image is runtime-broken:
+      # geo-read 503 → cascading compute failures).
+      - name: pull published kacho-geo image
+        run: |
+          set -euo pipefail
+          echo "=== pull ${KACHO_GEO_IMAGE} ==="
+          docker pull "${KACHO_GEO_IMAGE}"
 
       - uses: helm/kind-action@v1
         with:
@@ -133,9 +150,11 @@ jobs:
       - name: load images into kind
         run: |
           set -euo pipefail
-          for img in kacho-vpc:dev kacho-iam:dev kacho-compute:dev kacho-geo:dev kacho-api-gateway:dev kacho-nlb:dev; do
+          for img in kacho-vpc:dev kacho-iam:dev kacho-compute:dev kacho-api-gateway:dev kacho-nlb:dev; do
             kind load docker-image "$img" --name kacho
           done
+          # geo: load the PUBLISHED known-good image (pulled above) into kind.
+          kind load docker-image "${KACHO_GEO_IMAGE}" --name kacho
           docker image inspect kacho-ui:dev >/dev/null 2>&1 \
             && kind load docker-image kacho-ui:dev --name kacho || true
 
@@ -162,7 +181,8 @@ jobs:
             --set vpc.mtls.enable=false --set compute.mtls.enable=false \
             --set api-gateway.mtls.enable=false --set kacho-nlb.mtls.enable=false \
             --set kacho-iam.mtls.enable=false \
-            --set kacho-geo.mtls.enable=false
+            --set kacho-geo.mtls.enable=false \
+            --set "kacho-geo.image=${KACHO_GEO_IMAGE}"
 
       # Phase 1 — wait for the data-plane Deployments + Postgres to converge.
       - name: wait for core deployments
@@ -173,7 +193,8 @@ jobs:
             kubectl -n kacho rollout status "statefulset/kacho-umbrella-${sts}" --timeout=6m || true
           done
           echo "=== waiting for service Deployments (first generation) ==="
-          for dep in api-gateway kacho-iam vpc compute kacho-nlb; do
+          # geo included: compute→geo (zone_id validation) is on the request path.
+          for dep in api-gateway kacho-iam vpc compute kacho-nlb kacho-geo; do
             kubectl -n kacho rollout status "deploy/${dep}" --timeout=8m || true
           done
           kubectl -n kacho get pods -o wide || true
@@ -296,7 +317,7 @@ jobs:
         run: |
           kubectl -n kacho get pods -o wide || true
           kubectl -n kacho get events --sort-by=.lastTimestamp | tail -40 || true
-          for d in api-gateway kacho-iam vpc compute kacho-nlb; do
+          for d in api-gateway kacho-iam vpc compute kacho-nlb kacho-geo; do
             echo "=== logs: $d ==="
             kubectl -n kacho logs "deploy/$d" --tail=200 || true
             echo "=== describe: $d ==="
