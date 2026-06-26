@@ -44,14 +44,19 @@ CASES.append(Case(
 
 CASES.append(Case(
     id="AZD-NLB-GET-STRANGER-DENIED",
-    title="NLB.Get with stranger (no tuple) → PERMISSION_DENIED",
+    title="NLB.Get with stranger (no tuple) → NOT_FOUND (BUG-2 hide-existence)",
     classes=["AZD"], priority="P0",
     steps=[
         Step(name="get-stranger", method="GET", path=f"{_NLB}/{{{{garbageNlbId}}}}",
              auth="jwtStranger",
              test_script=[
-                 "pm.test('rejected (403/404)', () => "
-                 "  pm.expect(pm.response.code).to.be.oneOf([403, 404]));",
+                 # BUG-2 hide-existence: a denied single-resource Get on a verb-bearing
+                 # loadbalancer resource → NotFound (404 / code 5), never PermissionDenied —
+                 # no enumeration leak (nonexistent == existing-denied → same 404).
+                 *assert_status(404), *assert_grpc_code(5, "NOT_FOUND"),
+                 "let _j; try { _j = pm.response.json(); } catch(e) { _j = null; }",
+                 "pm.test('no deny_reasons leak (hide-existence)', () => "
+                 "  pm.expect(JSON.stringify(_j || {}).toLowerCase()).to.not.include('deny_reasons'));",
              ]),
     ],
 ))
@@ -198,13 +203,18 @@ CASES.append(_viewer_denied_case(
 
 CASES.append(Case(
     id="AZD-LST-GET-STRANGER-DENIED",
-    title="LST.Get with stranger → PERMISSION_DENIED",
+    title="LST.Get with stranger → NOT_FOUND (BUG-2 hide-existence)",
     classes=["AZD"], priority="P1",
     steps=[
         Step(name="get-stranger", method="GET", path=f"{_LST}/{{{{garbageLstId}}}}",
              auth="jwtStranger",
              test_script=[
-                 "pm.test('rejected', () => pm.expect(pm.response.code).to.be.oneOf([403, 404]));",
+                 # BUG-2 hide-existence: denied single-resource Get on a verb-bearing
+                 # loadbalancer resource → NotFound (404 / code 5), never PermissionDenied.
+                 *assert_status(404), *assert_grpc_code(5, "NOT_FOUND"),
+                 "let _j; try { _j = pm.response.json(); } catch(e) { _j = null; }",
+                 "pm.test('no deny_reasons leak (hide-existence)', () => "
+                 "  pm.expect(JSON.stringify(_j || {}).toLowerCase()).to.not.include('deny_reasons'));",
              ]),
     ],
 ))
@@ -323,13 +333,18 @@ CASES.append(Case(
 
 CASES.append(Case(
     id="AZD-TGR-GET-STRANGER-DENIED",
-    title="TGR.Get with stranger → PERMISSION_DENIED",
+    title="TGR.Get with stranger → NOT_FOUND (BUG-2 hide-existence)",
     classes=["AZD"], priority="P1",
     steps=[
         Step(name="get-stranger", method="GET", path=f"{_TGR}/{{{{garbageTgrId}}}}",
              auth="jwtStranger",
              test_script=[
-                 "pm.test('rejected', () => pm.expect(pm.response.code).to.be.oneOf([403, 404]));",
+                 # BUG-2 hide-existence: denied single-resource Get on a verb-bearing
+                 # loadbalancer resource → NotFound (404 / code 5), never PermissionDenied.
+                 *assert_status(404), *assert_grpc_code(5, "NOT_FOUND"),
+                 "let _j; try { _j = pm.response.json(); } catch(e) { _j = null; }",
+                 "pm.test('no deny_reasons leak (hide-existence)', () => "
+                 "  pm.expect(JSON.stringify(_j || {}).toLowerCase()).to.not.include('deny_reasons'));",
              ]),
     ],
 ))
