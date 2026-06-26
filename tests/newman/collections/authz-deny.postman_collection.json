@@ -1,6 +1,6 @@
 {
   "info": {
-    "_postman_id": "32b912e4-723d-45bd-b5f6-650dc92cd797",
+    "_postman_id": "5b4d5e33-0e23-4fa2-80eb-60b448e16161",
     "name": "kacho-nlb / newman / authz-deny",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
@@ -103,7 +103,7 @@
       ]
     },
     {
-      "name": "AZD-NLB-GET-STRANGER-DENIED — NLB.Get with stranger (no tuple) → PERMISSION_DENIED",
+      "name": "AZD-NLB-GET-STRANGER-DENIED — NLB.Get with stranger (no tuple) → NOT_FOUND (BUG-2 hide-existence)",
       "description": "class:AZD | priority:P0",
       "item": [
         {
@@ -150,7 +150,13 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('rejected (403/404)', () =>   pm.expect(pm.response.code).to.be.oneOf([403, 404]));"
+                  "pm.test('status 404', () => pm.expect(pm.response.code).to.eql(404));",
+                  "pm.test('grpc code 5 (NOT_FOUND)', () => {",
+                  "  const j = pm.response.json();",
+                  "  pm.expect(j.code, JSON.stringify(j)).to.eql(5);",
+                  "});",
+                  "let _j; try { _j = pm.response.json(); } catch(e) { _j = null; }",
+                  "pm.test('no deny_reasons leak (hide-existence)', () =>   pm.expect(JSON.stringify(_j || {}).toLowerCase()).to.not.include('deny_reasons'));"
                 ]
               }
             }
@@ -1449,7 +1455,7 @@
       ]
     },
     {
-      "name": "AZD-LST-GET-STRANGER-DENIED — LST.Get with stranger → PERMISSION_DENIED",
+      "name": "AZD-LST-GET-STRANGER-DENIED — LST.Get with stranger → NOT_FOUND (BUG-2 hide-existence)",
       "description": "class:AZD | priority:P1",
       "item": [
         {
@@ -1496,7 +1502,13 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('rejected', () => pm.expect(pm.response.code).to.be.oneOf([403, 404]));"
+                  "pm.test('status 404', () => pm.expect(pm.response.code).to.eql(404));",
+                  "pm.test('grpc code 5 (NOT_FOUND)', () => {",
+                  "  const j = pm.response.json();",
+                  "  pm.expect(j.code, JSON.stringify(j)).to.eql(5);",
+                  "});",
+                  "let _j; try { _j = pm.response.json(); } catch(e) { _j = null; }",
+                  "pm.test('no deny_reasons leak (hide-existence)', () =>   pm.expect(JSON.stringify(_j || {}).toLowerCase()).to.not.include('deny_reasons'));"
                 ]
               }
             }
@@ -2223,7 +2235,7 @@
       ]
     },
     {
-      "name": "AZD-TGR-GET-STRANGER-DENIED — TGR.Get with stranger → PERMISSION_DENIED",
+      "name": "AZD-TGR-GET-STRANGER-DENIED — TGR.Get with stranger → NOT_FOUND (BUG-2 hide-existence)",
       "description": "class:AZD | priority:P1",
       "item": [
         {
@@ -2270,7 +2282,13 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('rejected', () => pm.expect(pm.response.code).to.be.oneOf([403, 404]));"
+                  "pm.test('status 404', () => pm.expect(pm.response.code).to.eql(404));",
+                  "pm.test('grpc code 5 (NOT_FOUND)', () => {",
+                  "  const j = pm.response.json();",
+                  "  pm.expect(j.code, JSON.stringify(j)).to.eql(5);",
+                  "});",
+                  "let _j; try { _j = pm.response.json(); } catch(e) { _j = null; }",
+                  "pm.test('no deny_reasons leak (hide-existence)', () =>   pm.expect(JSON.stringify(_j || {}).toLowerCase()).to.not.include('deny_reasons'));"
                 ]
               }
             }
