@@ -1,0 +1,38 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
+syntax = "proto3";
+
+package kacho.cloud.loadbalancer.v1;
+
+import "google/protobuf/timestamp.proto";
+import "kacho/iam/authz/v1/authz_options.proto";
+
+option go_package = "github.com/PRO-Robotech/kacho-nlb/proto/gen/go/kacho/cloud/loadbalancer/v1;loadbalancerv1";
+
+// InternalResourceLifecycleService — cluster-internal RPC (port 9091; запрет #6).
+//
+// KAC-108 / E3 / Decision D-13. Аналогично vpc — см. vpc/v1/internal_resource_lifecycle_service.proto.
+// Loadbalancer-specific kinds: "nlb_load_balancer" | "nlb_listener" | "nlb_target_group".
+service InternalResourceLifecycleService {
+  rpc Subscribe (SubscribeRequest) returns (stream ResourceLifecycleEvent) {
+    option (kacho.iam.authz.v1.permission) = "<exempt>";
+  }
+}
+
+message SubscribeRequest {
+  // Допустимые kinds: "nlb_load_balancer" | "nlb_listener" | "nlb_target_group".
+  repeated string kinds = 1;
+  string resume_from_event_id = 2;
+}
+
+message ResourceLifecycleEvent {
+  string event_id = 1;
+  string kind = 2;
+  string resource_id = 3;
+  string op = 4; // Create | Delete | Move
+  string project_id = 5;
+  string parent_resource_id = 6;
+  string old_project_id = 7;
+  google.protobuf.Timestamp created_at = 8;
+}

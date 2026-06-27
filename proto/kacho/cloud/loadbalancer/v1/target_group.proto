@@ -1,0 +1,107 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
+syntax = "proto3";
+
+package kacho.cloud.loadbalancer.v1;
+
+import "google/protobuf/timestamp.proto";
+import "kacho/cloud/loadbalancer/v1/health_check.proto";
+import "kacho/cloud/validation.proto";
+
+option go_package = "github.com/PRO-Robotech/kacho-nlb/proto/gen/go/kacho/cloud/loadbalancer/v1;loadbalancerv1";
+
+// TargetGroup — collection of L4 targets with a single embedded HealthCheck.
+// HealthCheck lives on the group (not per-attachment) to align with the
+// `target_groups.health_check JSONB` column (design §5.2). The
+// `AttachedTargetGroup` shim still carries a snapshot for yc-shim JSON
+// clients but the TG is authoritative.
+message TargetGroup {
+  // Reserved for future TG-level fields (TLS terminator, per-group session
+  // affinity overrides). Numbered up so low slots stay for hot-path data.
+  reserved 8;
+  reserved 50 to 59;
+
+  // Lifecycle status (design §2.3). Only two transitions — TG has no
+  // STARTING/STOPPED — it is either ACTIVE or being torn down.
+  enum Status {
+    STATUS_UNSPECIFIED = 0;
+    ACTIVE = 1;
+    DELETING = 2;
+  }
+
+  string id = 1;
+  string project_id = 2;
+  google.protobuf.Timestamp created_at = 3;
+  string name = 4;
+  string description = 5;
+  map<string, string> labels = 6;
+  string region_id = 7;
+
+  // Inline targets snapshot. Source of truth is the `targets` child table
+  // (design §5.2); this field is populated on Get/List via a join. Add/Remove
+  // go through dedicated RPCs (TargetGroupService.AddTargets / RemoveTargets).
+  repeated Target targets = 9;
+
+  // Embedded health check — single HC per group (parity with upstream YC's
+  // 1-HC-per-AttachedTargetGroup constraint, hoisted to TG-level).
+  HealthCheck health_check = 10;
+
+  // Drain timeout applied when a target is removed (design §4.4 two-phase
+  // RemoveTargets). 0-3600 seconds; default 300.
+  int32 deregistration_delay_seconds = 11 [(value) = "0-3600"];
+
+  // Slow-start ramp window for newly added targets. 0-900 seconds; default 0
+  // (no ramp).
+  int32 slow_start_seconds = 12 [(value) = "0-900"];
+
+  Status status = 13;
+}
+
+// Target — one backend endpoint. 4-way identity oneof (design §2.5):
+// in-cloud via Instance, in-cloud via NIC, in-cloud raw IP in a subnet, or
+// out-of-cloud raw IP. Replaces the upstream YC 2-field (subnet_id, address)
+// shape — subnet_id+address kept available as a single oneof case
+// (`ip_ref.subnet_id` + `ip_ref.address`) but no longer top-level.
+message Target {
+  // Old top-level YC `subnet_id` (was 1) and `address` (was 2) are reserved
+  // so wire-level tags can never be reused with different semantics.
+  reserved 1, 2;
+  reserved "subnet_id", "address";
+  // Reserved for the future GlobalLoadBalancer cross-region composition
+  // (design §«Future TODO»: GLB may need region/anycast hints per target).
+  reserved 10 to 19;
+
+  // In-cloud, addressed via the parent compute Instance — kacho-nlb resolves
+  // primary NIC IP at worker validate time.
+  message InCloudIP {
+    // VPC subnet the target sits in (soft cross-service ref to kacho-vpc).
+    string subnet_id = 1 [(length) = "<=50"];
+    // Concrete IP within that subnet's CIDR.
+    string address = 2;
+  }
+
+  // Out-of-cloud raw IP. Bogon-class addresses (loopback / link-local /
+  // multicast / unspecified) are rejected sync at validate time.
+  message ExternalIP {
+    string address = 1;
+    // Optional zonal hint for placement decisions; empty means region-default.
+    string zone_id = 2 [(length) = "<=50"];
+  }
+
+  // Exactly one of the four identity forms must be set (validated in domain).
+  oneof identity {
+    // (1) Compute instance — primary NIC IP resolved at worker.
+    string instance_id = 3;
+    // (2) Specific VPC NIC — IP read from that NIC at worker.
+    string nic_id = 4;
+    // (3) Raw in-cloud IP scoped to a subnet.
+    InCloudIP ip_ref = 5;
+    // (4) Raw out-of-cloud IP.
+    ExternalIP external_ip = 6;
+  }
+
+  // Per-target weight inside the group. 0 disables traffic without removing
+  // the row (drain-with-keepalive use case). 0-1000.
+  int32 weight = 7 [(value) = "0-1000"];
+}

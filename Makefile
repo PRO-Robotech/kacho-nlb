@@ -4,7 +4,7 @@ CMD_API        := ./cmd/kacho-loadbalancer
 CMD_MIG        := ./cmd/migrator
 IMAGE          := kacho-nlb:dev
 
-.PHONY: build build-api build-migrator test test-short vet lint docker sync-migrations helm-lint helm-render-guard audit-list-filter
+.PHONY: build build-api build-migrator test test-short vet lint docker sync-migrations helm-lint helm-render-guard audit-list-filter proto-install-plugins proto-lint proto-gen
 
 build: build-api build-migrator
 
@@ -25,6 +25,24 @@ vet:
 
 lint:
 	golangci-lint run ./...
+
+# proto-install-plugins — ставит protoc-плагины в $GOBIN (lookup через $PATH для buf).
+# Доменный proto kacho-nlb генерируется этими тремя плагинами; permission-catalog для nlb —
+# hand-written (internal/check/permission_map.go), buf-catalog-плагин не нужен.
+proto-install-plugins:
+	go install google.golang.org/protobuf/cmd/protoc-gen-go
+	go install google.golang.org/grpc/cmd/protoc-gen-go-grpc
+	go install github.com/grpc-ecosystem/grpc-gateway/v2/protoc-gen-grpc-gateway
+
+proto-lint:
+	cd proto && buf lint
+
+# proto-gen — регенерация Go-stubs доменного proto nlb (kacho/cloud/loadbalancer/v1) из
+# proto/. Универсальная ИНФРА (operation/validation/authz_options/cloud-api/google)
+# вендорится в proto/ только для buf-резолва импортов и НЕ генерируется (Go-stubs живут в
+# kacho-corelib / canonical genproto) — см. proto/buf.gen.yaml inputs.paths.
+proto-gen:
+	cd proto && buf generate
 
 # audit-list-filter — RBAC sub-phase D §11 (issue #111) CI gate. Asserts every
 # public List<Resource> use-case filters per-object through authzfilter.Filter

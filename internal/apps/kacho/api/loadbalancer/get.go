@@ -3,7 +3,7 @@ package loadbalancer
 import (
 	"context"
 
-	lbv1 "github.com/PRO-Robotech/kacho-proto/gen/go/kacho/cloud/loadbalancer/v1"
+	lbv1 "github.com/PRO-Robotech/kacho-nlb/proto/gen/go/kacho/cloud/loadbalancer/v1"
 )
 
 // GetLoadBalancerUseCase — sync read одного NetworkLoadBalancer (GWT-NLB-007).

@@ -1,0 +1,314 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
+syntax = "proto3";
+
+package kacho.cloud.loadbalancer.v1;
+
+import "google/api/annotations.proto";
+import "google/protobuf/field_mask.proto";
+import "kacho/cloud/api/operation.proto";
+import "kacho/cloud/loadbalancer/v1/health_check.proto";
+import "kacho/cloud/loadbalancer/v1/target_group.proto";
+import "kacho/cloud/operation/operation.proto";
+import "kacho/cloud/validation.proto";
+import "kacho/iam/authz/v1/authz_options.proto";
+
+option go_package = "github.com/PRO-Robotech/kacho-nlb/proto/gen/go/kacho/cloud/loadbalancer/v1;loadbalancerv1";
+
+service TargetGroupService {
+  rpc Get(GetTargetGroupRequest) returns (TargetGroup) {
+    option (google.api.http) = {get: "/nlb/v1/targetGroups/{target_group_id}"};
+    option (kacho.iam.authz.v1.permission)        = "loadbalancer.targetGroups.get";
+    option (kacho.iam.authz.v1.required_relation) = "v_get";
+    option (kacho.iam.authz.v1.scope_extractor)   = {
+      object_type:        "lb_target_group"
+      from_request_field: "target_group_id"
+    };
+    option (kacho.iam.authz.v1.required_acr_min)  = "2";
+  }
+
+  rpc List(ListTargetGroupsRequest) returns (ListTargetGroupsResponse) {
+    option (google.api.http) = {get: "/nlb/v1/targetGroups"};
+    option (kacho.iam.authz.v1.permission)        = "loadbalancer.targetGroups.list";
+    option (kacho.iam.authz.v1.required_relation) = "v_list";
+    option (kacho.iam.authz.v1.scope_extractor)   = {
+      object_type:        "project"
+      from_request_field: "project_id"
+    };
+    option (kacho.iam.authz.v1.required_acr_min)  = "2";
+  }
+
+  rpc Create(CreateTargetGroupRequest) returns (operation.Operation) {
+    option (google.api.http) = {
+      post: "/nlb/v1/targetGroups"
+      body: "*"
+    };
+    option (kacho.cloud.api.operation) = {
+      metadata: "CreateTargetGroupMetadata"
+      response: "TargetGroup"
+    };
+    option (kacho.iam.authz.v1.permission)        = "loadbalancer.targetGroups.create";
+    option (kacho.iam.authz.v1.required_relation) = "editor";
+    option (kacho.iam.authz.v1.scope_extractor)   = {
+      object_type:        "project"
+      from_request_field: "project_id"
+    };
+    option (kacho.iam.authz.v1.required_acr_min)  = "2";
+  }
+
+  rpc Update(UpdateTargetGroupRequest) returns (operation.Operation) {
+    option (google.api.http) = {
+      patch: "/nlb/v1/targetGroups/{target_group_id}"
+      body: "*"
+    };
+    option (kacho.cloud.api.operation) = {
+      metadata: "UpdateTargetGroupMetadata"
+      response: "TargetGroup"
+    };
+    option (kacho.iam.authz.v1.permission)        = "loadbalancer.targetGroups.update";
+    option (kacho.iam.authz.v1.required_relation) = "v_update";
+    option (kacho.iam.authz.v1.scope_extractor)   = {
+      object_type:        "lb_target_group"
+      from_request_field: "target_group_id"
+    };
+    option (kacho.iam.authz.v1.required_acr_min)  = "2";
+  }
+
+  rpc Delete(DeleteTargetGroupRequest) returns (operation.Operation) {
+    option (google.api.http) = {delete: "/nlb/v1/targetGroups/{target_group_id}"};
+    option (kacho.cloud.api.operation) = {
+      metadata: "DeleteTargetGroupMetadata"
+      response: "google.protobuf.Empty"
+    };
+    option (kacho.iam.authz.v1.permission)        = "loadbalancer.targetGroups.delete";
+    option (kacho.iam.authz.v1.required_relation) = "v_delete";
+    option (kacho.iam.authz.v1.scope_extractor)   = {
+      object_type:        "lb_target_group"
+      from_request_field: "target_group_id"
+    };
+    option (kacho.iam.authz.v1.required_acr_min)  = "2";
+  }
+
+  // Move the target group to another project. Blocked if currently attached
+  // to any NetworkLoadBalancer (design §3.4).
+  rpc Move(MoveTargetGroupRequest) returns (operation.Operation) {
+    option (google.api.http) = {
+      post: "/nlb/v1/targetGroups/{target_group_id}:move"
+      body: "*"
+    };
+    option (kacho.cloud.api.operation) = {
+      metadata: "MoveTargetGroupMetadata"
+      response: "TargetGroup"
+    };
+    option (kacho.iam.authz.v1.permission)        = "loadbalancer.targetGroups.move";
+    option (kacho.iam.authz.v1.required_relation) = "v_update";
+    // Source-project scope; destination editor check added by a
+    // scope-conditional extractor in kacho-nlb (design §6.5).
+    option (kacho.iam.authz.v1.scope_extractor)   = {
+      object_type:        "lb_target_group"
+      from_request_field: "target_group_id"
+    };
+    option (kacho.iam.authz.v1.required_acr_min)  = "2";
+  }
+
+  rpc AddTargets(AddTargetsRequest) returns (operation.Operation) {
+    option (google.api.http) = {
+      post: "/nlb/v1/targetGroups/{target_group_id}:addTargets"
+      body: "*"
+    };
+    option (kacho.cloud.api.operation) = {
+      metadata: "AddTargetsMetadata"
+      response: "TargetGroup"
+    };
+    option (kacho.iam.authz.v1.permission)        = "loadbalancer.targetGroups.addTargets";
+    option (kacho.iam.authz.v1.required_relation) = "v_update";
+    option (kacho.iam.authz.v1.scope_extractor)   = {
+      object_type:        "lb_target_group"
+      from_request_field: "target_group_id"
+    };
+    option (kacho.iam.authz.v1.required_acr_min)  = "2";
+  }
+
+  rpc RemoveTargets(RemoveTargetsRequest) returns (operation.Operation) {
+    option (google.api.http) = {
+      post: "/nlb/v1/targetGroups/{target_group_id}:removeTargets"
+      body: "*"
+    };
+    option (kacho.cloud.api.operation) = {
+      metadata: "RemoveTargetsMetadata"
+      response: "TargetGroup"
+    };
+    option (kacho.iam.authz.v1.permission)        = "loadbalancer.targetGroups.removeTargets";
+    option (kacho.iam.authz.v1.required_relation) = "v_update";
+    option (kacho.iam.authz.v1.scope_extractor)   = {
+      object_type:        "lb_target_group"
+      from_request_field: "target_group_id"
+    };
+    option (kacho.iam.authz.v1.required_acr_min)  = "2";
+  }
+
+  rpc ListOperations(ListTargetGroupOperationsRequest) returns (ListTargetGroupOperationsResponse) {
+    option (google.api.http) = {get: "/nlb/v1/targetGroups/{target_group_id}/operations"};
+    option (kacho.iam.authz.v1.permission)        = "loadbalancer.targetGroups.listOperations";
+    option (kacho.iam.authz.v1.required_relation) = "v_list";
+    option (kacho.iam.authz.v1.scope_extractor)   = {
+      object_type:        "lb_target_group"
+      from_request_field: "target_group_id"
+    };
+    option (kacho.iam.authz.v1.required_acr_min)  = "2";
+  }
+}
+
+message GetTargetGroupRequest {
+  string target_group_id = 1 [
+    (required) = true,
+    (length) = "<=50"
+  ];
+}
+
+message ListTargetGroupsRequest {
+  string project_id = 1 [
+    (required) = true,
+    (length) = "<=50"
+  ];
+  int64 page_size = 2 [(value) = "<=1000"];
+  string page_token = 3 [(length) = "<=100"];
+  string filter = 4 [(length) = "<=1000"];
+}
+
+message ListTargetGroupsResponse {
+  repeated TargetGroup target_groups = 1;
+  string next_page_token = 2;
+}
+
+message CreateTargetGroupRequest {
+  reserved 6;
+
+  string project_id = 1 [
+    (required) = true,
+    (length) = "<=50"
+  ];
+  string name = 2 [(pattern) = "|[a-z][-a-z0-9]{1,61}[a-z0-9]"];
+  string description = 3 [(length) = "<=256"];
+  map<string, string> labels = 4 [
+    (kacho.cloud.size) = "<=64",
+    (length) = "<=63",
+    (pattern) = "[-_0-9a-z]*",
+    (map_key).length = "1-63",
+    (map_key).pattern = "[a-z][-_0-9a-z]*"
+  ];
+  string region_id = 5 [(length) = "<=50"];
+
+  // Inline initial targets accepted at Create time. Validation: per-target
+  // domain.Validate() + peer-resolve in worker (design §4.3).
+  repeated Target targets = 7;
+
+  // Required — single embedded HC per group (design §2.2).
+  HealthCheck health_check = 8 [(required) = true];
+
+  // Drain timeout for removed targets (design §4.4). Default 300 when zero.
+  int32 deregistration_delay_seconds = 9 [(value) = "0-3600"];
+
+  // Slow-start ramp window for added targets. Default 0 (off).
+  int32 slow_start_seconds = 10 [(value) = "0-900"];
+}
+
+message CreateTargetGroupMetadata {
+  string target_group_id = 1;
+}
+
+message UpdateTargetGroupRequest {
+  string target_group_id = 1 [
+    (required) = true,
+    (length) = "<=50"
+  ];
+  google.protobuf.FieldMask update_mask = 2;
+  string name = 3 [(pattern) = "|[a-z][-a-z0-9]{1,61}[a-z0-9]"];
+  string description = 4 [(length) = "<=256"];
+  map<string, string> labels = 5 [
+    (kacho.cloud.size) = "<=64",
+    (length) = "<=63",
+    (pattern) = "[-_0-9a-z]*",
+    (map_key).length = "1-63",
+    (map_key).pattern = "[a-z][-_0-9a-z]*"
+  ];
+
+  // Targets list replacement is rejected on this RPC — use AddTargets /
+  // RemoveTargets so each target mutation goes through its own Operation
+  // history and idempotency keys (design §3.4).
+  repeated Target targets = 6;
+
+  HealthCheck health_check = 7;
+  int32 deregistration_delay_seconds = 8 [(value) = "0-3600"];
+  int32 slow_start_seconds = 9 [(value) = "0-900"];
+}
+
+message UpdateTargetGroupMetadata {
+  string target_group_id = 1;
+}
+
+message DeleteTargetGroupRequest {
+  string target_group_id = 1 [
+    (required) = true,
+    (length) = "<=50"
+  ];
+}
+
+message DeleteTargetGroupMetadata {
+  string target_group_id = 1;
+}
+
+message MoveTargetGroupRequest {
+  string target_group_id = 1 [
+    (required) = true,
+    (length) = "<=50"
+  ];
+  string destination_project_id = 2 [
+    (required) = true,
+    (length) = "<=50"
+  ];
+}
+
+message MoveTargetGroupMetadata {
+  string target_group_id = 1;
+  string destination_project_id = 2;
+}
+
+message AddTargetsRequest {
+  string target_group_id = 1 [
+    (required) = true,
+    (length) = "<=50"
+  ];
+  repeated Target targets = 2 [(size) = ">=1"];
+}
+
+message AddTargetsMetadata {
+  string target_group_id = 1;
+}
+
+message RemoveTargetsRequest {
+  string target_group_id = 1 [
+    (required) = true,
+    (length) = "<=50"
+  ];
+  repeated Target targets = 2 [(size) = ">=1"];
+}
+
+message RemoveTargetsMetadata {
+  string target_group_id = 1;
+}
+
+message ListTargetGroupOperationsRequest {
+  string target_group_id = 1 [
+    (required) = true,
+    (length) = "<=50"
+  ];
+  int64 page_size = 2 [(value) = "<=1000"];
+  string page_token = 3 [(length) = "<=100"];
+}
+
+message ListTargetGroupOperationsResponse {
+  repeated operation.Operation operations = 1;
+  string next_page_token = 2;
+}

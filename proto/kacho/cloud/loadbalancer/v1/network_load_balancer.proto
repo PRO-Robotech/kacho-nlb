@@ -1,0 +1,127 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
+syntax = "proto3";
+
+package kacho.cloud.loadbalancer.v1;
+
+import "google/protobuf/timestamp.proto";
+import "kacho/cloud/loadbalancer/v1/health_check.proto";
+import "kacho/cloud/validation.proto";
+
+option go_package = "github.com/PRO-Robotech/kacho-nlb/proto/gen/go/kacho/cloud/loadbalancer/v1;loadbalancerv1";
+
+// IP version of the addresses that the load balancer works with.
+enum IpVersion {
+  IP_VERSION_UNSPECIFIED = 0;
+  IPV4 = 1;
+  IPV6 = 2;
+}
+
+// NetworkLoadBalancer — L4 regional load balancer (design §2.2).
+message NetworkLoadBalancer {
+  // Reserved hot-path / future fields. 8/16/17 are vestigial upstream
+  // numbers. 12 (was inline `repeated Listener listeners`) is now reserved
+  // because Listener is a standalone resource (see listener.proto) and
+  // promoting the field would create a circular proto import. 30-39 are
+  // claimed for the future GlobalLoadBalancer composition layer (design
+  // §«Future TODO» / §6.3) so a single NLB can be lifted into a GLB without
+  // renumbering wire-incompatibly.
+  reserved 8, 12, 16, 17;
+  reserved "listeners";
+  reserved 30 to 39;
+
+  enum Status {
+    STATUS_UNSPECIFIED = 0;
+    CREATING = 1;
+    STARTING = 2;
+    ACTIVE = 3;
+    STOPPING = 4;
+    STOPPED = 5;
+    DELETING = 6;
+    // No active listeners or attached target groups; no health-checks issued,
+    // no traffic forwarded.
+    INACTIVE = 7;
+  }
+
+  enum Type {
+    TYPE_UNSPECIFIED = 0;
+    EXTERNAL = 1;
+    INTERNAL = 2;
+  }
+
+  enum SessionAffinity {
+    SESSION_AFFINITY_UNSPECIFIED = 0;
+    // 5-tuple affinity (src ip+port, dst ip+port, proto).
+    CLIENT_IP_PORT_PROTO = 1;
+  }
+
+  string id = 1;
+
+  // ID of the project the NLB belongs to.
+  string project_id = 2;
+
+  google.protobuf.Timestamp created_at = 3;
+  string name = 4;
+  string description = 5;
+  map<string, string> labels = 6;
+
+  string region_id = 7;
+
+  Status status = 9;
+  Type type = 10;
+  SessionAffinity session_affinity = 11;
+
+  // Inline attached target groups snapshot — DEPRECATED. The
+  // `attached_target_groups` DB pivot (M:N managed via
+  // AttachTargetGroup/DetachTargetGroup RPCs, design §3.2 / §5.2) is the
+  // source of truth. Retained for yc-shim JSON-name compatibility.
+  repeated AttachedTargetGroup attached_target_groups = 13 [deprecated = true];
+
+  bool deletion_protection = 14;
+
+  bool allow_zonal_shift = 15;
+
+  repeated DisableZoneStatus disable_zone_statuses = 18;
+}
+
+// AttachedTargetGroup — yc-shim-compat snapshot of a single
+// `attached_target_groups` pivot row. Source of truth is the DB pivot
+// (design §5.2). Retained solely as the element type for
+// NetworkLoadBalancer.attached_target_groups (deprecated field).
+message AttachedTargetGroup {
+  string target_group_id = 1 [
+    (required) = true,
+    (length) = "<=50"
+  ];
+
+  // Snapshot of HealthCheck configuration from the parent target group at
+  // attach time. Source of truth is `target_groups.health_check` (JSONB).
+  repeated HealthCheck health_checks = 2 [(size) = "1"];
+}
+
+// TargetState — per-target health snapshot returned by
+// NetworkLoadBalancerService.GetTargetStates / TargetGroupService.GetTargetStates
+// (design §4.6, computed sync). Not a stored entity.
+message TargetState {
+  enum Status {
+    STATUS_UNSPECIFIED = 0;
+    INITIAL = 1;
+    HEALTHY = 2;
+    UNHEALTHY = 3;
+    DRAINING = 4;
+    INACTIVE = 5;
+  }
+
+  string subnet_id = 1;
+  string address = 2;
+  Status status = 3;
+  bool zone_shifted = 4;
+}
+
+// DisableZoneStatus — zonal-shift state record (deprecated upstream feature
+// not implemented in kacho-nlb; field 18 retained as data carrier only).
+message DisableZoneStatus {
+  string zone_id = 1 [(required) = true];
+  google.protobuf.Timestamp disabled_until = 2;
+}

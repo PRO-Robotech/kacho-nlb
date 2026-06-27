@@ -1,0 +1,47 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
+syntax = "proto3";
+
+
+package kacho.cloud.loadbalancer.v1;
+
+option go_package = "github.com/PRO-Robotech/kacho-nlb/proto/gen/go/kacho/cloud/loadbalancer/v1;loadbalancerv1";
+
+// Package divergences from upstream YC (kacho-nlb, KAC-145 design doc).
+//
+// 1. Listener is a standalone resource with its own ListenerService and FGA
+//    object type `nlb_listener`. Upstream YC carried Listener as an inline
+//    repeated field of NetworkLoadBalancer mutated via AddListener/
+//    RemoveListener. NetworkLoadBalancer.listeners (was tag 12) and the
+//    inline yc message `Listener` are removed; tag 12 and the JSON name
+//    `listeners` are `reserved` so the wire/name slots cannot be reused
+//    incompatibly (a circular import would result from re-promoting the
+//    field to the standalone Listener type).
+//
+// 2. Target uses a 4-way identity oneof (instance_id / nic_id /
+//    InCloudIP{subnet_id,address} / ExternalIP{address,zone_id?}) plus a
+//    `weight` field. Upstream YC's flat (subnet_id, address) shape is
+//    captured as the `InCloudIP` oneof case; the old top-level fields are
+//    `reserved` (tags 1, 2) so they cannot be reused incompatibly.
+//
+// 3. attached_target_groups[] on NetworkLoadBalancer is deprecated. Source
+//    of truth is the `attached_target_groups` DB pivot; M:N membership is
+//    managed via AttachTargetGroup / DetachTargetGroup RPCs on
+//    NetworkLoadBalancerService.
+//
+// 4. Zonal-shift RPCs (DisableZones / EnableZones) and per-NLB inline
+//    AddListener / RemoveListener RPCs are removed entirely. kacho-nlb MVP
+//    has no zonal-shift data plane (design §«Future TODO»).
+//
+// 5. REST surface uses the `/nlb/v1/` prefix (was `/load-balancer/v1/`
+//    upstream YC); matches the new service name `kacho-nlb`.
+//
+// Reserved ranges held for the future GlobalLoadBalancer composition layer
+// (cross-region; design §«Future TODO»). These are claimed up front so that
+// when GLB lands the proto wire-format stays additive across the existing
+// resources:
+//
+//   - NetworkLoadBalancer fields 30 to 39 — GLB membership / weight / DNS
+//     hint slots.
+//   - Target fields 10 to 19 — per-target region/anycast hints.

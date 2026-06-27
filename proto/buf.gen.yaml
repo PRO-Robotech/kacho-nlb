@@ -1,0 +1,27 @@
+version: v2
+plugins:
+  - local: protoc-gen-go
+    out: gen/go
+    opt: paths=source_relative
+  - local: protoc-gen-go-grpc
+    out: gen/go
+    opt:
+      - paths=source_relative
+      - require_unimplemented_servers=true
+  - local: protoc-gen-grpc-gateway
+    out: gen/go
+    opt:
+      - paths=source_relative
+      - generate_unbound_methods=true
+# Доменный proto kacho-nlb генерируется здесь: kacho/cloud/loadbalancer/v1
+# (NetworkLoadBalancer/Listener/TargetGroup/HealthCheck + Internal*-lifecycle).
+# Универсальная ИНФРА (operation/validation/authz_options/cloud-api/google) живёт
+# и генерируется в kacho-corelib и вендорится сюда ТОЛЬКО для buf-резолва импортов.
+# Их go_package указывает на corelib (google — на canonical genproto), поэтому
+# исключаем сами файлы из генерации — kacho-nlb не владеет их Go-stub'ами и не
+# дублирует их. PermissionMap nlb — hand-written (internal/check/permission_map.go),
+# buf-catalog-плагин не нужен.
+inputs:
+  - directory: .
+    paths:
+      - kacho/cloud/loadbalancer/v1
