@@ -650,22 +650,23 @@ func TestAZD024_CacheHit_FastPath(t *testing.T) {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// GWT-AZD-025 — InternalResourceLifecycleService.Subscribe — НЕ на public
-// listener'е. Здесь — sanity: PermissionMap НЕ содержит record для
-// `InternalResourceLifecycleService/Subscribe` (internal-only защита через
-// methodIsInternal heuristic + listener-isolation).
+// GWT-AZD-025 — InternalResourceLifecycleService.Subscribe живёт только на
+// internal listener'е и потому НЕ замаплен в PermissionMap. Любой RPC, не
+// найденный в map (даже с "Internal" в имени), интерсептор закрывает
+// fail-closed: PermissionDenied, при этом ни handler, ни Check не вызываются.
+// Имя метода не даёт привилегий — права берутся исключительно из permission_map.
 // ────────────────────────────────────────────────────────────────────────────
 
-func TestAZD025_InternalRPC_NotInPermissionMap(t *testing.T) {
+func TestAZD025_UnmappedInternalRPC_FailClosed(t *testing.T) {
 	m := check.PermissionMap()
 	const fm = "/kacho.cloud.loadbalancer.v1.InternalResourceLifecycleService/Subscribe"
 	_, ok := m[fm]
 	require.False(t, ok, "Internal* RPC must NOT be в PermissionMap (lives on internal listener only)")
 
-	// Sanity: interceptor пропускает Internal* по methodIsInternal heuristic
-	// (если случайно попадёт на public listener — DecisionInternal bypass).
-	intr, _, _ := newTestInterceptor(t, func(_ context.Context, _, _, _ string) (bool, error) {
-		t.Fatal("Internal RPC: Check must not be invoked")
+	// Незамапленный RPC закрывается fail-closed: handler не исполняется, Check
+	// не вызывается, наружу уходит PermissionDenied.
+	intr, n, _ := newTestInterceptor(t, func(_ context.Context, _, _, _ string) (bool, error) {
+		t.Fatal("unmapped RPC: Check must not be invoked")
 		return false, nil
 	})
 	called := false
@@ -675,8 +676,10 @@ func TestAZD025_InternalRPC_NotInPermissionMap(t *testing.T) {
 		&grpc.UnaryServerInfo{FullMethod: fm},
 		func(context.Context, any) (any, error) { called = true; return "ok", nil },
 	)
-	require.NoError(t, err)
-	require.True(t, called)
+	st, _ := status.FromError(err)
+	require.Equal(t, codes.PermissionDenied, st.Code())
+	require.False(t, called, "handler must not run for unmapped RPC")
+	require.Equal(t, 0, *n, "Check must not run for unmapped RPC")
 }
 
 // ────────────────────────────────────────────────────────────────────────────
