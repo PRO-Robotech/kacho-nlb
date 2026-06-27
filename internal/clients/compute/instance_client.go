@@ -10,7 +10,7 @@ import (
 
 	"github.com/PRO-Robotech/kacho-corelib/auth"
 	"github.com/PRO-Robotech/kacho-corelib/retry"
-	computepb "github.com/PRO-Robotech/kacho-proto/gen/go/kacho/cloud/compute/v1"
+	computepb "github.com/PRO-Robotech/kacho-compute/proto/gen/go/kacho/cloud/compute/v1"
 
 	"github.com/PRO-Robotech/kacho-nlb/internal/domain"
 )

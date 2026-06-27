@@ -9,7 +9,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
-	computepb "github.com/PRO-Robotech/kacho-proto/gen/go/kacho/cloud/compute/v1"
+	computepb "github.com/PRO-Robotech/kacho-compute/proto/gen/go/kacho/cloud/compute/v1"
 )
 
 // startFakeCompute поднимает gRPC server in-memory (TCP loopback :0).
