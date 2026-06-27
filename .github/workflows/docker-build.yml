@@ -52,10 +52,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with: { path: kacho-nlb }
-      - uses: actions/checkout@v4
-        with: { repository: PRO-Robotech/kacho-corelib, ref: main, path: kacho-corelib }
-      - uses: actions/checkout@v4
-        with: { repository: PRO-Robotech/kacho-proto, ref: main, path: kacho-proto }
 
       - uses: benjlevesque/short-sha@v3.0
         id: short-sha
@@ -94,7 +90,7 @@ jobs:
       - name: Build and push (multiarch)
         uses: docker/build-push-action@v6
         with:
-          context: .
+          context: kacho-nlb
           file: ./kacho-nlb/Dockerfile
           push: true
           provenance: false
