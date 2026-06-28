@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package loadbalancer
 
 import (
@@ -19,11 +22,10 @@ import (
 	kachopg "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho/pg"
 )
 
-// CreateLoadBalancerUseCase — async Create flow (design §4.1, acceptance
-// GWT-NLB-001..GWT-NLB-006).
+// CreateLoadBalancerUseCase — async Create flow.
 //
 // Sync part:
-//   - sync-validate request → domain.LoadBalancer.Validate() (multi-err fast-fail);
+//   - sync-validate request → domain.LoadBalancer.Validate (multi-err fast-fail);
 //   - sync-check duplicate-name via repo.Reader.List(project+name) → AlreadyExists;
 //   - operations.New + opsRepo.CreateWithPrincipal → return Operation immediately.
 //
@@ -31,7 +33,7 @@ import (
 //   - peer-check `project_id` (`InvalidArgument`/`Unavailable` on failure);
 //   - peer-check `region_id`;
 //   - open Writer-TX → Insert(LB) + Outbox.Emit("CREATED") +
-//     FGARegisterOutbox.Emit(fga.register) → Commit (SEC-D Вариант A: the
+//     FGARegisterOutbox.Emit(fga.register) → Commit (Вариант A: the
 //     owner-hierarchy + creator tuple intent is written in the SAME writer-tx
 //     as the Insert — no dual-write; a register-drainer applies it through
 //     kacho-iam InternalIAMService.RegisterResource);
@@ -97,7 +99,7 @@ func (u *CreateLoadBalancerUseCase) Execute(
 		return nil, mapDomainErr(err)
 	}
 
-	// Sync duplicate-name check (design §4.1). Race against concurrent insert
+	// Sync duplicate-name check. Race against concurrent insert
 	// финализируется UNIQUE-constraint backstop в worker'е.
 	if string(lb.Name) != "" {
 		if err := u.assertNameUnique(ctx, string(lb.ProjectID), string(lb.Name)); err != nil {
@@ -112,11 +114,11 @@ func (u *CreateLoadBalancerUseCase) Execute(
 		&lbv1.CreateNetworkLoadBalancerMetadata{NetworkLoadBalancerId: string(lb.ID)},
 	)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "build operation: %v", err)
+		return nil, mapDomainErr(err)
 	}
 	principal := operations.PrincipalFromContext(ctx)
 	if err := u.opsRepo.CreateWithPrincipal(ctx, op, principal); err != nil {
-		return nil, status.Errorf(codes.Internal, "operation persist: %v", err)
+		return nil, mapDomainErr(err)
 	}
 
 	// ---- Spawn worker ----
@@ -153,7 +155,7 @@ func (u *CreateLoadBalancerUseCase) doCreate(
 	}
 	defer w.Abort()
 
-	// Set Status to INACTIVE (design §4.1: trigger lb_status_recompute will adjust
+	// Set Status to INACTIVE (trigger lb_status_recompute will adjust
 	// to ACTIVE if listeners + attached TG arrive; default CREATING from builder
 	// would block Start preconditions). Use INACTIVE as terminal Create state.
 	lb.Status = domain.LBStatusInactive
@@ -168,8 +170,8 @@ func (u *CreateLoadBalancerUseCase) doCreate(
 	); err != nil {
 		return nil, mapDomainErr(err)
 	}
-	// SEC-D: FGA-register-intent (project-hierarchy + creator) in the SAME tx as
-	// the Insert — durable, applied async by the register-drainer (epic §3.1
+	// FGA-register-intent (project-hierarchy + creator) in the SAME tx as
+	// the Insert — durable, applied async by the register-drainer (
 	// Вариант A; replaces the former best-effort post-commit fgawrite, Issue N5).
 	if err := w.FGARegisterOutbox().Emit(ctx, domain.FGAEventRegister,
 		lbRegisterIntent(created, principal)); err != nil {
@@ -186,7 +188,7 @@ func (u *CreateLoadBalancerUseCase) doCreate(
 	}
 	out, err := anypb.New(pb)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "marshal response: %v", err)
+		return nil, mapDomainErr(err)
 	}
 	return out, nil
 }
@@ -215,7 +217,7 @@ func (u *CreateLoadBalancerUseCase) assertNameUnique(ctx context.Context, projec
 	return nil
 }
 
-// lbRegisterIntent builds the SEC-D FGA-register-intent for a freshly created
+// lbRegisterIntent builds the FGA-register-intent for a freshly created
 // LoadBalancer: a project-hierarchy tuple plus, if the principal is an
 // authenticated (non-system) user, a creator (admin) tuple. The empty-subject
 // creator tuple is skipped (parity with the former EmitCreator skip-on-empty-
@@ -228,7 +230,7 @@ func lbRegisterIntent(lb *kachorepo.LoadBalancerRecord, principal operations.Pri
 	if subject := domain.FGASubjectFromPrincipal(principal.Type, principal.ID); subject != "" {
 		tuples = append(tuples, domain.FGACreatorTuple(subject, domain.FGAObjectTypeLoadBalancer, id))
 	}
-	// epic-rsab T3 (D4): carry tenant labels + parent-project so kacho-iam feeds its
+	// carry tenant labels + parent-project so kacho-iam feeds its
 	// resource_mirror (γ selector matchLabels / containment). source_version is
 	// stamped by the outbox emitter from the DB clock inside the writer-tx.
 	return domain.FGARegisterIntent{
@@ -240,9 +242,9 @@ func lbRegisterIntent(lb *kachorepo.LoadBalancerRecord, principal operations.Pri
 	}
 }
 
-// lbMirrorIntent builds the epic-rsab T3 (D4) mirror-feed register-intent for an
+// lbMirrorIntent builds the mirror-feed register-intent for an
 // UPDATED LoadBalancer: the project-hierarchy tuple (re-register is idempotent in
-// IAM per SEC-A) carrying the refreshed labels + parent so kacho-iam updates its
+// IAM) carrying the refreshed labels + parent so kacho-iam updates its
 // resource_mirror. No creator tuple — Update never re-assigns ownership; this is a
 // pure labels-refresh feed. source_version is stamped by the outbox emitter.
 func lbMirrorIntent(lb *kachorepo.LoadBalancerRecord) domain.FGARegisterIntent {

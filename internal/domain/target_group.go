@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package domain
 
 import (
@@ -5,14 +8,14 @@ import (
 	"go.uber.org/multierr"
 )
 
-// TargetGroup — domain entity TargetGroup (design §2.2).
+// TargetGroup — domain entity TargetGroup.
 //
 // Targets — embedded child (физически живут в отдельной таблице `targets` с
 // FK ON DELETE RESTRICT, но domain-модель удобнее держать flat для Validate
 // и use-case-операций AddTargets/RemoveTargets).
 //
 // HealthCheck сериализуется JSONB-колонкой; embedded — потому что у TG ровно
-// один HC (design §2.2).
+// один HC.
 type TargetGroup struct {
 	ID                         ResourceID
 	ProjectID                  ProjectID
@@ -28,7 +31,7 @@ type TargetGroup struct {
 }
 
 // Validate — все семантически-нагруженные поля + cardinality лимит + bound checks.
-// Покрывает acceptance TGR-005..TGR-008.
+// Покрывает.
 func (tg TargetGroup) Validate() error {
 	deregErr := error(nil)
 	if tg.DeregistrationDelaySeconds < DeregistrationDelayMin ||
@@ -54,7 +57,7 @@ func (tg TargetGroup) Validate() error {
 	}
 
 	// Per-target Validate. Останавливаемся на первой проблеме (early-exit)
-	// — иначе error-message раздуется до 100*N FieldViolations.
+	// иначе error-message раздуется до 100*N FieldViolations.
 	var perTargetErr error
 	for i := range tg.Targets {
 		if err := tg.Targets[i].Validate(); err != nil {

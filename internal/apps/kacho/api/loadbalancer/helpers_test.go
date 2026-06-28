@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package loadbalancer
 
 import (
@@ -62,7 +65,7 @@ func TestSubnetOfTarget(t *testing.T) {
 	}))
 }
 
-// TestLBRegisterIntent_SystemPrincipal_ProjectTupleOnly — SEC-D: a system /
+// TestLBRegisterIntent_SystemPrincipal_ProjectTupleOnly — a system /
 // unauthenticated principal yields only the project-hierarchy tuple (no creator).
 func TestLBRegisterIntent_SystemPrincipal_ProjectTupleOnly(t *testing.T) {
 	t.Parallel()
@@ -75,7 +78,7 @@ func TestLBRegisterIntent_SystemPrincipal_ProjectTupleOnly(t *testing.T) {
 	require.Equal(t, "project:prj", intent.Tuples[0].SubjectID)
 }
 
-// TestLBRegisterIntent_UserPrincipal_ProjectAndCreator — SEC-D: an authenticated
+// TestLBRegisterIntent_UserPrincipal_ProjectAndCreator — an authenticated
 // user principal yields project-hierarchy + creator (admin) tuples.
 func TestLBRegisterIntent_UserPrincipal_ProjectAndCreator(t *testing.T) {
 	t.Parallel()

@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package shared
 
 import (
@@ -7,9 +10,8 @@ import (
 	"github.com/PRO-Robotech/kacho-corelib/filter"
 )
 
-// nameField is the only whitelisted filter field in the current NLB phase
-// (api-conventions: «filter — kacho-corelib/filter.Parse с whitelist полей —
-// текущая фаза name=»).
+// nameField is the only whitelisted filter field in the current NLB API surface
+// (filter — kacho-corelib/filter.Parse с whitelist полей; текущий whitelist — name=).
 const nameField = "name"
 
 // ParseNameFilter parses the request `filter` string and returns the requested

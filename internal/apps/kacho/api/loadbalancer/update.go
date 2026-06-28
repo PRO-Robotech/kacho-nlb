@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package loadbalancer
 
 import (
@@ -23,7 +26,7 @@ import (
 // allow_zonal_shift (proto field) — пока не хранится в domain (reserved для
 // будущего toggle); если попало в mask — silent-accept без эффекта.
 //
-// Acceptance: GWT-NLB-011..GWT-NLB-014.
+// Acceptance:.
 type UpdateLoadBalancerUseCase struct {
 	repo    Repo
 	opsRepo operations.Repo
@@ -48,7 +51,7 @@ var knownUpdateFields = map[string]bool{
 	"allow_zonal_shift":   true, // silent-accept (no domain effect — reserved).
 }
 
-// immutableUpdateFields — hard-immutable; в mask → InvalidArgument verbatim.
+// immutableUpdateFields — hard-immutable; в mask → InvalidArgument с фиксированным текстом.
 var immutableUpdateFields = map[string]string{
 	"type":       "type is immutable after NetworkLoadBalancer.Create",
 	"region_id":  "region_id is immutable after NetworkLoadBalancer.Create",
@@ -63,6 +66,9 @@ func (u *UpdateLoadBalancerUseCase) Execute(
 	id := req.GetNetworkLoadBalancerId()
 	if id == "" {
 		return nil, errInvalidArg("network_load_balancer_id", "required")
+	}
+	if err := validateLoadBalancerID(id); err != nil {
+		return nil, err
 	}
 
 	mask := req.GetUpdateMask().GetPaths()
@@ -100,14 +106,14 @@ func (u *UpdateLoadBalancerUseCase) Execute(
 		&lbv1.UpdateNetworkLoadBalancerMetadata{NetworkLoadBalancerId: id},
 	)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "build operation: %v", err)
+		return nil, mapDomainErr(err)
 	}
 	principal := operations.PrincipalFromContext(ctx)
 	if err := u.opsRepo.CreateWithPrincipal(ctx, op, principal); err != nil {
-		return nil, status.Errorf(codes.Internal, "operation persist: %v", err)
+		return nil, mapDomainErr(err)
 	}
 
-	// epic-rsab T3 (D4, parity with compute-β-04): re-emit the FGA-register intent
+	// (parity with compute): re-emit the FGA-register intent
 	// (carrying the new labels) ONLY when labels change — labels in mask, or empty
 	// mask (full PATCH always reapplies labels). A non-labels Update is a mirror
 	// no-op (skip the intent to avoid a useless RegisterResource round-trip).
@@ -134,7 +140,7 @@ func labelsInMask(mask []string) bool {
 }
 
 // doUpdate — worker: open Writer → Update + outbox UPDATED (+ FGA-register intent
-// when labels changed, T3 D4) → Commit. The mirror-feed intent is written in the
+// when labels changed) → Commit. The mirror-feed intent is written in the
 // SAME writer-tx as the resource UPDATE (no dual-write); the emitter stamps a
 // monotonic source_version so IAM applies the mirror last-source-state-wins.
 func (u *UpdateLoadBalancerUseCase) doUpdate(ctx context.Context, lb domain.LoadBalancer, emitMirror bool) (*anypb.Any, error) {
@@ -170,14 +176,14 @@ func (u *UpdateLoadBalancerUseCase) doUpdate(ctx context.Context, lb domain.Load
 	}
 	out, err := anypb.New(pb)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "marshal response: %v", err)
+		return nil, mapDomainErr(err)
 	}
 	return out, nil
 }
 
 // applyUpdateMask — наложить mask на текущий LB. Empty mask → full PATCH:
 // mutable полностью перезаписываются из req; immutable silent-ignored
-// (verbatim YC).
+// (по конвенции Kachō).
 func applyUpdateMask(
 	cur domain.LoadBalancer, req *lbv1.UpdateNetworkLoadBalancerRequest, mask []string,
 ) domain.LoadBalancer {

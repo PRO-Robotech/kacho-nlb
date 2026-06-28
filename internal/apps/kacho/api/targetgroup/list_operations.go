@@ -1,17 +1,17 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package targetgroup
 
 import (
 	"context"
-
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 
 	"github.com/PRO-Robotech/kacho-corelib/operations"
 	lbv1 "github.com/PRO-Robotech/kacho-nlb/proto/gen/go/kacho/cloud/loadbalancer/v1"
 )
 
 // ListOperationsUseCase — per-resource Operation history filtered by
-// resource_id == target_group_id (acceptance GWT-TGR-028). Sync read.
+// resource_id == target_group_id. Sync read.
 type ListOperationsUseCase struct {
 	opsRepo OpsRepo
 }
@@ -29,13 +29,16 @@ func (u *ListOperationsUseCase) Execute(
 	if id == "" {
 		return nil, errInvalidArg("target_group_id", "required")
 	}
+	if err := validateTargetGroupID(id); err != nil {
+		return nil, err
+	}
 	ops, next, err := u.opsRepo.List(ctx, operations.ListFilter{
 		ResourceID: id,
 		PageSize:   req.GetPageSize(),
 		PageToken:  req.GetPageToken(),
 	})
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "list operations: %v", err)
+		return nil, mapDomainErr(err)
 	}
 	resp := &lbv1.ListTargetGroupOperationsResponse{NextPageToken: next}
 	for i := range ops {

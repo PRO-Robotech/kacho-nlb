@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package listener
 
 import (
@@ -10,8 +13,8 @@ import (
 	lbv1 "github.com/PRO-Robotech/kacho-nlb/proto/gen/go/kacho/cloud/loadbalancer/v1"
 )
 
-// ListOperationsUseCase — sync per-Listener Operations history (acceptance
-// GWT-LST-026). Tonkii wrapper над `kacho-corelib/operations.Repo.List`
+// ListOperationsUseCase — sync per-Listener Operations history.
+// Tonkii wrapper над `kacho-corelib/operations.Repo.List`
 // с фильтром `resource_id == <listener_id>` (extractResourceID per
 // CreateListenerMetadata.listener_id / UpdateListenerMetadata.listener_id /
 // DeleteListenerMetadata.listener_id).
@@ -34,6 +37,9 @@ func (u *ListOperationsUseCase) Run(ctx context.Context, req *lbv1.ListListenerO
 	id := req.GetListenerId()
 	if id == "" {
 		return nil, status.Error(codes.InvalidArgument, "listener_id required")
+	}
+	if err := validateListenerID(id); err != nil {
+		return nil, err
 	}
 	ops, next, err := u.opsRepo.List(ctx, operations.ListFilter{
 		ResourceID: id,

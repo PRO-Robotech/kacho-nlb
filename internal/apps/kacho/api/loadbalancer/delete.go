@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package loadbalancer
 
 import (
@@ -19,9 +22,9 @@ import (
 	kachopg "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho/pg"
 )
 
-// lbUnregisterIntent builds the SEC-D FGA-unregister-intent (project-hierarchy)
+// lbUnregisterIntent builds the FGA-unregister-intent (project-hierarchy)
 // for a deleted LoadBalancer. The creator tuple is left for IAM-side GC
-// (OQ-SEC-D-4: unregister project-hierarchy/parent-link; creator is per SEC-C).
+// (unregister project-hierarchy/parent-link).
 func lbUnregisterIntent(id, projectID string) domain.FGARegisterIntent {
 	return domain.FGARegisterIntent{
 		Kind:       "NetworkLoadBalancer",
@@ -32,11 +35,10 @@ func lbUnregisterIntent(id, projectID string) domain.FGARegisterIntent {
 	}
 }
 
-// DeleteLoadBalancerUseCase — sync precheck + async delete (acceptance
-// GWT-NLB-015..GWT-NLB-019).
+// DeleteLoadBalancerUseCase — sync precheck + async delete.
 //
-// Sync prechecks (design §5.6):
-//   - lb.DeletionProtection=true → FailedPrecondition (verbatim text);
+// Sync prechecks:
+//   - lb.DeletionProtection=true → FailedPrecondition (фиксированный текст);
 //   - HasListeners > 0           → FailedPrecondition "has N listener(s); delete first";
 //   - HasAttachedTargetGroups>0  → FailedPrecondition "has attached target group(s); detach first".
 //
@@ -63,6 +65,9 @@ func (u *DeleteLoadBalancerUseCase) Execute(
 	id := req.GetNetworkLoadBalancerId()
 	if id == "" {
 		return nil, errInvalidArg("network_load_balancer_id", "required")
+	}
+	if err := validateLoadBalancerID(id); err != nil {
+		return nil, err
 	}
 
 	// Sync prechecks (read reader-TX).
@@ -109,11 +114,11 @@ func (u *DeleteLoadBalancerUseCase) Execute(
 		&lbv1.DeleteNetworkLoadBalancerMetadata{NetworkLoadBalancerId: id},
 	)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "build operation: %v", err)
+		return nil, mapDomainErr(err)
 	}
 	principal := operations.PrincipalFromContext(ctx)
 	if err := u.opsRepo.CreateWithPrincipal(ctx, op, principal); err != nil {
-		return nil, status.Errorf(codes.Internal, "operation persist: %v", err)
+		return nil, mapDomainErr(err)
 	}
 
 	projectID := string(cur.ProjectID)
@@ -143,7 +148,7 @@ func (u *DeleteLoadBalancerUseCase) doDelete(ctx context.Context, id, projectID 
 	); err != nil {
 		return nil, mapDomainErr(err)
 	}
-	// SEC-D: FGA-unregister-intent (project-hierarchy) in the SAME tx as the
+	// FGA-unregister-intent (project-hierarchy) in the SAME tx as the
 	// Delete — drainer applies UnregisterResource to remove the owner-tuple.
 	if err := w.FGARegisterOutbox().Emit(ctx, domain.FGAEventUnregister,
 		lbUnregisterIntent(id, projectID)); err != nil {
@@ -155,7 +160,7 @@ func (u *DeleteLoadBalancerUseCase) doDelete(ctx context.Context, id, projectID 
 
 	out, err := anypb.New(&emptypb.Empty{})
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "marshal response: %v", err)
+		return nil, mapDomainErr(err)
 	}
 	return out, nil
 }

@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package targetgroup
 
 import (
@@ -19,18 +22,18 @@ import (
 )
 
 // DeleteTargetGroupUseCase — sync precheck + async delete
-// (acceptance GWT-TGR-021..024).
+// .
 //
-// Sync prechecks (design §3.4):
-//   - HasAttachedLB > 0 → FailedPrecondition verbatim
+// Sync prechecks:
+//   - HasAttachedLB > 0 → FailedPrecondition с фиксированным текстом
 //     `"TargetGroup is attached to N load balancer(s); detach first"`.
-//   - ListTargets count > 0 → FailedPrecondition verbatim
+//   - ListTargets count > 0 → FailedPrecondition с фиксированным текстом
 //     `"TargetGroup has N target(s); remove them first via RemoveTargets"`.
 //
 // Worker (TOCTOU backstop):
 //   - Writer-TX → Delete (FK 23503 от child rows → ErrFailedPrecondition) +
 //     outbox DELETED → Commit.
-//   - GWT-TGR-024: concurrent AddTargets между sync precheck и worker DELETE —
+//   - concurrent AddTargets между sync precheck и worker DELETE —
 //     SQL 23503 ловится mapPgErr → FailedPrecondition.
 type DeleteTargetGroupUseCase struct {
 	repo    Repo
@@ -53,6 +56,9 @@ func (u *DeleteTargetGroupUseCase) Execute(
 	id := req.GetTargetGroupId()
 	if id == "" {
 		return nil, errInvalidArg("target_group_id", "required")
+	}
+	if err := validateTargetGroupID(id); err != nil {
+		return nil, err
 	}
 
 	// Sync prechecks via reader-TX.
@@ -97,11 +103,11 @@ func (u *DeleteTargetGroupUseCase) Execute(
 		&lbv1.DeleteTargetGroupMetadata{TargetGroupId: id},
 	)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "build operation: %v", err)
+		return nil, mapDomainErr(err)
 	}
 	principal := operations.PrincipalFromContext(ctx)
 	if err := u.opsRepo.CreateWithPrincipal(ctx, op, principal); err != nil {
-		return nil, status.Errorf(codes.Internal, "operation persist: %v", err)
+		return nil, mapDomainErr(err)
 	}
 
 	projectID := string(cur.ProjectID)
@@ -129,7 +135,7 @@ func (u *DeleteTargetGroupUseCase) doDelete(ctx context.Context, id, projectID s
 	); err != nil {
 		return nil, mapDomainErr(err)
 	}
-	// SEC-D: FGA-unregister-intent (project-hierarchy) in the SAME tx as Delete.
+	// FGA-unregister-intent (project-hierarchy) in the SAME tx as Delete.
 	if err := w.FGARegisterOutbox().Emit(ctx, domain.FGAEventUnregister,
 		tgUnregisterIntent(id, projectID)); err != nil {
 		return nil, mapDomainErr(err)

@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package kacho
 
 import (
@@ -31,11 +34,11 @@ type ListenerWriterIface interface {
 	SetStatusCAS(ctx context.Context, id string, expected, newStatus domain.ListenerStatus) (*ListenerRecord, error)
 
 	// SetAllocatedAddress проставляет allocated_address после VIP-аллокации
-	// (worker-side, design §4.2). UNIQUE-violation на region/VIP/port/proto →
+	// (worker-side). UNIQUE-violation на region/VIP/port/proto →
 	// ErrAlreadyExists (race с параллельной аллокацией того же VIP).
 	SetAllocatedAddress(ctx context.Context, id, address string) (*ListenerRecord, error)
 
-	// MoveProject — каскад от LB.MoveProject (design §4.7); вызывается из
+	// MoveProject — каскад от LB.MoveProject; вызывается из
 	// LoadBalancerWriterIface.MoveProject внутри той же TX.
 	MoveProject(ctx context.Context, lbID, newProjectID string) (int64, error)
 

@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package type2pb
 
 import (
@@ -89,7 +92,7 @@ func lbAffinityToPb(a domain.SessionAffinity) (lbv1.NetworkLoadBalancer_SessionA
 	case domain.SessionAffinity5Tuple:
 		return lbv1.NetworkLoadBalancer_CLIENT_IP_PORT_PROTO, nil
 	case domain.SessionAffinityClientIPOnly:
-		// proto enum не имеет CLIENT_IP_ONLY (см. design §3.6 — реserved для будущего).
+		// proto enum не имеет CLIENT_IP_ONLY (реserved для будущего).
 		// Возвращаем UNSPECIFIED; downstream увидит unknown_session_affinity.
 		return lbv1.NetworkLoadBalancer_SESSION_AFFINITY_UNSPECIFIED, nil
 	}

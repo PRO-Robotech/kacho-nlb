@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package loadbalancer
 
 import (
@@ -22,7 +25,7 @@ import (
 // StartLoadBalancerUseCase — STOPPED → STARTING → (ACTIVE | INACTIVE).
 // Precondition (sync): status ∈ {STOPPED, INACTIVE}.
 //
-// Acceptance: GWT-NLB-020..GWT-NLB-022.
+// Acceptance:.
 type StartLoadBalancerUseCase struct {
 	repo    Repo
 	opsRepo operations.Repo
@@ -44,6 +47,9 @@ func (u *StartLoadBalancerUseCase) Execute(
 	id := req.GetNetworkLoadBalancerId()
 	if id == "" {
 		return nil, errInvalidArg("network_load_balancer_id", "required")
+	}
+	if err := validateLoadBalancerID(id); err != nil {
+		return nil, err
 	}
 
 	rd, err := u.repo.Reader(ctx)
@@ -67,11 +73,11 @@ func (u *StartLoadBalancerUseCase) Execute(
 		&lbv1.StartNetworkLoadBalancerMetadata{NetworkLoadBalancerId: id},
 	)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "build operation: %v", err)
+		return nil, mapDomainErr(err)
 	}
 	principal := operations.PrincipalFromContext(ctx)
 	if err := u.opsRepo.CreateWithPrincipal(ctx, op, principal); err != nil {
-		return nil, status.Errorf(codes.Internal, "operation persist: %v", err)
+		return nil, mapDomainErr(err)
 	}
 	expected := cur.Status
 	operations.Run(ctx, u.opsRepo, op.ID, func(workerCtx context.Context) (*anypb.Any, error) {
@@ -92,7 +98,7 @@ func (u *StartLoadBalancerUseCase) doStart(
 	}
 	defer w.Abort()
 
-	// Phase 1: CAS expected → STARTING. If CAS-miss (race) → FailedPrecondition.
+	// шаг 1: CAS expected → STARTING. If CAS-miss (race) → FailedPrecondition.
 	if _, err := w.LoadBalancers().SetStatusCAS(ctx, id, expected, domain.LBStatusStarting); err != nil {
 		if errors.Is(err, kachorepo.ErrFailedPrecondition) {
 			return nil, status.Errorf(codes.FailedPrecondition,
@@ -101,7 +107,7 @@ func (u *StartLoadBalancerUseCase) doStart(
 		return nil, mapDomainErr(err)
 	}
 
-	// Phase 2: resolve target status based on children presence.
+	// шаг 2: resolve target status based on children presence.
 	hasListeners, err := w.LoadBalancers().HasListeners(ctx, id)
 	if err != nil {
 		return nil, mapDomainErr(err)
@@ -134,7 +140,7 @@ func (u *StartLoadBalancerUseCase) doStart(
 	}
 	out, err := anypb.New(pb)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "marshal response: %v", err)
+		return nil, mapDomainErr(err)
 	}
 	return out, nil
 }

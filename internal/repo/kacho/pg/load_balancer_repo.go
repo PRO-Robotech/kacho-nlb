@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package pg
 
 import (
@@ -61,7 +64,7 @@ func scanLB(row pgx.Row) (*kacho.LoadBalancerRecord, error) {
 	return &rec, nil
 }
 
-// Get — verbatim YC: well-formed-but-absent → ErrNotFound "NetworkLoadBalancer <id> not found".
+// Get — по конвенции Kachō: well-formed-but-absent → ErrNotFound "NetworkLoadBalancer <id> not found".
 func (r *loadBalancerReader) Get(ctx context.Context, id string) (*kacho.LoadBalancerRecord, error) {
 	q := fmt.Sprintf(`SELECT %s FROM kacho_nlb.load_balancers WHERE id = $1`, loadBalancerCols)
 	row := r.tx.QueryRow(ctx, q, id)
@@ -92,9 +95,9 @@ func (r *loadBalancerReader) List(ctx context.Context, f kacho.LoadBalancerFilte
 		args = append(args, f.Name)
 		argIdx++
 	}
-	// RBAC sub-phase D §11: per-object FGA filter push-down (iam ListObjects allow-set).
+	// RBAC: per-object FGA filter push-down (iam ListObjects allow-set).
 	// nil → no filter; len==0 → 0 rows short-circuit (no-leak); len>0 → id = ANY ДО LIMIT
-	// (плотная keyset-пагинация по отфильтрованному набору, D-46).
+	// (плотная keyset-пагинация по отфильтрованному набору).
 	if f.AllowedIDs != nil {
 		if len(f.AllowedIDs) == 0 {
 			return nil, "", nil
@@ -179,7 +182,7 @@ func (r *loadBalancerReader) HasAttachedTargetGroups(ctx context.Context, lbID s
 	return exists, nil
 }
 
-// loadBalancerWriter — embeds reader (G.2: writer видит свои writes).
+// loadBalancerWriter — embeds reader (writer видит свои writes).
 type loadBalancerWriter struct {
 	loadBalancerReader
 }

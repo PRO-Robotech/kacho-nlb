@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package vpc
 
 import (
@@ -22,11 +25,11 @@ import (
 // один NIC ≤ 1 v4 / ≤ 1 v6 Address). Resolve в IP-строку требует
 // AddressClient.Get; здесь оставляем raw Address.id.
 type NetworkInterface struct {
-	ID                string
-	ProjectID         string
-	SubnetID          string
-	PrimaryV4Address  string // Address.id (resolve в IP — отдельно через AddressClient)
-	Status            string
+	ID               string
+	ProjectID        string
+	SubnetID         string
+	PrimaryV4Address string // Address.id (resolve в IP — отдельно через AddressClient)
+	Status           string
 }
 
 // NetworkInterfaceClient — port-интерфейс для service-слоя.

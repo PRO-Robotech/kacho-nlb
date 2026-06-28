@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 // Request-body factories. Centralised so payload shape lives in ONE place
 // matching kacho-proto loadbalancer/v1 messages.
 //

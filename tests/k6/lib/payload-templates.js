@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 // Payload-template merge layer.
 //
 // Loads `data/payload-templates.json` ONCE at init time, then merges each

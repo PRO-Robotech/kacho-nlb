@@ -1,8 +1,11 @@
-// validate.go — Mode enum + Config.Validate (evgeniy §8.J.5–J.7).
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
+// validate.go — Mode enum + Config.Validate.
 //
-//   - `Mode` enum заменяет `bool productionMode` (J.6/AP-8) — `cfg.Mode`
-//     (общий режим работы), а не `cfg.AuthMode` (J.7).
-//   - Validate-логика — в config-пакете, не в main (J.5).
+//   - `Mode` enum заменяет `bool productionMode`  — `cfg.Mode`
+//     (общий режим работы), а не `cfg.AuthMode`.
+//   - Validate-логика — в config-пакете, не в main.
 package config
 
 import (
@@ -13,7 +16,7 @@ import (
 	"go.uber.org/multierr"
 )
 
-// ModeEnum — общий режим работы сервиса (evgeniy §J.6: bool → enum).
+// ModeEnum — общий режим работы сервиса (bool → enum).
 type ModeEnum int
 
 const (
@@ -56,7 +59,7 @@ var validLogLevels = map[string]struct{}{
 
 // Validate — проверяет required-поля и согласованность mode-specific
 // требований через multierr.Combine. Применяется один раз сразу после
-// `viper.Unmarshal` в `Load(...)`.
+// `viper.Unmarshal` в `Load`.
 func (c Config) Validate() error {
 	var errs error
 
@@ -121,13 +124,31 @@ func (c Config) Validate() error {
 		errs = multierr.Append(errs, fmt.Errorf("authz.breakglass: forbidden in production mode (dev-only)"))
 	}
 
-	// Jobs.target-drain (KAC-159 Phase B drain runner). Interval должен быть > 0;
+	// Production transport fail-closed (security.md «AuthN+AuthZ ВЕЗДЕ»): plaintext
+	// listener и insecure peer-вызовы в проде запрещены — boot отвергает insecure
+	// prod-конфиг (не silent insecure-fallback).
+	if mode == ModeProduction {
+		// Server listener: mutual TLS (mtls.server) ЛИБО one-way TLS+JWT (authn.type=tls).
+		serverSecure := c.MTLS.Server.Enable || strings.EqualFold(strings.TrimSpace(c.Authn.Type), "tls")
+		if !serverSecure {
+			errs = multierr.Append(errs, fmt.Errorf(
+				"production mode: insecure server transport — set mtls.server.enable=true or authn.type=tls (plaintext listener forbidden)"))
+		}
+		// nlb→iam authz edge (per-RPC InternalIAMService.Check, internal :9091) обязан
+		// быть mTLS: иначе Check идёт по plaintext и подделанная identity не отсекается.
+		if !c.MTLS.IAMRegister.Enable {
+			errs = multierr.Append(errs, fmt.Errorf(
+				"production mode: nlb→iam authz edge must be mTLS — set mtls.iam-register.enable=true (insecure Check edge forbidden)"))
+		}
+	}
+
+	// Jobs.target-drain (фаза B drain runner). Interval должен быть > 0;
 	// `0s` означало бы tight-loop, что нагрузит БД.
 	if c.Jobs.TargetDrain.Interval <= 0 {
 		errs = multierr.Append(errs, fmt.Errorf("jobs.target-drain.interval must be > 0, got %v", c.Jobs.TargetDrain.Interval))
 	}
 
-	// InternalLifecycle.MaxStreams (KAC-157 D-13 stream). Должен быть > 0:
+	// InternalLifecycle.MaxStreams (stream). Должен быть > 0:
 	// =0 означало бы «никакие streams не разрешены» → kacho-iam не сможет
 	// подключиться → tuple-sync сломан.
 	if c.InternalLifecycle.MaxStreams <= 0 {

@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package listener
 
 import (
@@ -9,11 +12,11 @@ import (
 	lbv1 "github.com/PRO-Robotech/kacho-nlb/proto/gen/go/kacho/cloud/loadbalancer/v1"
 )
 
-// GetUseCase — sync read одного Listener'а (acceptance GWT-LST-016).
+// GetUseCase — sync read одного Listener'а.
 //
 // Использует `RepoFactory.Reader(ctx)` — read-only TX (на slave-pool если
 // настроен). FGA per-resource Check выполняется до этого через interceptor
-// в api-gateway (KAC-127 Phase 4); UseCase сам Check не зовёт.
+// в api-gateway; UseCase сам Check не зовёт.
 type GetUseCase struct {
 	repo RepoFactory
 }
@@ -28,12 +31,15 @@ func NewGetUseCase(repo RepoFactory) *GetUseCase {
 // Mapping:
 //
 //	req.ListenerId == "" → InvalidArgument "listener_id required"
-//	repo.ErrNotFound     → NotFound        "Listener <id> not found"  (verbatim YC)
+//	repo.ErrNotFound     → NotFound        "Listener <id> not found"  (по конвенции Kachō)
 //	other repo err       → mapDomainErr (sentinel-aware)
 func (u *GetUseCase) Run(ctx context.Context, req *lbv1.GetListenerRequest) (*lbv1.Listener, error) {
 	id := req.GetListenerId()
 	if id == "" {
 		return nil, status.Error(codes.InvalidArgument, "listener_id required")
+	}
+	if err := validateListenerID(id); err != nil {
+		return nil, err
 	}
 
 	rd, err := u.repo.Reader(ctx)

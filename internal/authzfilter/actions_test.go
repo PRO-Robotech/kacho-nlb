@@ -1,4 +1,7 @@
-// actions_test.go — RBAC sub-phase D (§11, D-40..D-47): the nlb list-filter must
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
+// actions_test.go — RBAC: the nlb list-filter must
 // call iam AuthorizeService.ListObjects with an `action` whose verb the iam
 // server resolves to the FGA `viewer` relation (read==enforce parity under the
 // scope_grant rules-model).

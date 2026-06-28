@@ -1,9 +1,12 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package main
 
-// backstop.go — sub-phase 1.4 S3: the corelib outbox backstop wiring for
-// kacho-nlb (D-6 reconciler + D-7 metrics + D-8 fail-closed boot-gate). It adds
-// observability + safety on TOP of the existing SEC-D register-drainer WITHOUT
-// changing co-commit atomicity (no migration; D-9).
+// backstop.go — the corelib outbox backstop wiring for
+// kacho-nlb (reconciler + metrics + fail-closed boot-gate). It adds
+// observability + safety on TOP of the existing register-drainer WITHOUT
+// changing co-commit atomicity (no migration).
 //
 //   - reconciler: periodic RedrivePoisoned re-drives poisoned/exhausted intents
 //     (with their original decoder-correct payload) back to claimable.
@@ -33,30 +36,36 @@ const (
 )
 
 // startBackstop wires the reconciler RedrivePoisoned pass + metrics Collector over
-// the nlb register-outbox and runs them in the background until ctx is cancelled.
-// Both are best-effort observability/repair — a transient error is logged, never
-// fatal.
-func startBackstop(ctx context.Context, pool *pgxpool.Pool, rec metrics.Recorder, logger *slog.Logger) error {
+// the nlb register-outbox. Both are best-effort observability/repair — a transient
+// error is logged, never fatal. It returns their run-loops as supervised tasks
+// (reconRun / colRun), wired into the runServe errgroup — not fire-and-forget.
+func startBackstop(_ context.Context, pool *pgxpool.Pool, rec metrics.Recorder, logger *slog.Logger) (reconRun, colRun func(context.Context) error, err error) {
 	ad := kachopg.NewFGAReconcileAdapter(pool, nlbFGAOutboxTable)
-	rc, err := reconciler.New(pool, reconciler.Config{
+	rc, rerr := reconciler.New(pool, reconciler.Config{
 		Table:       nlbFGAOutboxTable,
 		Channel:     nlbFGAOutboxChannel,
 		GraceWindow: time.Minute, // anti-race deferral (D-6c)
 	}, reconciler.Adapters{Enumerator: ad, Registry: ad},
 		logger.With(slog.String("component", "fga-register-reconciler")))
-	if err != nil {
-		return err
+	if rerr != nil {
+		return nil, nil, rerr
 	}
 
-	go runReconciler(ctx, rc, logger)
-
 	col := metrics.NewCollector(pool, rec, metrics.CollectorConfig{Table: nlbFGAOutboxTable})
-	go col.Run(ctx, func(err error) {
-		logger.Warn("outbox metrics scan failed", "err", err)
-	})
 
 	logger.Info("fga_register_backstop_started", "table", nlbFGAOutboxTable)
-	return nil
+
+	reconRun = func(ctx context.Context) error {
+		runReconciler(ctx, rc, logger)
+		return nil
+	}
+	colRun = func(ctx context.Context) error {
+		col.Run(ctx, func(err error) {
+			logger.Warn("outbox metrics scan failed", "err", err)
+		})
+		return nil
+	}
+	return reconRun, colRun, nil
 }
 
 // runReconciler runs the reconciler RedrivePoisoned pass on a periodic ticker
@@ -67,7 +76,7 @@ func startBackstop(ctx context.Context, pool *pgxpool.Pool, rec metrics.Recorder
 // re-emit corelib-fixed payloads ({"project_id":…} / {}) the nlb intent decoder
 // ({kind,resource_id,tuples:[…]}) cannot decode — running them would poison good
 // state. And because every nlb Create co-commits its register-intent in the
-// resource writer-tx (SEC-D atomicity, D-9 untouched), there are no legacy
+// resource writer-tx (atomicity, untouched), there are no legacy
 // never-enqueued rows to backfill. The enumerator/registry adapter is still wired
 // (reconciler.New requires it) so the backstop is ready if the corelib re-emit
 // contract grows a per-service payload hook.

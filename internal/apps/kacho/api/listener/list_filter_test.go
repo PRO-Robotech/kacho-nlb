@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package listener
 
 import (
@@ -19,8 +22,8 @@ import (
 	kachorepo "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho"
 )
 
-// RBAC sub-phase D (§11, LST-1..6) per-object filtered List — Listener.
-// Acceptance D-40..D-47. Ссылается на ещё-не-существующий internal/authzfilter
+// RBAC  per-object filtered List — Listener.
+// Acceptance. Ссылается на ещё-не-существующий internal/authzfilter
 // + расширенный NewListUseCase(repo, filter) → RED до GREEN.
 
 type fakeListFilter struct {
@@ -76,7 +79,7 @@ func seedListenerLF(t *testing.T, repo *fakeRepo, projectID, lbID, name string) 
 	return id
 }
 
-// LST-4 union analog: List отдаёт только доступные listener'ы.
+// union analog: List отдаёт только доступные listener'ы.
 func TestListListenersFilter_OnlyAccessible(t *testing.T) {
 	repo := newFakeRepo()
 	a := seedListenerLF(t, repo, "prj-a", "nlb_lb1", "l-a1")
@@ -104,7 +107,7 @@ func TestListListenersFilter_OnlyAccessible(t *testing.T) {
 	assert.Equal(t, "loadbalancer.listeners.list", flt.gotAct)
 }
 
-// LST-5 no-leak: пустой грант → пустой List.
+// no-leak: пустой грант → пустой List.
 func TestListListenersFilter_EmptyGrantEmptyList(t *testing.T) {
 	repo := newFakeRepo()
 	seedListenerLF(t, repo, "prj-a", "nlb_lb1", "l-secret")
@@ -118,7 +121,7 @@ func TestListListenersFilter_EmptyGrantEmptyList(t *testing.T) {
 	assert.Empty(t, resp.GetListeners())
 }
 
-// D-47 fail-closed → Unavailable.
+// fail-closed → Unavailable.
 func TestListListenersFilter_FailClosed(t *testing.T) {
 	repo := newFakeRepo()
 	seedListenerLF(t, repo, "prj-a", "nlb_lb1", "l-a1")

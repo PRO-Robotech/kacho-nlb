@@ -31,3 +31,5 @@ tests/k6/*.summary.json
 .vscode/
 .DS_Store
 .claude/worktrees/
+go.work
+go.work.sum

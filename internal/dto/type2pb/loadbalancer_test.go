@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package type2pb
 
 import (
@@ -45,7 +48,7 @@ func TestNetworkLoadBalancer_Transfer(t *testing.T) {
 	assert.Equal(t, lbv1.NetworkLoadBalancer_ACTIVE, pb.Status)
 	assert.Equal(t, lbv1.NetworkLoadBalancer_CLIENT_IP_PORT_PROTO, pb.SessionAffinity)
 	assert.True(t, pb.DeletionProtection)
-	// Timestamp — truncate до секунд (verbatim YC).
+	// Timestamp — truncate до секунд (по конвенции Kachō).
 	assert.Equal(t, created.Truncate(time.Second), pb.CreatedAt.AsTime())
 }
 

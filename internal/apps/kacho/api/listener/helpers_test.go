@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package listener
 
 import (
@@ -50,7 +53,7 @@ func TestMapDomainErr_AllSentinels(t *testing.T) {
 	}
 }
 
-// TestStripSentinel — verbatim text after sentinel prefix.
+// TestStripSentinel — фиксированный текст after sentinel prefix.
 func TestStripSentinel(t *testing.T) {
 	t.Parallel()
 	require.Equal(t, "Listener xyz not found", stripSentinel("not found: Listener xyz not found", "not found"))
@@ -58,7 +61,7 @@ func TestStripSentinel(t *testing.T) {
 	require.Equal(t, "not found", stripSentinel("not found", "not found"))
 }
 
-// TestOperationToProto_FillsPrincipal — KAC-105 principal mapping correctness.
+// TestOperationToProto_FillsPrincipal — principal mapping correctness.
 func TestOperationToProto_FillsPrincipal(t *testing.T) {
 	t.Parallel()
 	op := &operations.Operation{
@@ -106,7 +109,7 @@ func TestListenerRecordToPb_NilGuard(t *testing.T) {
 	require.Equal(t, codes.Internal, grpcstatus.Code(err))
 }
 
-// TestLoggerOrDiscard_Default — nil logger → slog.Default().
+// TestLoggerOrDiscard_Default — nil logger → slog.Default.
 func TestLoggerOrDiscard_Default(t *testing.T) {
 	t.Parallel()
 	require.Same(t, slog.Default(), loggerOrDiscard(nil))

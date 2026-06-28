@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package loadbalancer
 
 import (
@@ -9,7 +12,7 @@ import (
 	"github.com/PRO-Robotech/kacho-nlb/internal/clients/geo"
 	"github.com/PRO-Robotech/kacho-nlb/internal/clients/iam"
 	"github.com/PRO-Robotech/kacho-nlb/internal/domain"
-	// dto/type2pb init()-registrations — handler-слой строит proto через DTO-реестр.
+	// dto/type2pb init-registrations — handler-слой строит proto через DTO-реестр.
 	_ "github.com/PRO-Robotech/kacho-nlb/internal/dto/type2pb"
 	kachorepo "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho"
 )
@@ -30,7 +33,7 @@ type fakeRepo struct {
 	lists  map[string][]*kachorepo.ListenerRecord
 	pivot  map[string]*kachorepo.AttachedTargetGroupRecord // key=lbID+"/"+tgID
 	outbox []outboxEvent
-	fga    []fgaIntentEvent // SEC-D FGARegisterOutbox intents (flushed on Commit)
+	fga    []fgaIntentEvent // FGARegisterOutbox intents (flushed on Commit)
 	// Knobs for fault injection.
 	failOnInsert    error
 	failOnUpdate    error
@@ -114,7 +117,7 @@ type fakeWriter struct {
 	pendingFGA          []fgaIntentEvent
 }
 
-// fgaIntentEvent records one FGARegisterOutbox.Emit (SEC-D) for assertions.
+// fgaIntentEvent records one FGARegisterOutbox.Emit  for assertions.
 type fgaIntentEvent struct {
 	EventType string
 	Intent    domain.FGARegisterIntent
@@ -198,7 +201,7 @@ func (q *fakeLBReader) List(ctx context.Context, f kachorepo.LoadBalancerFilter,
 	}
 	q.r.mu.Lock()
 	defer q.r.mu.Unlock()
-	// RBAC sub-phase D §11: per-object FGA allow-set push-down (parity с pg repo).
+	// RBAC: per-object FGA allow-set push-down (parity с pg repo).
 	// nil → no filter; len==0 → пусто (no-leak); len>0 → id ∈ AllowedIDs.
 	var allowed map[string]struct{}
 	if f.AllowedIDs != nil {
@@ -606,7 +609,7 @@ func (f *fakeRegionClient) Get(ctx context.Context, regionID string) (*geo.Regio
 	return &geo.Region{ID: regionID, Name: "fake-region"}, nil
 }
 
-// fakeFGARegisterOutbox records SEC-D FGARegisterOutbox.Emit into the writer's
+// fakeFGARegisterOutbox records FGARegisterOutbox.Emit into the writer's
 // pending buffer (flushed to fakeRepo.fga on Commit, dropped on Abort).
 type fakeFGARegisterOutbox struct{ w *fakeWriter }
 

@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package operation_test
 
 import (
@@ -28,7 +31,7 @@ import (
 )
 
 // setupTestDB поднимает testcontainers Postgres 16 + применяет baseline migrations
-// (KAC-148 0001_initial.sql) → возвращает DSN с search_path=kacho_nlb,public.
+// (0001_initial.sql) → возвращает DSN с search_path=kacho_nlb,public.
 //
 // Зеркалит проверенный pattern kacho-vpc/internal/repo/integration_test.go.
 func setupTestDB(t *testing.T) string {
@@ -75,10 +78,10 @@ func appendSearchPathOptions(dsn string) string {
 // happy-path Get + Cancel против реальной БД с baseline migrations:
 //   - Insert op через operations.Repo.Create → handler.Get → done=false.
 //   - handler.Cancel → done=true, error.code=CANCELLED.
-//   - handler.Cancel снова → FailedPrecondition (acceptance GWT-OP-006).
+//   - handler.Cancel снова → FailedPrecondition.
 //   - handler.Get unknown id → NotFound.
 //
-// Соответствует acceptance §7 (GWT-OP-001/002/003/005/006).
+// Соответствует (002/003/005/006).
 func TestIntegration_OperationService_GetCancel_AgainstPostgres(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in -short mode")
@@ -95,7 +98,7 @@ func TestIntegration_OperationService_GetCancel_AgainstPostgres(t *testing.T) {
 	repo := operations.NewRepo(pool, "kacho_nlb")
 	handler := opapi.NewHandler(repo)
 
-	// --- GWT-OP-001: Get in-flight op ---
+	// --- Get in-flight op ---
 	op, err := operations.New(ids.PrefixOperationNLB,
 		"Create NLB integration-test", nil)
 	require.NoError(t, err)
@@ -107,7 +110,7 @@ func TestIntegration_OperationService_GetCancel_AgainstPostgres(t *testing.T) {
 	assert.False(t, got.GetDone())
 	assert.Equal(t, op.Description, got.GetDescription())
 
-	// --- GWT-OP-002: Get completed (success path: MarkDone with response) ---
+	// --- Get completed (success path: MarkDone with response) ---
 	op2, err := operations.New(ids.PrefixOperationNLB, "Delete NLB completed", nil)
 	require.NoError(t, err)
 	require.NoError(t, repo.Create(ctx, op2))
@@ -120,7 +123,7 @@ func TestIntegration_OperationService_GetCancel_AgainstPostgres(t *testing.T) {
 	assert.True(t, got2.GetDone())
 	require.NotNil(t, got2.GetResponse(), "completed op should have response oneof")
 
-	// --- GWT-OP-003: Get unknown id ---
+	// --- Get unknown id ---
 	_, err = handler.Get(ctx, &operationpb.GetOperationRequest{
 		OperationId: ids.NewID(ids.PrefixOperationNLB),
 	})
@@ -128,7 +131,7 @@ func TestIntegration_OperationService_GetCancel_AgainstPostgres(t *testing.T) {
 	st, _ := grpcstatus.FromError(err)
 	assert.Equal(t, codes.NotFound, st.Code())
 
-	// --- GWT-OP-005: Cancel in-flight ---
+	// --- Cancel in-flight ---
 	cancelled, err := handler.Cancel(ctx, &operationpb.CancelOperationRequest{
 		OperationId: op.ID,
 	})
@@ -145,7 +148,7 @@ func TestIntegration_OperationService_GetCancel_AgainstPostgres(t *testing.T) {
 	require.NotNil(t, stored.Error)
 	assert.EqualValues(t, 1, stored.Error.GetCode())
 
-	// --- GWT-OP-006: Cancel already done → FailedPrecondition ---
+	// --- Cancel already done → FailedPrecondition ---
 	_, err = handler.Cancel(ctx, &operationpb.CancelOperationRequest{OperationId: op.ID})
 	require.Error(t, err)
 	st, _ = grpcstatus.FromError(err)
@@ -170,7 +173,7 @@ func TestIntegration_OperationService_GetCancel_AgainstPostgres(t *testing.T) {
 // TestIntegration_OperationService_CancelRace проверяет атомарность Cancel:
 // две параллельные горутины Cancel на одну op — ровно одна должна получить OK,
 // другая — FailedPrecondition. Это покрывает single-statement CAS-семантику
-// `UPDATE ... WHERE id=$1 AND done=false` в kacho-corelib/operations.Cancel.
+// `UPDATE... WHERE id=$1 AND done=false` в kacho-corelib/operations.Cancel.
 func TestIntegration_OperationService_CancelRace(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in -short mode")

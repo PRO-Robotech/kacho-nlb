@@ -1,8 +1,11 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 // Package geo — typed adapter-клиент к kacho-geo (Clean Architecture outbound
-// adapter, epic kacho-geo S4).
+// adapter, kacho-geo).
 //
 // kacho-geo — leaf-owner Geography domain (Region/Zone), выделенный из
-// kacho-compute (см. epic «extract Geography из kacho-compute»). kacho-nlb
+// kacho-compute (см. «extract Geography из kacho-compute»). kacho-nlb
 // валидирует:
 //
 //   - NetworkLoadBalancer.region_id / TargetGroup.region_id → geo.RegionService.Get

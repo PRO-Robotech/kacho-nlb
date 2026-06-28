@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 // Pre-seeded fixture loader.
 //
 // kacho-nlb scenarios depend on resources OWNED by other services

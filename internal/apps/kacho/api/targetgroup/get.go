@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package targetgroup
 
 import (
@@ -6,10 +9,10 @@ import (
 	lbv1 "github.com/PRO-Robotech/kacho-nlb/proto/gen/go/kacho/cloud/loadbalancer/v1"
 )
 
-// GetTargetGroupUseCase — sync read одного TG (acceptance GWT-TGR-015).
+// GetTargetGroupUseCase — sync read одного TG.
 //
 //	req.TargetGroupId == "" → InvalidArgument
-//	repo ErrNotFound        → NotFound (verbatim YC text)
+//	repo ErrNotFound        → NotFound (текст ошибки по конвенции Kachō)
 type GetTargetGroupUseCase struct {
 	repo Repo
 }
@@ -26,6 +29,9 @@ func (u *GetTargetGroupUseCase) Execute(
 	id := req.GetTargetGroupId()
 	if id == "" {
 		return nil, errInvalidArg("target_group_id", "required")
+	}
+	if err := validateTargetGroupID(id); err != nil {
+		return nil, err
 	}
 	rd, err := u.repo.Reader(ctx)
 	if err != nil {

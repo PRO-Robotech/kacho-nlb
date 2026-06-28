@@ -1,11 +1,14 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package domain
 
 import coreerrors "github.com/PRO-Robotech/kacho-corelib/errors"
 
-// Все enum-newtypes для статусов / типов NLB (design §2.3).
+// Все enum-newtypes для статусов / типов NLB.
 //
 // Inline-литералы `"ACTIVE"` / `"CREATING"` / `"EXTERNAL"` в Go-коде вне
-// этого файла — запрещены (evgeniy §AP-2 / запрет inline-status).
+// этого файла — запрещены (запрет inline-status).
 // Use-case-/handler-/repo-слои сравнивают только через эти именованные
 // константы.
 

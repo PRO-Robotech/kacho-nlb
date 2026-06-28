@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 // handler_test.go — pure-unit tests (no DB). Покрывают:
 //
 //   - helper'ы: parseEventID, mapActionToOp, extractPayloadFields;
@@ -10,16 +13,55 @@ package internal_lifecycle
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"strings"
 	"testing"
+	"time"
 
 	lbv1 "github.com/PRO-Robotech/kacho-nlb/proto/gen/go/kacho/cloud/loadbalancer/v1"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
+
+	kachorepo "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho"
 )
+
+// fakeLifecycleConn — in-memory kachorepo.LifecycleConn для unit-тестов
+// (без pgx/DB). Отдаёт canned-events на первом EventsSince, потом пусто;
+// WaitForNotification возвращает context.Canceled (граничный «cancel» путь,
+// выводящий Subscribe из wait-loop'а).
+type fakeLifecycleConn struct {
+	events []kachorepo.OutboxEvent
+	served bool
+	closed bool
+}
+
+func (c *fakeLifecycleConn) EventsSince(_ context.Context, _ int64, _ []string, _ int) ([]kachorepo.OutboxEvent, error) {
+	if c.served {
+		return nil, nil
+	}
+	c.served = true
+	return c.events, nil
+}
+
+func (c *fakeLifecycleConn) WaitForNotification(_ context.Context) error { return context.Canceled }
+
+func (c *fakeLifecycleConn) Close() { c.closed = true }
+
+// fakeLifecycleFeed — kachorepo.LifecycleFeed: Open отдаёт conn либо openErr.
+type fakeLifecycleFeed struct {
+	conn    *fakeLifecycleConn
+	openErr error
+}
+
+func (f *fakeLifecycleFeed) Open(_ context.Context) (kachorepo.LifecycleConn, error) {
+	if f.openErr != nil {
+		return nil, f.openErr
+	}
+	return f.conn, nil
+}
 
 // =============================================================================
 // Pure helpers
@@ -27,9 +69,9 @@ import (
 
 func TestParseEventID(t *testing.T) {
 	cases := []struct {
-		in       string
-		want     int64
-		wantErr  bool
+		in      string
+		want    int64
+		wantErr bool
 	}{
 		{"", 0, false},
 		{"0", 0, false},
@@ -174,15 +216,17 @@ func (f *fakeServerStream) SetTrailer(metadata.MD)       {}
 func (f *fakeServerStream) SendMsg(any) error { return nil }
 func (f *fakeServerStream) RecvMsg(any) error { return nil }
 
-func newTestHandler(t *testing.T, dsn string, max int) *Handler {
+// newTestHandler — handler с feed, чей Open всегда падает (sync-валидационные
+// тесты до Open не доходят; connect-fail тест опирается на этот fail-on-Open).
+func newTestHandler(t *testing.T, max int) *Handler {
 	t.Helper()
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	return NewHandler(dsn, max, log)
+	return NewHandler(&fakeLifecycleFeed{openErr: errors.New("dial refused")}, max, log)
 }
 
 // TestSubscribe_RejectsUnknownKind — sync InvalidArgument, без acquire слота.
 func TestSubscribe_RejectsUnknownKind(t *testing.T) {
-	h := newTestHandler(t, "postgres://invalid", 1)
+	h := newTestHandler(t, 1)
 	stream := newFakeStream(context.Background())
 
 	err := h.Subscribe(&lbv1.SubscribeRequest{Kinds: []string{"bogus_kind"}}, stream)
@@ -203,7 +247,7 @@ func TestSubscribe_RejectsUnknownKind(t *testing.T) {
 }
 
 func TestSubscribe_RejectsBadResumeFromEventId(t *testing.T) {
-	h := newTestHandler(t, "postgres://invalid", 1)
+	h := newTestHandler(t, 1)
 	stream := newFakeStream(context.Background())
 
 	err := h.Subscribe(&lbv1.SubscribeRequest{ResumeFromEventId: "not-a-number"}, stream)
@@ -220,7 +264,7 @@ func TestSubscribe_RejectsBadResumeFromEventId(t *testing.T) {
 }
 
 func TestSubscribe_RejectsNegativeResumeFromEventId(t *testing.T) {
-	h := newTestHandler(t, "postgres://invalid", 1)
+	h := newTestHandler(t, 1)
 	stream := newFakeStream(context.Background())
 
 	err := h.Subscribe(&lbv1.SubscribeRequest{ResumeFromEventId: "-5"}, stream)
@@ -237,7 +281,7 @@ func TestSubscribe_RejectsNegativeResumeFromEventId(t *testing.T) {
 //
 // Эмулируем «все слоты заняты» прямым заполнением через TryAcquire.
 func TestSubscribe_ResourceExhausted(t *testing.T) {
-	h := newTestHandler(t, "postgres://invalid", 32)
+	h := newTestHandler(t, 32)
 	// Захватить все 32 слота.
 	for i := 0; i < 32; i++ {
 		if !h.sem.TryAcquire() {
@@ -259,16 +303,10 @@ func TestSubscribe_ResourceExhausted(t *testing.T) {
 	}
 }
 
-// TestSubscribe_UnavailableOnConnectFail — после bad-DSN handler не должен
-// зависнуть; должен вернуть Unavailable + освободить слот.
-//
-// dsn = «localhost:1/none» гарантированно не подключается; connect timeout
-// (2s) → fail → Unavailable.
+// TestSubscribe_UnavailableOnConnectFail — feed.Open fail → Unavailable +
+// освобождённый слот (никакого зависания, slot не течёт).
 func TestSubscribe_UnavailableOnConnectFail(t *testing.T) {
-	if testing.Short() {
-		t.Skip("connect timeout up to 2s; skipping under -short")
-	}
-	h := newTestHandler(t, "postgres://nouser:nopass@127.0.0.1:1/none?sslmode=disable", 4)
+	h := newTestHandler(t, 4) // feed с openErr
 	stream := newFakeStream(context.Background())
 
 	err := h.Subscribe(&lbv1.SubscribeRequest{}, stream)
@@ -278,9 +316,45 @@ func TestSubscribe_UnavailableOnConnectFail(t *testing.T) {
 	if st, _ := status.FromError(err); st.Code() != codes.Unavailable {
 		t.Fatalf("expected Unavailable, got %v", err)
 	}
-	// Слот освобождён, несмотря на fail в acquire-LISTEN.
+	// Слот освобождён, несмотря на fail в feed.Open.
 	if got := h.sem.Held(); got != 0 {
-		t.Fatalf("slot leaked after connect-fail: held=%d", got)
+		t.Fatalf("slot leaked after open-fail: held=%d", got)
+	}
+}
+
+// TestSubscribe_StreamsViaFeed — handler стримит события из инжектированного
+// LifecycleFeed-порта (без pgx/DB): catchup-batch уезжает в stream, payload
+// extras (parent_resource_id) извлекаются, conn закрывается. Доказывает, что
+// доступ к данным идёт через порт, а не прямой pgx в app-слое.
+func TestSubscribe_StreamsViaFeed(t *testing.T) {
+	conn := &fakeLifecycleConn{events: []kachorepo.OutboxEvent{
+		{SequenceNo: 1, ResourceType: "nlb_load_balancer", ResourceID: "nlb-A",
+			ProjectID: "prj-1", Action: "CREATED", Payload: []byte(`{}`), EmittedAt: time.Now().UTC()},
+		{SequenceNo: 2, ResourceType: "nlb_listener", ResourceID: "lst-A",
+			ProjectID: "prj-1", Action: "CREATED",
+			Payload: []byte(`{"parent_resource_id":"nlb-A"}`), EmittedAt: time.Now().UTC()},
+	}}
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	h := NewHandler(&fakeLifecycleFeed{conn: conn}, 4, log)
+
+	stream := newFakeStream(context.Background())
+	if err := h.Subscribe(&lbv1.SubscribeRequest{}, stream); err != nil {
+		t.Fatalf("Subscribe returned error: %v", err)
+	}
+	if len(stream.sent) != 2 {
+		t.Fatalf("streamed %d events, want 2", len(stream.sent))
+	}
+	if stream.sent[0].GetResourceId() != "nlb-A" || stream.sent[0].GetOp() != "Create" {
+		t.Fatalf("event[0] = %+v", stream.sent[0])
+	}
+	if stream.sent[1].GetParentResourceId() != "nlb-A" {
+		t.Fatalf("event[1] parent = %q, want nlb-A", stream.sent[1].GetParentResourceId())
+	}
+	if !conn.closed {
+		t.Fatal("conn.Close() not called (session leak)")
+	}
+	if h.sem.Held() != 0 {
+		t.Fatalf("slot leaked: held=%d", h.sem.Held())
 	}
 }
 
@@ -292,5 +366,5 @@ func TestNewHandler_PanicsOnZeroMaxStreams(t *testing.T) {
 			t.Fatal("expected panic on NewHandler(_, 0, _)")
 		}
 	}()
-	_ = NewHandler("postgres://x", 0, nil)
+	_ = NewHandler(&fakeLifecycleFeed{}, 0, nil)
 }

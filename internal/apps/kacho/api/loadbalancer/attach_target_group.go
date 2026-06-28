@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package loadbalancer
 
 import (
@@ -17,7 +20,7 @@ import (
 )
 
 // AttachTargetGroupUseCase — idempotent INSERT into attached_target_groups
-// pivot. Acceptance §0.2: replaces old full-replace `attached_target_groups[]`
+// pivot. Acceptance: replaces old full-replace `attached_target_groups`
 // semantics with explicit Attach/Detach RPCs.
 //
 // Sync prechecks:
@@ -28,7 +31,7 @@ import (
 // Trigger lb_status_recompute (DB-side) переводит LB.status INACTIVE→ACTIVE если
 // добавился первый pair при наличии listener.
 //
-// Acceptance: GWT-NLB-032..GWT-NLB-035.
+// Acceptance:.
 type AttachTargetGroupUseCase struct {
 	repo    Repo
 	opsRepo operations.Repo
@@ -51,11 +54,17 @@ func (u *AttachTargetGroupUseCase) Execute(
 	if lbID == "" {
 		return nil, errInvalidArg("network_load_balancer_id", "required")
 	}
+	if err := validateLoadBalancerID(lbID); err != nil {
+		return nil, err
+	}
 	attached := req.GetAttachedTargetGroup()
 	if attached == nil || attached.GetTargetGroupId() == "" {
 		return nil, errInvalidArg("attached_target_group.target_group_id", "required")
 	}
 	tgID := attached.GetTargetGroupId()
+	if err := validateTargetGroupRefID(tgID); err != nil {
+		return nil, err
+	}
 
 	rd, err := u.repo.Reader(ctx)
 	if err != nil {
@@ -91,11 +100,11 @@ func (u *AttachTargetGroupUseCase) Execute(
 		},
 	)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "build operation: %v", err)
+		return nil, mapDomainErr(err)
 	}
 	principal := operations.PrincipalFromContext(ctx)
 	if err := u.opsRepo.CreateWithPrincipal(ctx, op, principal); err != nil {
-		return nil, status.Errorf(codes.Internal, "operation persist: %v", err)
+		return nil, mapDomainErr(err)
 	}
 
 	projectID := string(lb.ProjectID)
@@ -152,7 +161,7 @@ func (u *AttachTargetGroupUseCase) doAttach(ctx context.Context, lbID, tgID, pro
 	}
 	out, err := anypb.New(pb)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "marshal response: %v", err)
+		return nil, mapDomainErr(err)
 	}
 	return out, nil
 }

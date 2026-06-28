@@ -1,17 +1,19 @@
-// Package jobs — integration tests for TargetDrainRunner (KAC-159).
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
+// Package jobs — integration tests for TargetDrainRunner.
 //
-// Покрывают Phase B 2-phase drain (acceptance §6 GWT-TGT-011..015 +
-// design §4.4):
+// Покрывают двухфазный drain:
 //
 //   - Expired DRAINING target → DELETE, outbox UPDATED emit (per TG).
-//   - Not-yet-expired DRAINING (drain_started_at + delay > now()) → preserved.
+//   - Not-yet-expired DRAINING (drain_started_at + delay > now) → preserved.
 //   - ACTIVE targets — никогда не trogались.
 //   - Multiple expired targets одного TG в одном tick → ровно одна
 //     `nlb_target_group:<tg_id> UPDATED` outbox-row (DISTINCT).
 //   - Пустая очередь → no-op (no outbox row).
 //   - TG.deregistration_delay_seconds=0 → drain на следующем tick'е сразу
 //     после mark'а.
-//   - Run() exits cleanly при ctx cancel (no error, no leak).
+//   - Run exits cleanly при ctx cancel (no error, no leak).
 //
 // Inside-out от drainOnce(ctx) → Run(ctx, interval). Использует testcontainers
 // (postgres:16-alpine) + goose с embedded migrations FS (как cmd/migrator).
@@ -158,7 +160,7 @@ func countOutboxForTG(t testing.TB, ctx context.Context, pool *pgxpool.Pool, tgI
 // drainOnce — single tick, direct call.
 // =============================================================================
 
-// TestDrainOnce_ExpiredOnly — GWT-TGT-011/012: только expired DRAINING удаляются;
+// TestDrainOnce_ExpiredOnly — /012: только expired DRAINING удаляются;
 // non-expired DRAINING + ACTIVE остаются. Outbox emit ровно один (DISTINCT).
 func TestDrainOnce_ExpiredOnly(t *testing.T) {
 	if testing.Short() {
@@ -224,8 +226,7 @@ func TestDrainOnce_NoExpired_NoOp(t *testing.T) {
 }
 
 // TestDrainOnce_MultipleSameTG_OneOutboxRow — 3 expired DRAINING одной TG →
-// 3 DELETE'а + DISTINCT'нутый outbox: ровно 1 UPDATED row на TG (acceptance §6
-// GWT-TGT-013).
+// 3 DELETE'а + DISTINCT'нутый outbox: ровно 1 UPDATED row на TG.
 func TestDrainOnce_MultipleSameTG_OneOutboxRow(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test")
@@ -313,8 +314,8 @@ func TestDrainOnce_PerTGDelay(t *testing.T) {
 	require.NoError(t, err)
 	defer pool.Close()
 
-	tgShort, _ := insertTargetGroup(t, ctx, pool, 1)   // 1s delay
-	tgLong, _ := insertTargetGroup(t, ctx, pool, 3600) // 1h delay
+	tgShort, _ := insertTargetGroup(t, ctx, pool, 1)                  // 1s delay
+	tgLong, _ := insertTargetGroup(t, ctx, pool, 3600)                // 1h delay
 	insertDrainingTarget(t, ctx, pool, tgShort, "i-s", 5*time.Second) // expired (5>1)
 	insertDrainingTarget(t, ctx, pool, tgLong, "i-l", 5*time.Second)  // not (5<3600)
 

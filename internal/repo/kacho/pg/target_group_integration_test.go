@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package pg_test
 
 import (
@@ -161,7 +164,7 @@ func TestTG_Target_4WayOneOfCheck(t *testing.T) {
 	assert.Contains(t, err.Error(), "targets_identity_exactly_one", "want CHECK constraint violation, got %v", err)
 }
 
-// TestTG_DrainConsistency_Trigger — GWT-DB-012: status=ACTIVE требует
+// TestTG_DrainConsistency_Trigger — status=ACTIVE требует
 // drain_started_at IS NULL; status=DRAINING — NOT NULL.
 func TestTG_DrainConsistency_Trigger(t *testing.T) {
 	tc := newTestCtx(t)
@@ -194,8 +197,8 @@ func TestTG_DrainConsistency_Trigger(t *testing.T) {
 	assert.Contains(t, err.Error(), "targets_drain_consistency")
 }
 
-// TestTG_DrainLifecycle — Phase A mark DRAINING + Phase B DELETE.
-// Использует «прошлое» drain_started_at чтобы Phase B сразу подобрал target.
+// TestTG_DrainLifecycle — фаза A mark DRAINING + фаза B DELETE.
+// Использует «прошлое» drain_started_at чтобы фаза B сразу подобрал target.
 func TestTG_DrainLifecycle(t *testing.T) {
 	tc := newTestCtx(t)
 	repo := tc.Repo
@@ -223,7 +226,7 @@ func TestTG_DrainLifecycle(t *testing.T) {
 	require.Len(t, targets, 1)
 	targetID := targets[0].ID
 
-	// Phase A: mark DRAINING.
+	// фаза A: mark DRAINING.
 	commitWriter(t, repo, func(w kacho.RepositoryWriter) {
 		n, err := w.TargetGroups().RemoveTargetsMarkDraining(ctx, string(tg.ID), []string{targetID})
 		require.NoError(t, err)
@@ -237,7 +240,7 @@ func TestTG_DrainLifecycle(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	// Phase B: DeleteTargetsDrained с delay=60s удалит наш target.
+	// фаза B: DeleteTargetsDrained с delay=60s удалит наш target.
 	commitWriter(t, repo, func(w kacho.RepositoryWriter) {
 		n, err := w.TargetGroups().DeleteTargetsDrained(ctx, string(tg.ID), 60)
 		require.NoError(t, err)

@@ -1,5 +1,8 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 // defaults.go — единственное место, где задаются дефолты config'а
-// (evgeniy §8.J.3: defaults не в struct-tags, не в main, а в config-пакете).
+// (defaults не в struct-tags, не в main, а в config-пакете).
 //
 // Все ключи — viper-paths с делимитером `.` (binding в `KACHO_NLB_…__…`
 // через `SetEnvKeyReplacer(".", "__")` в `load.go`).
@@ -9,7 +12,7 @@ import "github.com/spf13/viper"
 
 // RegisterDefaults биндит дефолты для всех опциональных полей. Required-поля
 // (`repository.postgres.url`, `authz.iam.addr` в production-mode) НЕ
-// дефолтятся — их отсутствие ловит `Config.Validate()`.
+// дефолтятся — их отсутствие ловит `Config.Validate`.
 func RegisterDefaults(v *viper.Viper) {
 	// Mode: dev — безопасный default. Production-deploy явно ставит
 	// `mode: production` в ConfigMap.
@@ -24,8 +27,11 @@ func RegisterDefaults(v *viper.Viper) {
 	v.SetDefault("api-server.graceful-shutdown", "10s")
 	v.SetDefault("api-server.grpc-gw-enable", false)
 
-	// Metrics / Healthcheck
+	// Metrics / Healthcheck. metrics.address — cluster-internal diagnostic
+	// HTTP-listener (metrics + /healthz + /readyz); :9101 совпадает с
+	// deploy ports.metrics + ServiceMonitor scrape-таргетом.
 	v.SetDefault("metrics.enable", true)
+	v.SetDefault("metrics.address", ":9101")
 	v.SetDefault("healthcheck.enable", true)
 
 	// Repository
@@ -48,7 +54,7 @@ func RegisterDefaults(v *viper.Viper) {
 	v.SetDefault("extapi.compute.dial-duration", "0s")
 	v.SetDefault("extapi.iam.dial-duration", "0s")
 	v.SetDefault("extapi.geo.dial-duration", "0s")
-	// extapi.geo.addr — kacho-geo endpoint (epic kacho-geo S4). Помимо
+	// extapi.geo.addr — kacho-geo endpoint (kacho-geo). Помимо
 	// стандартного KACHO_NLB_EXTAPI__GEO__ADDR биндим ЯВНУЮ ENV
 	// `KACHO_NLB_GEO_GRPC_ADDR` (короткое каноническое имя geo-эндпоинта,
 	// согласованное с deploy). BindEnv с явным именем обходит prefix/replacer.
@@ -60,11 +66,11 @@ func RegisterDefaults(v *viper.Viper) {
 	v.SetDefault("authz.iam.dial-deadline", "3s")
 	v.SetDefault("authz.iam.request-timeout", "500ms")
 	v.SetDefault("authz.cache.enable", true)
-	v.SetDefault("authz.cache.ttl", "5s") // NFR KAC-108: ≤10s
+	v.SetDefault("authz.cache.ttl", "5s") // ≤10s
 	v.SetDefault("authz.cache.size", 10000)
 	v.SetDefault("authz.listen-invalidator.enable", false)
 	v.SetDefault("authz.listen-invalidator.channel", "kacho_iam_subjects")
-	// RBAC sub-phase D §11 (issue #111): per-object filtered List. Default ON
+	// RBAC (issue): per-object filtered List. Default ON
 	// («применяется во всех доменах»); fail-closed (security.md). Endpoint —
 	// iam.AuthorizeService (reuse iam conn; mTLS via mtls.iam-register).
 	// ENV: KACHO_NLB_AUTHZ__LIST_FILTER__ENABLED / __TIMEOUT / __CACHE_TTL / etc.
@@ -74,8 +80,12 @@ func RegisterDefaults(v *viper.Viper) {
 	v.SetDefault("authz.list-filter.cache-max-entries", 10000)
 	v.SetDefault("authz.list-filter.fail-open", false)
 	v.SetDefault("authz.breakglass", false)
+	// trusted-forwarder-sans: allow-list cert-identity SAN'ов доверенных форвардеров
+	// (api-gateway). Пусто (default) → любой mTLS-verified peer доверен (back-compat).
+	// ENV KACHO_NLB_AUTHZ__TRUSTED_FORWARDER_SANS (comma-separated).
+	v.SetDefault("authz.trusted-forwarder-sans", []string{})
 
-	// FGA register-drainer (SEC-D Вариант A). OQ-SEC-D-5: default-on — drainer
+	// FGA register-drainer (Вариант A).: default-on — drainer
 	// is an in-process goroutine; without it created resources never get an
 	// owner-tuple (worse than the former best-effort path). mTLS on the
 	// drainer→iam edge is a separate per-edge flag (mtls.iam-register, default off).
@@ -85,14 +95,14 @@ func RegisterDefaults(v *viper.Viper) {
 	v.SetDefault("fga.register-drainer.max-attempts", 10)
 	v.SetDefault("fga.register-drainer.backoff-min", "1s")
 	v.SetDefault("fga.register-drainer.backoff-max", "30s")
-	// sub-phase 1.4 S3 fail-closed boot-gate (D-8). Default off (dev back-compat);
+	// fail-closed boot-gate. Default off (dev back-compat);
 	// production sets KACHO_NLB_REQUIRE_IAM=true. Explicit BindEnv → the canonical
 	// short env name (KACHO_<SVC>_REQUIRE_IAM) shared across the fleet.
 	v.SetDefault("fga.require-iam", false)
 	_ = v.BindEnv("fga.require-iam", "KACHO_NLB_REQUIRE_IAM")
 
-	// mTLS (SEC-B opt-in, per-edge). Default OFF on every edge → insecure
-	// (dev backward-compat, эпик §5). corelib field names lowercased by
+	// mTLS (opt-in, per-edge). Default OFF on every edge → insecure
+	// (dev backward-compat). corelib field names lowercased by
 	// mapstructure: enable / certfile / keyfile / clientcafiles / cafiles / servername.
 	//
 	// Every leaf key is registered (even with a zero default) so viper's
@@ -112,11 +122,11 @@ func RegisterDefaults(v *viper.Viper) {
 	}
 
 	// Jobs (background workers)
-	// target-drain: Phase B 2-phase drain runner (KAC-159). 10s — компромисс
+	// target-drain: двухфазный drain runner. 10s — компромисс
 	// между latency удаления expired targets и нагрузкой на БД.
 	v.SetDefault("jobs.target-drain.interval", "10s")
 
-	// InternalLifecycle (KAC-157, D-13 stream к kacho-iam).
+	// InternalLifecycle (stream к kacho-iam).
 	// 32 одновременных стрима — достаточно для одного-двух iam-pod'ов (по
 	// одному стриму на pod, обычно), с запасом на дублирование при rollout
 	// и admin-tooling. Каждый стрим = +1 dedicated pgx.Conn к Postgres.

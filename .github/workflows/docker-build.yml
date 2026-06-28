@@ -1,3 +1,6 @@
+# Copyright (c) PRO-Robotech
+# SPDX-License-Identifier: BUSL-1.1
+
 # docker-build — multi-arch DockerHub image build & push (KAC-127).
 #
 # Назначение: собирает Docker-образ kacho-nlb под linux/amd64 + linux/arm64 и

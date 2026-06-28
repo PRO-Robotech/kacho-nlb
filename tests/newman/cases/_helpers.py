@@ -1,3 +1,6 @@
+# Copyright (c) PRO-Robotech
+# SPDX-License-Identifier: BUSL-1.1
+
 """
 tests/newman/cases/_helpers.py — reserved module for future per-domain helpers.
 

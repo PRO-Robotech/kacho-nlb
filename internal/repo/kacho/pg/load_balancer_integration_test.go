@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package pg_test
 
 import (
@@ -13,7 +16,7 @@ import (
 	"github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho"
 )
 
-// TestLB_CRUD — GWT-DB-001..004 (basic CRUD via Writer + Reader).
+// TestLB_CRUD — (basic CRUD via Writer + Reader).
 func TestLB_CRUD(t *testing.T) {
 	repo, cleanup := newRepo(t, setupTestDB(t))
 	defer cleanup()
@@ -56,8 +59,8 @@ func TestLB_NotFound(t *testing.T) {
 	assert.True(t, errors.Is(err, kacho.ErrNotFound), "want ErrNotFound, got %v", err)
 }
 
-// TestLB_DuplicateName_AlreadyExists — GWT-DB-005, NLB-009: partial UNIQUE
-// (project_id, name) WHERE name<>''.
+// TestLB_DuplicateName_AlreadyExists —,: partial UNIQUE
+// (project_id, name) для непустого name.
 func TestLB_DuplicateName_AlreadyExists(t *testing.T) {
 	repo, cleanup := newRepo(t, setupTestDB(t))
 	defer cleanup()
@@ -79,7 +82,7 @@ func TestLB_DuplicateName_AlreadyExists(t *testing.T) {
 	assert.True(t, errors.Is(err, kacho.ErrAlreadyExists), "want ErrAlreadyExists, got %v", err)
 }
 
-// TestLB_CheckViolation_BadStatus — CHECK status IN (...) → InvalidArg.
+// TestLB_CheckViolation_BadStatus — CHECK status IN  → InvalidArg.
 func TestLB_CheckViolation_BadStatus(t *testing.T) {
 	repo, cleanup := newRepo(t, setupTestDB(t))
 	defer cleanup()
@@ -112,7 +115,7 @@ func TestLB_CheckViolation_BadName(t *testing.T) {
 	assert.True(t, errors.Is(err, kacho.ErrInvalidArg), "want ErrInvalidArg for bad name, got %v", err)
 }
 
-// TestLB_LabelsTooMany_CheckViolation — GWT-DB-002: 65 labels → CHECK fail.
+// TestLB_LabelsTooMany_CheckViolation — 65 labels → CHECK fail.
 func TestLB_LabelsTooMany_CheckViolation(t *testing.T) {
 	repo, cleanup := newRepo(t, setupTestDB(t))
 	defer cleanup()
@@ -202,7 +205,7 @@ func TestLB_SetStatusCAS(t *testing.T) {
 	assert.True(t, errors.Is(err, kacho.ErrFailedPrecondition), "want ErrFailedPrecondition, got %v", err)
 }
 
-// TestLB_Delete_FK_RESTRICT — GWT-DB-010 / NLB-045: нельзя удалить LB с
+// TestLB_Delete_FK_RESTRICT — /: нельзя удалить LB с
 // зависимыми Listener'ами.
 func TestLB_Delete_FK_RESTRICT_Listeners(t *testing.T) {
 	repo, cleanup := newRepo(t, setupTestDB(t))
@@ -320,7 +323,7 @@ func TestLB_List_Pagination(t *testing.T) {
 }
 
 // TestLB_StatusRecomputeTrigger — INSERT listener + AttachTG → LB.status
-// INACTIVE → ACTIVE; DELETE listener → ACTIVE → INACTIVE (GWT-DB-004).
+// INACTIVE → ACTIVE; DELETE listener → ACTIVE → INACTIVE.
 func TestLB_StatusRecomputeTrigger(t *testing.T) {
 	repo, cleanup := newRepo(t, setupTestDB(t))
 	defer cleanup()

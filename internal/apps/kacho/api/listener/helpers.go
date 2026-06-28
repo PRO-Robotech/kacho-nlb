@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package listener
 
 import (
@@ -10,8 +13,8 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/PRO-Robotech/kacho-corelib/operations"
-	lbv1 "github.com/PRO-Robotech/kacho-nlb/proto/gen/go/kacho/cloud/loadbalancer/v1"
 	operationpb "github.com/PRO-Robotech/kacho-corelib/proto/gen/go/kacho/cloud/operation"
+	lbv1 "github.com/PRO-Robotech/kacho-nlb/proto/gen/go/kacho/cloud/loadbalancer/v1"
 
 	"github.com/PRO-Robotech/kacho-nlb/internal/domain"
 	"github.com/PRO-Robotech/kacho-nlb/internal/dto"
@@ -26,7 +29,7 @@ func listenerRecordToPb(rec *kachorepo.ListenerRecord) (*lbv1.Listener, error) {
 	}
 	var dst *lbv1.Listener
 	if err := dto.Transfer(dto.FromTo(*rec, &dst)); err != nil {
-		return nil, status.Errorf(codes.Internal, "dto.Transfer Listener: %v", err)
+		return nil, mapDomainErr(err)
 	}
 	return dst, nil
 }
@@ -61,7 +64,7 @@ func operationToProto(op *operations.Operation) *operationpb.Operation {
 // mapDomainErr — translate domain-sentinel error → gRPC status.
 //
 // Mirrors `internal/repo/kacho.errors` mapping (workspace CLAUDE.md
-// «Within-service refs», §6 Error mapping kacho-vpc):
+// «Within-service refs», Error mapping kacho-vpc):
 //
 //	ErrNotFound            → NOT_FOUND
 //	ErrAlreadyExists       → ALREADY_EXISTS
@@ -70,7 +73,7 @@ func operationToProto(op *operations.Operation) *operationpb.Operation {
 //	ErrUnavailable         → UNAVAILABLE
 //	ErrInternal / other    → INTERNAL (no leak)
 //
-// Uses errors.Is so chained errors (`fmt.Errorf("%w: ...", domain.ErrX)`) are
+// Uses errors.Is so chained errors (`fmt.Errorf("%w:...", domain.ErrX)`) are
 // matched. Verbatim message text from the wrapped error is preserved.
 func mapDomainErr(err error) error {
 	if err == nil {
@@ -100,7 +103,7 @@ func mapDomainErr(err error) error {
 }
 
 // stripSentinel — remove `<sentinel-text>: ` prefix (or leading `<sentinel-text>`)
-// from wrapped error so the caller sees verbatim message text from the wrapping
+// from wrapped error so the caller sees с фиксированным текстом message text from the wrapping
 // `fmt.Errorf("%w: <message>", domain.ErrX)` without the sentinel marker.
 func stripSentinel(full, sentinel string) string {
 	prefix := sentinel + ": "
@@ -123,13 +126,13 @@ func marshalListener(rec *kachorepo.ListenerRecord) (*anypb.Any, error) {
 	}
 	any, err := anypb.New(pb)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "anypb.New Listener: %v", err)
+		return nil, mapDomainErr(err)
 	}
 	return any, nil
 }
 
 // listenerPayloadMap — outbox-payload snapshot (`map[string]any`) для
-// `nlb_outbox`. Минимальный набор полей для consumer'ов (kacho-iam D-13 reader,
+// `nlb_outbox`. Минимальный набор полей для consumer'ов (kacho-iam reader,
 // metrics). Полный record не сериализуем — outbox-event это уведомление, а не
 // полный ресурс (consumer делает дополнительный Get(id) если нужно).
 func listenerPayloadMap(rec *kachorepo.ListenerRecord) map[string]any {
@@ -149,8 +152,8 @@ func listenerPayloadMap(rec *kachorepo.ListenerRecord) map[string]any {
 }
 
 // lbUpdatedPayloadMap — outbox-payload для cross-resource sync эмита
-// `nlb_load_balancer:<lb_id> UPDATED` после Listener.Create / .Delete
-// (design §3.9). Minimal — consumer резолвит full LB через Get.
+// `nlb_load_balancer:<lb_id> UPDATED` после Listener.Create /.Delete
+// . Minimal — consumer резолвит full LB через Get.
 func lbUpdatedPayloadMap(lbID, projectID, regionID, trigger string) map[string]any {
 	return map[string]any{
 		"id":         lbID,
@@ -161,8 +164,8 @@ func lbUpdatedPayloadMap(lbID, projectID, regionID, trigger string) map[string]a
 }
 
 // loggerOrDiscard — defensive accessor для nil-loggers. Возвращает global
-// default slog (через slog.Default()) если переданный logger == nil; иначе
-// возвращает его. Use-case helpers могут безопасно вызывать `loggerOrDiscard(u.logger).Info(...)`.
+// default slog (через slog.Default) если переданный logger == nil; иначе
+// возвращает его. Use-case helpers могут безопасно вызывать `loggerOrDiscard(u.logger).Info`.
 func loggerOrDiscard(l *slog.Logger) *slog.Logger {
 	if l != nil {
 		return l

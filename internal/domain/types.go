@@ -1,13 +1,16 @@
-// Package domain — self-validating domain newtypes для kacho-nlb (evgeniy §4.D).
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
+// Package domain — self-validating domain newtypes для kacho-nlb.
 //
-// Все поля с семантикой — newtypes с `Validate() error`. Голый `string`
-// запрещён (evgeniy §D.2). Domain-пакет импортирует ТОЛЬКО stdlib,
+// Все поля с семантикой — newtypes с `Validate error`. Голый `string`
+// запрещён. Domain-пакет импортирует ТОЛЬКО stdlib,
 // `H-BF/corlib/pkg/{dict,option}` и `kacho-corelib/errors` — никаких pgx,
 // grpc-stubs, sqlc-types; domain не знает adapter'ов (workspace CLAUDE.md
 // «Чистая архитектура»).
 //
 // CreatedAt сюда не входит (DB-managed) — он живёт в repo-сущности
-// (evgeniy §H.1).
+// .
 package domain
 
 import (
@@ -54,7 +57,7 @@ type (
 type (
 	// LbName — strict-name resource (regex `^[a-z][-a-z0-9]{1,61}[a-z0-9]$`,
 	// 3..63 chars). NLB следует strict-policy — пустое имя / underscore /
-	// uppercase запрещены (acceptance §3 NLB-003 verbatim).
+	// uppercase запрещены (с фиксированным текстом).
 	LbName string
 
 	// LbDescription — UTF-8 длиной ≤ 256.
@@ -104,17 +107,17 @@ type (
 // ---- Regex -----------------------------------------------------------------
 
 var (
-	// strict-name контракт NLB (acceptance §3 NLB-003).
+	// strict-name контракт NLB.
 	lbNameRe = regexp.MustCompile(`^[a-z][-a-z0-9]{1,61}[a-z0-9]$`)
 
 	// label-key контракт (зеркалит kacho-vpc).
 	lbLabelKeyRe = regexp.MustCompile(`^[a-z][-_./\\@a-z0-9]{0,62}$`)
 )
 
-// ---- Validate() ------------------------------------------------------------
+// ---- Validate ------------------------------------------------------------
 
 // Validate проверяет, что value соответствует strict-name контракту NLB
-// (acceptance §3 NLB-003): regex плюс required (пустая строка → отдельная
+// regex плюс required (пустая строка → отдельная
 // ошибка для верности UX — `name is required` вместо regex-mismatch).
 func (n LbName) Validate() error {
 	if n == "" {
@@ -196,7 +199,7 @@ func (p LbPort) Validate() error {
 	return nil
 }
 
-// Validate проверяет, что proto ∈ {TCP, UDP} (L4 only — design §2.1).
+// Validate проверяет, что proto ∈ {TCP, UDP} (L4 only —).
 func (p LbProto) Validate() error {
 	switch p {
 	case ProtoTCP, ProtoUDP:
@@ -220,8 +223,7 @@ func (v IPVersion) Validate() error {
 
 // Validate проверяет, что address парсится netip.ParseAddr.
 // Bogon-/public-only policy для target.external_ip — отдельно в Target.Validate
-// (там это не «формат IP», а «политика target'а»: design §2.5 / acceptance
-// TGR-011 / TGT-001).
+// (там это не «формат IP», а «политика target'а»).
 func (a IPAddress) Validate() error {
 	if a == "" {
 		return coreerrors.InvalidArgument().
@@ -236,7 +238,7 @@ func (a IPAddress) Validate() error {
 	return nil
 }
 
-// Validate проверяет weight ∈ [0, MaxTargetWeight] (acceptance TGT-005).
+// Validate проверяет weight ∈ [0, MaxTargetWeight].
 func (w LbWeight) Validate() error {
 	if w < 0 || w > MaxTargetWeight {
 		return coreerrors.InvalidArgument().

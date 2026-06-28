@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 // HTTP client + auth header injection for kacho-nlb k6 load tests.
 //
 // All scenarios route through api-gateway REST mux (default

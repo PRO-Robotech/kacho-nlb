@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package targetgroup
 
 import (
@@ -10,7 +13,7 @@ import (
 	kachorepo "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho"
 )
 
-// Port-интерфейсы use-case-слоя TargetGroupService (Clean Architecture / evgeniy §2.B).
+// Port-интерфейсы use-case-слоя TargetGroupService (Clean Architecture).
 //
 // Use-case'ы внутри пакета зависят ТОЛЬКО от этих port-ов; конкретные реализации
 // (pgx-Repository, gRPC-typed-clients, FGA writer) инжектируются в composition
@@ -28,7 +31,7 @@ type OpsRepo = operations.Repo
 type ProjectClient = iamclient.ProjectClient
 
 // RegionClient — geo.RegionService.Get adapter (stateless pass-through;
-// epic kacho-geo S4). Используется sync-precheck в Create use-case'е для
+// kacho-geo). Используется sync-precheck в Create use-case'е для
 // валидации `region_id` через kacho-geo (ребро nlb→geo).
 type RegionClient = geoclient.RegionClient
 
@@ -45,6 +48,6 @@ type NetworkInterfaceClient = vpcclient.NetworkInterfaceClient
 // для ip_ref-target peer-validate (Subnet existence + IP-in-CIDR + region-match).
 type SubnetClient = vpcclient.SubnetClient
 
-// FGA owner-hierarchy tuple-регистрация — через SEC-D transactional-outbox
+// FGA owner-hierarchy tuple-регистрация — через transactional-outbox
 // (FGARegisterOutbox emit в writer-tx + register-drainer → IAM); FGA object-types
 // / relations живут в `internal/domain` (FGAObjectType* / FGARelation*).

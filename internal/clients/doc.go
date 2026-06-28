@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 // Package clients — gRPC-клиенты к peer-сервисам (Clean Architecture
 // outbound adapters).
 //
@@ -8,9 +11,9 @@
 //
 //   - iam     — ProjectClient / CheckClient / HierarchyWriter
 //     (iam.ProjectService.Get + iam.InternalIAMService.{Check, WriteCreatorTuple}).
-//     Project existence + per-RPC FGA Check + D-11 sync creator-tuple write.
+//     Project existence + per-RPC FGA Check + sync creator-tuple write.
 //   - geo     — RegionClient (geo.RegionService.Get).
-//     region_id validation (stateless pass-through, без кэша; epic kacho-geo S4).
+//     region_id validation (stateless pass-through, без кэша; kacho-geo).
 //   - compute — InstanceClient (compute.InstanceService.Get).
 //     Target.instance_id resolve (instance-resolve — НЕ geography).
 //   - vpc     — SubnetClient / NetworkInterfaceClient / AddressClient /

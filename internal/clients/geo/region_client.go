@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package geo
 
 import (
@@ -30,7 +33,7 @@ type RegionClient interface {
 	//     tenant perspective, а bad input.
 	//   - Unavailable/DeadlineExceeded → domain.ErrUnavailable (fail-closed на мутации).
 	//   - PermissionDenied (region — публичный read-only справочник, но edge-
-	//     case при agg-route filtering) → domain.ErrInvalidArg "Region ... not
+	//     case при agg-route filtering) → domain.ErrInvalidArg "Region... not
 	//     found" (не лик'аем authz).
 	//   - Любая другая ошибка → wrapped error без sentinel-обёртки.
 	Get(ctx context.Context, regionID string) (*Region, error)
@@ -42,8 +45,8 @@ type regionClient struct {
 	regions geopb.RegionServiceClient
 }
 
-// NewRegionClient оборачивает grpc-conn в typed adapter. conn — `clients.Build(...)`.
-// RegionService живёт на public-listener kacho-geo (:9090) — публичный read-only
+// NewRegionClient оборачивает grpc-conn в typed adapter. conn — `clients.Build`.
+// RegionService живёт на public-listener kacho-geo (9090) — публичный read-only
 // справочник Geography.
 func NewRegionClient(conn grpc.ClientConnInterface) RegionClient {
 	if conn == nil {

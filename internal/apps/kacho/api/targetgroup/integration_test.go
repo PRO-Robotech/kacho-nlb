@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package targetgroup_test
 
 import (
@@ -26,7 +29,7 @@ import (
 	lbv1 "github.com/PRO-Robotech/kacho-nlb/proto/gen/go/kacho/cloud/loadbalancer/v1"
 
 	"github.com/PRO-Robotech/kacho-nlb/internal/apps/kacho/api/targetgroup"
-	// dto/type2pb init() регистрирует TargetGroup transfer.
+	// dto/type2pb init регистрирует TargetGroup transfer.
 	_ "github.com/PRO-Robotech/kacho-nlb/internal/dto/type2pb"
 	"github.com/PRO-Robotech/kacho-nlb/internal/migrations"
 	kachopg "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho/pg"
@@ -158,7 +161,7 @@ func TestIntegration_CreateTargetGroup_EndToEnd(t *testing.T) {
 	require.Contains(t, events, "nlb_target_group:CREATED")
 }
 
-// GWT-TGR-022 integration: Delete TG blocked when attached to LB
+// integration: Delete TG blocked when attached to LB
 // (real FK precheck via HasAttachedLB query).
 func TestIntegration_DeleteTG_BlocksOnAttached(t *testing.T) {
 	t.Parallel()
@@ -197,8 +200,8 @@ func TestIntegration_DeleteTG_BlocksOnAttached(t *testing.T) {
 	assert.Contains(t, status.Convert(err).Message(), "is attached to 1 load balancer(s)")
 }
 
-// GWT-TGT-002 + GWT-TGT-011 + Phase B parity integration: full Add/Remove/Drain
-// lifecycle через real Postgres.
+// TestIntegration_AddRemoveTargets_Lifecycle — фаза B parity integration: full
+// Add/Remove/Drain lifecycle через real Postgres.
 func TestIntegration_AddRemoveTargets_Lifecycle(t *testing.T) {
 	t.Parallel()
 	pool, repo := setupDB(t)
@@ -263,7 +266,7 @@ func TestIntegration_AddRemoveTargets_Lifecycle(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, getResp.GetTargets(), 2, "duplicate identity should be no-op")
 
-	// 5. RemoveTargets Phase A: mark one external_ip target as DRAINING.
+	// 5. RemoveTargets фаза A: mark one external_ip target as DRAINING.
 	rmOp, err := h.RemoveTargets(ctx, &lbv1.RemoveTargetsRequest{
 		TargetGroupId: tgID,
 		Targets: []*lbv1.Target{
@@ -293,7 +296,7 @@ func TestIntegration_AddRemoveTargets_Lifecycle(t *testing.T) {
 	assert.Equal(t, 1, activeCount)
 }
 
-// GWT-TGT-014 integration: Phase B Delete expired only — using a single TG
+// integration: фаза B Delete expired only — using a single TG
 // with a DRAINING target whose drain_started_at is in the past.
 func TestIntegration_DrainPhaseB_DeletesExpired(t *testing.T) {
 	t.Parallel()
@@ -318,7 +321,7 @@ func TestIntegration_DrainPhaseB_DeletesExpired(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	// Invoke pg-side DeleteTargetsDrained directly (Phase B runner runs same SQL).
+	// Invoke pg-side DeleteTargetsDrained directly (фаза B runner runs same SQL).
 	w, err := repo.Writer(ctx)
 	require.NoError(t, err)
 	deleted, err := w.TargetGroups().DeleteTargetsDrained(ctx, tgID, int32(60))

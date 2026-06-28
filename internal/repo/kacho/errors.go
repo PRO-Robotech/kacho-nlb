@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package kacho
 
 import "github.com/PRO-Robotech/kacho-nlb/internal/domain"

@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package pg_test
 
 import (
@@ -11,7 +14,7 @@ import (
 	"github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho"
 )
 
-// TestAttached_AttachIdempotent — GWT-DB-011 / NLB-033: ON CONFLICT DO NOTHING.
+// TestAttached_AttachIdempotent — /: ON CONFLICT DO NOTHING.
 // Первая Attach вставляет row (returned: attached=true); вторая — no-op (false).
 func TestAttached_AttachIdempotent(t *testing.T) {
 	repo, cleanup := newRepo(t, setupTestDB(t))

@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 // Package operation — gRPC handler для kacho.cloud.operation.OperationService.
 //
 // Scope: thin transport wrapper над `kacho-corelib/operations.Repo`.
@@ -9,17 +12,18 @@
 // List-операций НЕТ на этом сервисе — per-resource history exposed через
 // `<Resource>Service.ListOperations` (на NLB: `NetworkLoadBalancerService.ListOperations`,
 // `ListenerService.ListOperations`, `TargetGroupService.ListOperations`); см. design
-// §3.5 + per-resource ListOperations RPC'и.
+// ListOperations RPC'и.
 //
 // Authz: оба RPC помечены `(kacho.iam.authz.v1.permission) = "<exempt>"` в proto —
-// FGA Check interceptor пропускает их (любой авторизованный subject может Get/Cancel
-// своих операций). Owner-scope для Cancel будет добавлен следом (см. GWT-AZD-011)
-// — пока это handler-уровень за scope этого PR.
+// per-RPC FGA Check interceptor их пропускает (op-id опакен, поллится creator'ом
+// сразу после Create — в этом окне FGA-tuple ещё может быть не виден). Защита от
+// cross-tenant доступа энфорсится на уровне use-case: Get/Cancel сверяют принципала
+// caller'а (`operations.PrincipalFromContext`) с создателем операции через
+// ownership-scoped repo (GetOwned/CancelOwned, предикат в SQL WHERE). Чужой op-id →
+// existence-hiding NotFound.
 //
-// Реализация копирует проверенный паттерн `kacho-vpc/internal/handler/operation_handler.go`
-// и `kacho-compute/internal/handler/operation_handler.go`, с одним отличием — proto
-// принципал-поля (`principal_type` / `principal_id` / `principal_display_name`, KAC-105)
-// заполняются в ответе (vpc/compute mapping этот шаг исторически пропускал).
+// Принципал-поля (`principal_type` / `principal_id` / `principal_display_name`)
+// заполняются в proto-ответе через operationToProto.
 package operation
 
 import (
@@ -59,12 +63,12 @@ func (h *Handler) Get(ctx context.Context, req *operationpb.GetOperationRequest)
 //
 //	InvalidArgument    — пустой operation_id.
 //	NotFound           — операция не существует.
-//	FailedPrecondition — операция уже done=true (verbatim: "operation is already completed").
+//	FailedPrecondition — операция уже done=true (с фиксированным текстом: "operation is already completed").
 //	Internal           — нераспознанная ошибка.
 //
 // Cancel НЕ идемпотентна: повторный Cancel уже-отменённой op → FailedPrecondition
-// (acceptance GWT-OP-006). Это сознательный design choice (соответствует verbatim
-// YC и проверенному паттерну vpc/compute).
+// . Это сознательный design choice (соответствует с фиксированным текстом
+// Kachō и проверенному паттерну vpc/compute).
 func (h *Handler) Cancel(ctx context.Context, req *operationpb.CancelOperationRequest) (*operationpb.Operation, error) {
 	return h.cancel.Run(ctx, req)
 }

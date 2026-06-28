@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package domain
 
 import (
@@ -7,12 +10,12 @@ import (
 	"go.uber.org/multierr"
 )
 
-// HealthCheck — desired-конфигурация health-check (design §2.2). В
-// control-plane-only фазе не исполняется (acceptance §0.1); GetTargetStates
+// HealthCheck — desired-конфигурация health-check. В
+// control-plane-only фазе не исполняется; GetTargetStates
 // возвращает детерминированный computed-ramp.
 //
 // Probe-тип — 4-way oneof: exactly one of TCP/HTTP/HTTPS/GRPC должен быть
-// не-nil (acceptance TGR-003/004). Конкретные options-структуры — внутри
+// не-nil (004). Конкретные options-структуры — внутри
 // этого файла, чтобы domain-пакет был compact.
 type HealthCheck struct {
 	Name               LbName
@@ -52,7 +55,7 @@ type HealthCheckGRPC struct {
 }
 
 // Validate — exactly-one-of TCP/HTTP/HTTPS/GRPC + bound checks (interval,
-// timeout, thresholds). Покрывает acceptance TGR-003..TGR-006.
+// timeout, thresholds). Покрывает.
 func (h HealthCheck) Validate() error {
 	probeErr := h.validateProbeOneOf()
 
@@ -106,7 +109,7 @@ func (h HealthCheck) Validate() error {
 }
 
 // validateProbeOneOf — exactly-one-of TCP/HTTP/HTTPS/GRPC + port-range на
-// выбранном probe. Acceptance TGR-003 / TGR-004 verbatim:
+// выбранном probe. Acceptance / с фиксированным текстом:
 // `"health_check must specify exactly one of: tcp, http, https, grpc"`.
 func (h HealthCheck) validateProbeOneOf() error {
 	count := 0

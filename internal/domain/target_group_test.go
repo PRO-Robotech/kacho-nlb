@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package domain_test
 
 import (
@@ -142,4 +145,3 @@ func TestTargetGroup_Validate_NameRequired(t *testing.T) {
 		t.Fatal("expected error: empty name")
 	}
 }
-

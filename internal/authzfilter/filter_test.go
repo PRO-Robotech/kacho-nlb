@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package authzfilter
 
 import (
@@ -14,7 +17,7 @@ import (
 	iamv1 "github.com/PRO-Robotech/kacho-iam/proto/gen/go/kacho/cloud/iam/v1"
 )
 
-// Unit tests for the kacho-nlb FGA list-filter (RBAC sub-phase D §11, D-40..D-47).
+// Unit tests for the kacho-nlb FGA list-filter (RBAC).
 // Mirror of kacho-compute internal/authzfilter/filter_test.go, adapted to the
 // nlb `lb_*` resource types + `loadbalancer.*.list` actions. No network: a fake
 // AuthorizeService client returns programmed responses.
@@ -106,7 +109,7 @@ func TestFGAFilter_CacheMissThenHit(t *testing.T) {
 // NOTE: this only asserts the cache-HIT boundary, which is the one the
 // implementation defends. The first (cache-MISS) Decision currently shares its
 // backing array with the cached entry — see the "cache copy on miss-path" finding
-// in the review report. Production callers (Resolve → use-case) only READ IDs()
+// in the review report. Production callers (Resolve → use-case) only READ IDs
 // and never mutate, so the gap is latent; this test pins the implemented contract
 // rather than the desired one.
 func TestFGAFilter_CacheHitReturnsCopy(t *testing.T) {

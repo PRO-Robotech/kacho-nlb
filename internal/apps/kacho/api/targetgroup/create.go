@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package targetgroup
 
 import (
@@ -18,11 +21,11 @@ import (
 	kachopg "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho/pg"
 )
 
-// CreateTargetGroupUseCase — async Create TG (acceptance GWT-TGR-001..014).
+// CreateTargetGroupUseCase — async Create TG.
 //
 // Sync part:
 //   - required: project_id, region_id, health_check;
-//   - domain.TargetGroup.Validate() (name regex, HC oneof + bounds, dereg/slow_start ranges, per-target oneof + bogon-check);
+//   - domain.TargetGroup.Validate (name regex, HC oneof + bounds, dereg/slow_start ranges, per-target oneof + bogon-check);
 //   - sync duplicate-name check (project_id+name) → AlreadyExists;
 //   - operations.New + opsRepo.CreateWithPrincipal → return Operation.
 //
@@ -30,13 +33,13 @@ import (
 //   - peer-check project_id (iam ProjectService.Get);
 //   - peer-check region_id (geo RegionService.Get);
 //   - Writer-TX → Insert TG (+ inline targets) + outbox CREATED +
-//     FGARegisterOutbox.Emit(fga.register) → Commit (SEC-D Вариант A: owner-
+//     FGARegisterOutbox.Emit(fga.register) → Commit (Вариант A: owner-
 //     hierarchy + creator tuple intent written in the SAME tx as Insert — no
 //     dual-write; register-drainer applies it through kacho-iam).
 //
-// Note про inline targets (GWT-TGR-001 + GWT-TGR-012): per-target peer-resolve
+// Note про inline targets (+): per-target peer-resolve
 // (instance/nic/ip_ref existence + region match) делается AddTargets'ом, не
-// здесь — acceptance §5 GWT-TGR-012 говорит «если instance не существует,
+// здесь — говорит «если instance не существует,
 // worker rolls back TX и TG не создаётся». Делегируем работу: после Insert
 // TG в той же transaction раскрываем targets через AddTargets-логику peer-validate
 // inline (worker уже зашёл в TX); чтобы избежать TX-pollution валидацией peer-
@@ -117,11 +120,11 @@ func (u *CreateTargetGroupUseCase) Execute(
 		&lbv1.CreateTargetGroupMetadata{TargetGroupId: string(tg.ID)},
 	)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "build operation: %v", err)
+		return nil, mapDomainErr(err)
 	}
 	principal := operations.PrincipalFromContext(ctx)
 	if err := u.opsRepo.CreateWithPrincipal(ctx, op, principal); err != nil {
-		return nil, status.Errorf(codes.Internal, "operation persist: %v", err)
+		return nil, mapDomainErr(err)
 	}
 
 	operations.Run(ctx, u.opsRepo, op.ID, func(workerCtx context.Context) (*anypb.Any, error) {
@@ -131,7 +134,7 @@ func (u *CreateTargetGroupUseCase) Execute(
 }
 
 // doCreate — async worker: peer-check + Writer-TX + outbox + FGA-register-intent
-// + Commit (SEC-D: intent in the same tx, applied async by register-drainer).
+// + Commit (intent in the same tx, applied async by register-drainer).
 func (u *CreateTargetGroupUseCase) doCreate(
 	ctx context.Context, tg domain.TargetGroup, principal operations.Principal,
 ) (*anypb.Any, error) {
@@ -165,7 +168,7 @@ func (u *CreateTargetGroupUseCase) doCreate(
 	); err != nil {
 		return nil, mapDomainErr(err)
 	}
-	// SEC-D: FGA-register-intent (project-hierarchy + creator) in the SAME tx.
+	// FGA-register-intent (project-hierarchy + creator) in the SAME tx.
 	if err := w.FGARegisterOutbox().Emit(ctx, domain.FGAEventRegister,
 		tgRegisterIntent(created, principal)); err != nil {
 		return nil, mapDomainErr(err)
@@ -200,7 +203,7 @@ func (u *CreateTargetGroupUseCase) assertNameUnique(ctx context.Context, project
 	return nil
 }
 
-// tgRegisterIntent builds the SEC-D FGA-register-intent for a created
+// tgRegisterIntent builds the FGA-register-intent for a created
 // TargetGroup: project-hierarchy tuple plus, for an authenticated (non-system)
 // principal, a creator (admin) tuple (skipped on empty subject).
 func tgRegisterIntent(tg *kachorepo.TargetGroupRecord, principal operations.Principal) domain.FGARegisterIntent {
@@ -211,7 +214,7 @@ func tgRegisterIntent(tg *kachorepo.TargetGroupRecord, principal operations.Prin
 	if subject := domain.FGASubjectFromPrincipal(principal.Type, principal.ID); subject != "" {
 		tuples = append(tuples, domain.FGACreatorTuple(subject, domain.FGAObjectTypeTargetGroup, id))
 	}
-	// epic-rsab T3 (D4): carry tenant labels + parent-project so kacho-iam feeds its
+	// carry tenant labels + parent-project so kacho-iam feeds its
 	// resource_mirror (γ selector matchLabels / containment). source_version is
 	// stamped by the outbox emitter from the DB clock inside the writer-tx.
 	return domain.FGARegisterIntent{
@@ -223,9 +226,9 @@ func tgRegisterIntent(tg *kachorepo.TargetGroupRecord, principal operations.Prin
 	}
 }
 
-// tgMirrorIntent builds the epic-rsab T3 (D4) mirror-feed register-intent for an
+// tgMirrorIntent builds the mirror-feed register-intent for an
 // UPDATED TargetGroup: the project-hierarchy tuple (re-register is idempotent in
-// IAM per SEC-A) carrying the refreshed labels + parent so kacho-iam updates its
+// IAM) carrying the refreshed labels + parent so kacho-iam updates its
 // resource_mirror. No creator tuple — Update never re-assigns ownership; this is a
 // pure labels-refresh feed. source_version is stamped by the outbox emitter.
 func tgMirrorIntent(tg *kachorepo.TargetGroupRecord) domain.FGARegisterIntent {
@@ -241,7 +244,7 @@ func tgMirrorIntent(tg *kachorepo.TargetGroupRecord) domain.FGARegisterIntent {
 	}
 }
 
-// tgUnregisterIntent builds the SEC-D FGA-unregister-intent (project-hierarchy)
+// tgUnregisterIntent builds the FGA-unregister-intent (project-hierarchy)
 // for a deleted/moved TargetGroup.
 func tgUnregisterIntent(id, projectID string) domain.FGARegisterIntent {
 	return domain.FGARegisterIntent{

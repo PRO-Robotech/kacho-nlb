@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package loadbalancer
 
 import (
@@ -22,7 +25,7 @@ import (
 // StopLoadBalancerUseCase — ACTIVE/INACTIVE → STOPPING → STOPPED.
 // Precondition (sync): status ∈ {ACTIVE, INACTIVE}.
 //
-// Acceptance: GWT-NLB-023..GWT-NLB-025.
+// Acceptance:.
 type StopLoadBalancerUseCase struct {
 	repo    Repo
 	opsRepo operations.Repo
@@ -44,6 +47,9 @@ func (u *StopLoadBalancerUseCase) Execute(
 	id := req.GetNetworkLoadBalancerId()
 	if id == "" {
 		return nil, errInvalidArg("network_load_balancer_id", "required")
+	}
+	if err := validateLoadBalancerID(id); err != nil {
+		return nil, err
 	}
 
 	rd, err := u.repo.Reader(ctx)
@@ -67,11 +73,11 @@ func (u *StopLoadBalancerUseCase) Execute(
 		&lbv1.StopNetworkLoadBalancerMetadata{NetworkLoadBalancerId: id},
 	)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "build operation: %v", err)
+		return nil, mapDomainErr(err)
 	}
 	principal := operations.PrincipalFromContext(ctx)
 	if err := u.opsRepo.CreateWithPrincipal(ctx, op, principal); err != nil {
-		return nil, status.Errorf(codes.Internal, "operation persist: %v", err)
+		return nil, mapDomainErr(err)
 	}
 	expected := cur.Status
 	operations.Run(ctx, u.opsRepo, op.ID, func(workerCtx context.Context) (*anypb.Any, error) {
@@ -117,7 +123,7 @@ func (u *StopLoadBalancerUseCase) doStop(
 	}
 	out, err := anypb.New(pb)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "marshal response: %v", err)
+		return nil, mapDomainErr(err)
 	}
 	return out, nil
 }

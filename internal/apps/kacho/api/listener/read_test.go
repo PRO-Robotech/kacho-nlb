@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package listener
 
 import (
@@ -33,7 +36,7 @@ func TestGetListener_GWT_LST_016_HappyPath(t *testing.T) {
 	require.Equal(t, int64(suite.listener.Port), got.Port)
 }
 
-// TestGetListener_NotFound — verbatim YC text "Listener <id> not found".
+// TestGetListener_NotFound — текст ошибки по конвенции Kachō "Listener <id> not found".
 func TestGetListener_NotFound(t *testing.T) {
 	t.Parallel()
 	suite := newReadSuite(t)
@@ -125,7 +128,7 @@ func TestListListeners_ByProject_KAC229(t *testing.T) {
 	require.Len(t, resp.Listeners, 2, "project-scoped List returns listeners across all LBs in the project")
 }
 
-// TestListListeners_EmptyProjectID — project_id is required (KAC-229).
+// TestListListeners_EmptyProjectID — project_id is required.
 func TestListListeners_EmptyProjectID(t *testing.T) {
 	t.Parallel()
 	suite := newReadSuite(t)

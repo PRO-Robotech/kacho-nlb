@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package operation
 
 import (
@@ -15,7 +18,7 @@ import (
 	operationpb "github.com/PRO-Robotech/kacho-corelib/proto/gen/go/kacho/cloud/operation"
 )
 
-// TestOperation_OP001_GetInFlight — GWT-OP-001 from acceptance §7.
+// TestOperation_OP001_GetInFlight — from
 //
 // Given: Operation existed in `nlb` ops, done=false.
 // When:  OperationService.Get(operation_id=<op-id>).
@@ -42,7 +45,7 @@ func TestOperation_OP001_GetInFlight(t *testing.T) {
 	assert.Nil(t, got.GetResponse()) // result oneof empty for in-flight
 }
 
-// TestOperation_OP002_GetCompletedResponse — GWT-OP-002 (success completion).
+// TestOperation_OP002_GetCompletedResponse — (success completion).
 //
 // Given: Operation done=true with response.
 // When:  Get.
@@ -64,7 +67,7 @@ func TestOperation_OP002_GetCompletedResponse(t *testing.T) {
 	require.NotNil(t, got.GetModifiedAt())
 }
 
-// TestOperation_OP003_GetNotFound — GWT-OP-003.
+// TestOperation_OP003_GetNotFound —.
 //
 // When: Get unknown op-id. Then: NOT_FOUND.
 func TestOperation_OP003_GetNotFound(t *testing.T) {
@@ -91,6 +94,51 @@ func TestOperation_Get_EmptyOperationID(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, codes.InvalidArgument, st.Code())
 	assert.Contains(t, st.Message(), "operation_id required")
+}
+
+// TestOperation_Get_CrossTenant_NotFound — (owner-scope on Get).
+//
+// Given: Operation created by principal A (usr_alice).
+// When:  principal B (usr_bob) calls OperationService.Get(op-id) — op-id opaque
+//
+//	but a direct object reference; without an owner predicate any authenticated
+//	caller who learns a foreign op-id reads the foreign Operation (its `response`
+//	carries the whole resource).
+//
+// Then: existence-hiding NotFound — «есть-но-не-твоя» неотличимо от «нет такой».
+func TestOperation_Get_CrossTenant_NotFound(t *testing.T) {
+	repo := newFakeOpsRepo()
+	h := NewHandler(repo)
+
+	op, err := operations.New(ids.PrefixOperationNLB, "Create NLB owned by A", nil)
+	require.NoError(t, err)
+	require.NoError(t, repo.CreateWithPrincipal(context.Background(), op,
+		operations.Principal{Type: "user", ID: "usr_alice"}))
+
+	ctxB := operations.WithPrincipal(context.Background(),
+		operations.Principal{Type: "user", ID: "usr_bob"})
+	_, err = h.Get(ctxB, &operationpb.GetOperationRequest{OperationId: op.ID})
+	require.Error(t, err)
+	st, ok := grpcstatus.FromError(err)
+	require.True(t, ok)
+	assert.Equal(t, codes.NotFound, st.Code())
+	assert.Contains(t, st.Message(), "not found")
+}
+
+// TestOperation_Get_Owner_OK — creator reads their own operation (no regress).
+func TestOperation_Get_Owner_OK(t *testing.T) {
+	repo := newFakeOpsRepo()
+	h := NewHandler(repo)
+
+	op, err := operations.New(ids.PrefixOperationNLB, "Owned op", nil)
+	require.NoError(t, err)
+	pa := operations.Principal{Type: "user", ID: "usr_alice"}
+	require.NoError(t, repo.CreateWithPrincipal(context.Background(), op, pa))
+
+	got, err := h.Get(operations.WithPrincipal(context.Background(), pa),
+		&operationpb.GetOperationRequest{OperationId: op.ID})
+	require.NoError(t, err)
+	assert.Equal(t, op.ID, got.GetId())
 }
 
 func TestOperation_Get_RepoError_MapsToInternal(t *testing.T) {

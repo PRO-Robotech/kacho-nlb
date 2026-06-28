@@ -1,3 +1,6 @@
+# Copyright (c) PRO-Robotech
+# SPDX-License-Identifier: BUSL-1.1
+
 name: newman-e2e
 
 # KAC-127 — self-contained Newman E2E authz gate.
@@ -65,8 +68,6 @@ jobs:
       - uses: actions/checkout@v4
         with: { repository: PRO-Robotech/kacho-corelib, ref: main, path: kacho-corelib }
       - uses: actions/checkout@v4
-        with: { repository: PRO-Robotech/kacho-proto, ref: main, path: kacho-proto }
-      - uses: actions/checkout@v4
         with: { repository: PRO-Robotech/kacho-vpc, ref: main, path: kacho-vpc }
       - uses: actions/checkout@v4
         with: { repository: PRO-Robotech/kacho-iam, ref: main, path: kacho-iam }
@@ -118,9 +119,9 @@ jobs:
           grpcurl --version
 
       # Build every kacho-* :dev image. vpc/iam/compute/api-gateway build with
-      # context = the workspace root (Dockerfile COPY kacho-corelib / kacho-proto /
-      # kacho-<svc>). kacho-nlb is proto-decentralized — single-repo build context,
-      # внутренние зависимости тянутся как versioned-модули из GitHub.
+      # context = the workspace root (Dockerfile COPY kacho-corelib / kacho-<svc>).
+      # kacho-nlb is single-repo build context — внутренние зависимости тянутся
+      # как versioned-модули из GitHub.
       - name: build service images
         working-directory: ${{ github.workspace }}
         run: |

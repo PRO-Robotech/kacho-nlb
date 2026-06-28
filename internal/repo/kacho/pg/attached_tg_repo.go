@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package pg
 
 import (
@@ -82,8 +85,8 @@ type attachedTGWriter struct {
 	attachedTGReader
 }
 
-// Attach — INSERT с ON CONFLICT DO NOTHING (idempotent attach, acceptance
-// NLB-033 / GWT-DB-011). Возвращает (record, true) если row реально вставлена;
+// Attach — INSERT с ON CONFLICT DO NOTHING (idempotent attach).
+// Возвращает (record, true) если row реально вставлена;
 // (existing-record, false) если pair уже был.
 //
 // FK на load_balancer_id или target_group_id → SQLSTATE 23503 → ErrFailedPrecondition.

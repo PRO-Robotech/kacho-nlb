@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package operation
 
 import (
@@ -13,19 +16,28 @@ import (
 
 // CancelUseCase — переводит in-flight операцию в done=true со статусом CANCELLED.
 //
-// Семантика (verbatim kacho-vpc/kacho-compute pattern; acceptance GWT-OP-005/006):
+// Семантика (owner-scope):
 //
-//	in-flight → done=true, error.code=CANCELLED — handler возвращает свежий Operation;
-//	already done → FailedPrecondition "operation <id> already completed";
-//	not found    → NotFound          "operation <id> not found".
+//	in-flight (владелец)  → done=true, error.code=CANCELLED — возвращается свежий Operation;
+//	already done          → FailedPrecondition "operation <id> already completed";
+//	чужой / not found      → NotFound          "operation <id> not found" (existence-hiding).
 //
-// Worker, который реально выполняет тяжёлую работу, должен периодически проверять
-// op.Done через `operations.Repo.Get` и aborter'иться при cancel-flag — это
-// ответственность worker'а, не Cancel-handler'а. Сам handler атомарно flip'ает
-// done через repo.Cancel (single-statement UPDATE ... WHERE done=false; safe от race).
+// Owner-scope: без проверки владельца любой аутентифицированный caller, узнав
+// чужой op-id, отменил бы чужую in-flight мутацию. Поэтому первым шагом идёт
+// ownership-gate через `GetOwned` (предикат по principal-ключу создателя в SQL
+// WHERE) — чужой/несуществующий id → одинаковый NotFound (existence-hiding) ДО
+// какой-либо мутации, так что чужую операцию нельзя ни прочитать, ни тронуть.
 //
-// Cancel НЕ идемпотентен: повторный Cancel уже-отменённой op → FailedPrecondition
-// (acceptance GWT-OP-006). См. handler-level doc для обоснования.
+// Сама отмена — атомарный single-statement CAS `repo.Cancel`
+// (`UPDATE... WHERE id=$1 AND done=false`): ровно один из конкурирующих Cancel'ов
+// выигрывает, остальные видят done=true → ErrAlreadyDone → FailedPrecondition.
+// Cancel НЕ идемпотентен (повторный Cancel уже-завершённой op → FailedPrecondition)
+// — поэтому используется именно non-idempotent repo.Cancel,
+// а не idempotent-on-CANCELLED corelib CancelOwned.
+//
+// Worker, реально выполняющий тяжёлую работу, периодически проверяет op.Done через
+// `operations.Repo.Get` и aborter'ится при cancel-flag — это ответственность
+// worker'а, не Cancel-handler'а.
 type CancelUseCase struct {
 	repo operations.Repo
 }
@@ -40,6 +52,23 @@ func (u *CancelUseCase) Run(ctx context.Context, req *operationpb.CancelOperatio
 	if req.GetOperationId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "operation_id required")
 	}
+	// pgRepo обязан реализовывать OwnedOperationRepo; иначе fail-closed Internal
+	// (не silent-bypass owner-предиката).
+	owned, ok := operations.AsOwned(u.repo)
+	if !ok {
+		return nil, status.Error(codes.Internal, "operation cancel failed")
+	}
+	// Ownership-gate: чужой/несуществующий op-id → NotFound (existence-hiding) до
+	// любой мутации. Ownership неизменна, поэтому read-gate перед атомарным CAS не
+	// создаёт TOCTOU на состояние (саму отмену выигрывает single-statement Cancel).
+	owner := operations.OwnerFromPrincipal(operations.PrincipalFromContext(ctx))
+	if _, err := owned.GetOwned(ctx, req.GetOperationId(), owner); err != nil {
+		if errors.Is(err, operations.ErrNotFound) {
+			return nil, status.Errorf(codes.NotFound, "operation %s not found", req.GetOperationId())
+		}
+		return nil, status.Error(codes.Internal, "operation cancel failed")
+	}
+
 	if err := u.repo.Cancel(ctx, req.GetOperationId()); err != nil {
 		if errors.Is(err, operations.ErrNotFound) {
 			return nil, status.Errorf(codes.NotFound, "operation %s not found", req.GetOperationId())

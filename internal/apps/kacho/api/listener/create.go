@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package listener
 
 import (
@@ -20,14 +23,14 @@ import (
 	kachorepo "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho"
 )
 
-// CreateUseCase инициирует создание Listener'а (acceptance GWT-LST-001..LST-015).
+// CreateUseCase инициирует создание Listener'а.
 //
 // Sync (handler-thread, до возврата Operation клиенту):
 //  1. Required: load_balancer_id.
-//  2. LB.Get (same project + status != DELETING) — verbatim YC NotFound иначе.
-//  3. domain.Listener builder + Validate() (name regex, port range, protocol,
+//  2. LB.Get (same project + status != DELETING) — по конвенции Kachō NotFound иначе.
+//  3. domain.Listener builder + Validate (name regex, port range, protocol,
 //     ip_version, labels).
-//  4. INTERNAL LB → subnet_id required (verbatim YC error GWT-LST-006).
+//  4. INTERNAL LB → subnet_id required (по конвенции Kachō error).
 //  5. address_spec.address_id ↔ subnet_id: ровно одна BYO/auto-ветка может
 //     отсутствовать (proto oneof обеспечивает это на схеме; sync проверяем
 //     совместимость с типом LB).
@@ -42,7 +45,7 @@ import (
 //  2. repo.Writer open: Insert listener (with allocated_address + address_id) +
 //     outbox emit `nlb_listener:<id> CREATED` + `nlb_load_balancer:<lb_id> UPDATED`
 //     atomically.
-//  3. Commit (Insert + 2× outbox + FGA-register-intent atomically — SEC-D:
+//  3. Commit (Insert + 2× outbox + FGA-register-intent atomically —
 //     creator tuple + parent-link tuple
 //     `lb_network_load_balancer:<lb_id>#load_balancer@lb_listener:<id>` written
 //     in the SAME writer-tx; register-drainer applies it through kacho-iam).
@@ -67,7 +70,7 @@ type CreateUseCase struct {
 // NewCreateUseCase — конструктор. Все зависимости — port-интерфейсы (composition
 // root wires в `cmd/kacho-loadbalancer/main.go`). logger допускается nil — write-
 // helpers это переживают (см. helpers.go loggerOrDiscard). FGA owner/parent-link
-// tuple-регистрация — через SEC-D outbox (FGARegisterOutbox в writer-tx), не
+// tuple-регистрация — через outbox (FGARegisterOutbox в writer-tx), не
 // прямым FGA-клиентом.
 func NewCreateUseCase(
 	repo RepoFactory,
@@ -111,7 +114,7 @@ func (u *CreateUseCase) Run(ctx context.Context, req *lbv1.CreateListenerRequest
 		return nil, status.Error(codes.InvalidArgument, "address_spec is required")
 	}
 
-	// Build domain entity + run domain Validate() (name regex, port range,
+	// Build domain entity + run domain Validate (name regex, port range,
 	// protocol, ip_version, labels). Allocated_address оставляем пустым —
 	// заполняется в worker'е после VIP-allocation.
 	name, err := buildDomainName(req.GetName())
@@ -145,7 +148,7 @@ func (u *CreateUseCase) Run(ctx context.Context, req *lbv1.CreateListenerRequest
 		listener.SubnetID = option.MustNewOption(domain.SubnetID(addrCtx.subnetID))
 	}
 
-	// Domain self-validate (acceptance GWT-LST-007..LST-009).
+	// Domain self-validate.
 	if err := listener.Validate(); err != nil {
 		return nil, err
 	}
@@ -161,11 +164,11 @@ func (u *CreateUseCase) Run(ctx context.Context, req *lbv1.CreateListenerRequest
 		},
 	)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "operations.New: %v", err)
+		return nil, mapDomainErr(err)
 	}
 	principal := operations.PrincipalFromContext(ctx)
 	if err := u.opsRepo.CreateWithPrincipal(ctx, op, principal); err != nil {
-		return nil, status.Errorf(codes.Internal, "ops.Create: %v", err)
+		return nil, mapDomainErr(err)
 	}
 
 	// Snapshot входов для worker'а — handler-ctx канселится сразу после
@@ -191,7 +194,7 @@ type parentLB struct {
 // fetchParentLB — sync Get parent LB. Errors:
 //
 //	NotFound        — LB не существует.
-//	FailedPrecond.  — LB.Status == DELETING (acceptance §4 LST-001 pre-cond).
+//	FailedPrecond.  — LB.Status == DELETING (pre-cond).
 //	Internal        — repo failure.
 func (u *CreateUseCase) fetchParentLB(ctx context.Context, lbID string) (*parentLB, error) {
 	rd, err := u.repo.Reader(ctx)
@@ -220,10 +223,10 @@ type addressContext struct {
 // resolveAddressContext — вычисляет addressContext из proto ListenerAddressSpec
 // + parent LB.Type. Sync проверки:
 //
-//   - INTERNAL LB + auto-alloc → subnet_id обязателен (LST-006).
+//   - INTERNAL LB + auto-alloc → subnet_id обязателен.
 //   - BYO + ничего иного — допускается; INTERNAL + BYO + subnet_id ignored
 //     (BYO Address уже несёт привязку к Subnet через vpc.Address.scope.subnet_id).
-//   - EXTERNAL LB + auto.subnet_id — silent-ignore (proto allows; YC behaviour).
+//   - EXTERNAL LB + auto.subnet_id — silent-ignore (proto allows; поведение по конвенции Kachō).
 //   - Source not set (proto oneof default = nil) → InvalidArgument.
 func resolveAddressContext(spec *lbv1.ListenerAddressSpec, lbType domain.LBType) (addressContext, error) {
 	switch src := spec.GetSource().(type) {
@@ -242,7 +245,7 @@ func resolveAddressContext(spec *lbv1.ListenerAddressSpec, lbType domain.LBType)
 			return addressContext{}, status.Error(codes.InvalidArgument,
 				"subnet_id is required for INTERNAL load balancer")
 		}
-		// EXTERNAL: subnet_id silent-ignored (YC behaviour); INTERNAL: keep.
+		// EXTERNAL: subnet_id silent-ignored (поведение по конвенции Kachō); INTERNAL: keep.
 		subnet := ""
 		if lbType == domain.LBTypeInternal {
 			subnet = auto.GetSubnetId()
@@ -253,7 +256,7 @@ func resolveAddressContext(spec *lbv1.ListenerAddressSpec, lbType domain.LBType)
 }
 
 // buildDomainName — обёртка над domain.LbName с верхним sync-маппингом proto
-// → domain newtype. Возвращает gRPC InvalidArgument из Validate().
+// → domain newtype. Возвращает gRPC InvalidArgument из Validate.
 func buildDomainName(raw string) (domain.LbName, error) {
 	n := domain.LbName(raw)
 	if err := n.Validate(); err != nil {
@@ -329,7 +332,7 @@ func (u *CreateUseCase) doCreate(ctx context.Context, in createInput) (*anypb.An
 		rolledBack = true
 		return nil, mapDomainErr(fmt.Errorf("%w: outbox emit lb UPDATED: %v", domain.ErrInternal, err))
 	}
-	// SEC-D: FGA-register-intent (creator + parent-link) in the SAME writer-tx as
+	// FGA-register-intent (creator + parent-link) in the SAME writer-tx as
 	// the Insert — register-drainer applies it through kacho-iam RegisterResource.
 	if err := w.FGARegisterOutbox().Emit(ctx, domain.FGAEventRegister,
 		listenerRegisterIntent(created, in.fgaOwner)); err != nil {
@@ -356,13 +359,13 @@ type vipAllocResult struct {
 
 // acquireVIP — branch:
 //
-//   - BYO: vpc.AddressService.Get(...) → verify same project + matching
-//     ip_version → vpc.InternalAddressService.SetReference(...) atomic CAS.
+//   - BYO: vpc.AddressService.Get → verify same project + matching
+//     ip_version → vpc.InternalAddressService.SetReference atomic CAS.
 //     Errors:
 //     NotFound          → InvalidArgument "address <id> not found"
-//     cross-project     → InvalidArgument verbatim text
-//     ip_version mismatch → InvalidArgument verbatim text
-//     used_by occupied  → FailedPrecondition verbatim text (LST-003)
+//     cross-project     → InvalidArgument фиксированный текст
+//     ip_version mismatch → InvalidArgument фиксированный текст
+//     used_by occupied  → FailedPrecondition фиксированный текст
 //   - EXTERNAL auto:    vpc.InternalAddressService.AllocateExternalIP.
 //   - INTERNAL auto:    vpc.InternalAddressService.AllocateInternalIP(subnet_id=...).
 func (u *CreateUseCase) acquireVIP(ctx context.Context, l domain.Listener, addrCtx addressContext) (vipAllocResult, error) {
@@ -376,18 +379,18 @@ func (u *CreateUseCase) acquireVIP(ctx context.Context, l domain.Listener, addrC
 		if err != nil {
 			return vipAllocResult{}, err
 		}
-		// Same-project guard (verbatim LST-005 text).
+		// Same-project guard (с фиксированным текстом text).
 		if addr.ProjectID != string(l.ProjectID) {
 			return vipAllocResult{}, fmt.Errorf("%w: address project_id does not match listener load_balancer project_id",
 				domain.ErrInvalidArg)
 		}
-		// IP-version guard (verbatim LST-004 text).
+		// IP-version guard (с фиксированным текстом text).
 		want := familyForIPVersion(l.IPVersion)
 		if addr.Family != "" && addr.Family != want {
 			return vipAllocResult{}, fmt.Errorf("%w: address ip_version %s does not match listener ip_version %s",
 				domain.ErrInvalidArg, addr.Family, l.IPVersion)
 		}
-		// Used-by guard (verbatim LST-003 text). Idempotent re-attach to self
+		// Used-by guard (с фиксированным текстом text). Idempotent re-attach to self
 		// passes (SetReference CAS allows owner == self).
 		if addr.UsedBy != nil && !ownerMatches(*addr.UsedBy, owner) {
 			return vipAllocResult{}, fmt.Errorf("%w: address %s is already in use by %s:%s",
@@ -416,7 +419,7 @@ func (u *CreateUseCase) acquireVIP(ctx context.Context, l domain.Listener, addrC
 	if addrCtx.subnetID == "" {
 		// EXTERNAL → AllocateExternalIP. Передаём project_id для ownership
 		// созданного Address-ресурса; zone — пустая (берётся по LB.region default
-		// pool, KAC-71 cascade selector).
+		// pool, cascade selector).
 		resp, err := u.internalAddrs.AllocateExternalIP(ctx, vpcclient.AllocateExternalIPRequest{
 			ProjectID: string(l.ProjectID),
 			Name:      fmt.Sprintf("nlb-listener-%s", domain.TruncateID(l.ID)),
@@ -477,7 +480,7 @@ func (u *CreateUseCase) compensateVIP(ctx context.Context, listenerID domain.Res
 	logger.Info("listener.Create compensation FreeIP ok")
 }
 
-// listenerRegisterIntent builds the SEC-D FGA-register-intent for a created
+// listenerRegisterIntent builds the FGA-register-intent for a created
 // Listener:
 //
 //	<subject> #admin @lb_listener:<id>                                 (creator)
@@ -487,7 +490,7 @@ func (u *CreateUseCase) compensateVIP(ctx context.Context, listenerID domain.Res
 // resolves its project via the parent-link → LB hierarchy cascade, so it has no
 // own project-hierarchy tuple (parity with the former emitHierarchyTuples).
 //
-// epic-rsab T3.1 (#113, REVOKE-04): carry tenant labels + parent-project so
+// carry tenant labels + parent-project so
 // kacho-iam feeds its resource_mirror (γ selector matchLabels / containment) —
 // parity with lbMirrorIntent / tgMirrorIntent. Was a bare intent WITHOUT Labels,
 // so label selectors did not match even a freshly created listener (double-bug).
@@ -512,8 +515,8 @@ func listenerRegisterIntent(l *kachorepo.ListenerRecord, subject string) domain.
 	}
 }
 
-// listenerUnregisterIntent builds the SEC-D FGA-unregister-intent (parent-link)
-// for a deleted Listener (OQ-SEC-D-4: unregister parent-link; creator is left
+// listenerUnregisterIntent builds the FGA-unregister-intent (parent-link)
+// for a deleted Listener (unregister parent-link; creator is left
 // for IAM-side GC).
 func listenerUnregisterIntent(listenerID, lbID string) domain.FGARegisterIntent {
 	return domain.FGARegisterIntent{

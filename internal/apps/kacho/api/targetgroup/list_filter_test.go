@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package targetgroup
 
 import (
@@ -15,8 +18,8 @@ import (
 	"github.com/PRO-Robotech/kacho-nlb/internal/authzfilter"
 )
 
-// RBAC sub-phase D (§11, LST-1..6) per-object filtered List — TargetGroup.
-// Acceptance D-41 (LST-2 byName) / D-44 (LST-5 no-leak) / D-47 (fail-closed).
+// RBAC  per-object filtered List — TargetGroup.
+// Acceptance (byName) / (no-leak) / (fail-closed).
 // Ссылается на ещё-не-существующий internal/authzfilter + расширенный
 // NewListTargetGroupsUseCase(repo, filter) → RED до GREEN.
 
@@ -49,7 +52,7 @@ func ctxWithUser(id string) context.Context {
 		operations.Principal{Type: "user", ID: id})
 }
 
-// LST-2 byName: List отдаёт ровно перечисленные id; остальные отсутствуют.
+// byName: List отдаёт ровно перечисленные id; остальные отсутствуют.
 func TestListTargetGroupsFilter_OnlyAccessible(t *testing.T) {
 	repo := newFakeRepo()
 	a := makeTG("prj-a", "tg-a1")
@@ -82,7 +85,7 @@ func TestListTargetGroupsFilter_OnlyAccessible(t *testing.T) {
 	assert.Equal(t, "loadbalancer.targetGroups.list", flt.gotAct)
 }
 
-// LST-5 no-leak: пустой грант → пустой List.
+// no-leak: пустой грант → пустой List.
 func TestListTargetGroupsFilter_EmptyGrantEmptyList(t *testing.T) {
 	repo := newFakeRepo()
 	repo.seedTG(makeTG("prj-a", "tg-secret"))
@@ -96,7 +99,7 @@ func TestListTargetGroupsFilter_EmptyGrantEmptyList(t *testing.T) {
 	assert.Empty(t, resp.GetTargetGroups())
 }
 
-// D-47 fail-closed: ListObjects error → Unavailable.
+// fail-closed: ListObjects error → Unavailable.
 func TestListTargetGroupsFilter_FailClosed(t *testing.T) {
 	repo := newFakeRepo()
 	repo.seedTG(makeTG("prj-a", "tg-a1"))

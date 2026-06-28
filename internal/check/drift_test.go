@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package check_test
 
 import (
@@ -15,7 +18,7 @@ import (
 	"github.com/PRO-Robotech/kacho-nlb/internal/check"
 )
 
-// permissionRegex — design §6.11 + §6.5 + §6.2:
+// permissionRegex —
 //
 //	^loadbalancer\.[a-z]+\.[a-z][A-Za-z]+$
 //
@@ -24,10 +27,8 @@ import (
 // типа `attachTargetGroup`, `getTargetStates`, `listOperations`).
 var permissionRegex = regexp.MustCompile(`^loadbalancer\.[a-z][a-zA-Z0-9]*\.[a-z][a-zA-Z]+$`)
 
-// allPublicServiceDescs — все gRPC-сервисы NLB, **которые регистрируются на
-// public listener'е** (см. `cmd/kacho-loadbalancer/main.go`). Internal-сервисы
-// (`InternalResourceLifecycleService`) не подлежат per-RPC FGA Check —
-// они отдельно защищаются NetworkPolicy / mTLS (acceptance §AZD-025).
+// allPublicServiceDescs — gRPC-сервисы NLB на public listener'е
+// (см. `cmd/kacho-loadbalancer/main.go`).
 //
 // Источник истины: proto-generated `<Service>_ServiceDesc` variables.
 var allPublicServiceDescs = []grpc.ServiceDesc{
@@ -35,6 +36,37 @@ var allPublicServiceDescs = []grpc.ServiceDesc{
 	lbv1.ListenerService_ServiceDesc,
 	lbv1.TargetGroupService_ServiceDesc,
 	operationpb.OperationService_ServiceDesc,
+}
+
+// allInternalServiceDescs — gRPC-сервисы NLB на cluster-internal listener'е (9091).
+// Internal-листенер гоняет ТОТ ЖЕ per-RPC authz Check, что и public (security.md
+// «authN+authZ на ОБОИХ listener'ах»; «Internal = trusted» — запрещённое допущение),
+// поэтому их RPC ТОЖЕ обязаны быть в PermissionMap (с реальным Relation, не Public).
+var allInternalServiceDescs = []grpc.ServiceDesc{
+	lbv1.InternalResourceLifecycleService_ServiceDesc,
+}
+
+// allServiceDescs — public ∪ internal (все listener'ы гоняют один authz-interceptor).
+func allServiceDescs() []grpc.ServiceDesc {
+	out := make([]grpc.ServiceDesc, 0, len(allPublicServiceDescs)+len(allInternalServiceDescs))
+	out = append(out, allPublicServiceDescs...)
+	out = append(out, allInternalServiceDescs...)
+	return out
+}
+
+// internalRPCSet — множество full-method'ов internal-RPC. Их Permission намеренно
+// пуст (cluster-floor relation-based gate, НЕ tenant-facing каталожный permission).
+func internalRPCSet() map[string]struct{} {
+	s := make(map[string]struct{})
+	for _, sd := range allInternalServiceDescs {
+		for _, mi := range sd.Methods {
+			s[fullMethodName(sd, mi.MethodName)] = struct{}{}
+		}
+		for _, si := range sd.Streams {
+			s[fullMethodName(sd, si.StreamName)] = struct{}{}
+		}
+	}
+	return s
 }
 
 // fullMethodName собирает gRPC FullMethod из ServiceDesc.ServiceName + method name:
@@ -47,12 +79,12 @@ func fullMethodName(sd grpc.ServiceDesc, methodName string) string {
 // PermissionMap (либо как RPCEntry либо как Public: true). Любая «новая»
 // RPC, добавленная в proto, без соответствующей регистрации здесь — fail CI.
 //
-// Этот тест — acceptance §AZD-014 (drift-test catches unmapped RPC).
+// Этот тест — (drift-test catches unmapped RPC).
 func TestDrift_EveryRPCMapped(t *testing.T) {
 	m := check.PermissionMap()
 
 	var missing []string
-	for _, sd := range allPublicServiceDescs {
+	for _, sd := range allServiceDescs() {
 		for _, mi := range sd.Methods {
 			fm := fullMethodName(sd, mi.MethodName)
 			if _, ok := m[fm]; !ok {
@@ -74,7 +106,7 @@ func TestDrift_EveryRPCMapped(t *testing.T) {
 }
 
 // TestDrift_PermissionUnique — все Permission строки в PermissionMap уникальны
-// (нет двух RPC, делящих один permission). Design §6.11 п.3.
+// (нет двух RPC, делящих один permission). Design.
 func TestDrift_PermissionUnique(t *testing.T) {
 	m := check.PermissionMap()
 	seen := make(map[string]string, len(m))
@@ -91,7 +123,7 @@ func TestDrift_PermissionUnique(t *testing.T) {
 }
 
 // TestDrift_PermissionRegex — все Permission соответствуют regex
-// `^loadbalancer\.[a-z]+\.[a-z][A-Za-z]+$`. Design §6.11 п.4.
+// `^loadbalancer\.[a-z]+\.[a-z][A-Za-z]+$`. Design.
 func TestDrift_PermissionRegex(t *testing.T) {
 	for fm, e := range check.PermissionMap() {
 		if e.Permission == "" {
@@ -105,10 +137,16 @@ func TestDrift_PermissionRegex(t *testing.T) {
 
 // TestDrift_PermissionNonEmpty — каждый РЕАЛЬНЫЙ (не-Public) RPCEntry имеет
 // non-empty Permission (для будущего fine-grained Check / для каталога iam).
-// Design §6.11 п.2.
+// Design.
 func TestDrift_PermissionNonEmpty(t *testing.T) {
+	internal := internalRPCSet()
 	for fm, e := range check.PermissionMap() {
 		if e.Public {
+			continue
+		}
+		if _, ok := internal[fm]; ok {
+			// Internal cluster-floor RPC: relation-based gate (system_viewer @ cluster),
+			// НЕ tenant-facing каталожный permission — пустой Permission допустим.
 			continue
 		}
 		require.NotEmptyf(t, e.Permission,
@@ -145,8 +183,8 @@ func TestDrift_ExtractNonNilForNonPublic(t *testing.T) {
 	}
 }
 
-// TestDrift_CatalogCompleteness — Catalog() возвращает ровно 30 уникальных
-// permission строк (design §6.2). Acceptance §AZD-019.
+// TestDrift_CatalogCompleteness — Catalog возвращает ровно 30 уникальных
+// permission строк. Acceptance
 func TestDrift_CatalogCompleteness(t *testing.T) {
 	cat := check.Catalog()
 	uniq := make(map[string]struct{}, len(cat))
@@ -168,24 +206,25 @@ func TestDrift_CatalogRegex(t *testing.T) {
 	}
 }
 
-// TestDrift_RPCMethodCount — sanity-check: общее число RPCEntries в map'е
-// равно сумме методов всех публичных gRPC-сервисов. Если refactor proto
-// добавил/удалил RPC, оба теста (этот + EveryRPCMapped) ловят drift.
+// TestDrift_RPCMethodCount — sanity-check: общее число RPCEntries в map'е равно
+// сумме методов всех gRPC-сервисов на ОБОИХ listener'ах (public + internal). Если
+// refactor proto добавил/удалил RPC, оба теста (этот + EveryRPCMapped) ловят drift.
 //
-// Ожидание (design §3 / §6.5):
+// Ожидание:
 //
-//	12 NLB + 6 Listener + 9 TG + 2 Operation = 29 entries.
+//	12 NLB + 6 Listener + 9 TG + 2 Operation = 29 public + 1 internal Subscribe = 30 entries.
 func TestDrift_RPCMethodCount(t *testing.T) {
 	got := len(check.PermissionMap())
 
 	var expected int
-	for _, sd := range allPublicServiceDescs {
+	descs := allServiceDescs()
+	for _, sd := range descs {
 		expected += len(sd.Methods) + len(sd.Streams)
 	}
 	require.Equalf(t, expected, got,
 		"PermissionMap has %d entries; sum of %d ServiceDesc methods = %d. "+
 			"Either drift in proto-generated RPC set or PermissionMap, recheck.",
-		got, len(allPublicServiceDescs), expected)
+		got, len(descs), expected)
 }
 
 // TestExtract_AllRPCEntries — table-driven: для каждого non-Public RPCEntry

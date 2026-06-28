@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package compute
 
 import (
@@ -8,9 +11,9 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	computepb "github.com/PRO-Robotech/kacho-compute/proto/gen/go/kacho/cloud/compute/v1"
 	"github.com/PRO-Robotech/kacho-corelib/auth"
 	"github.com/PRO-Robotech/kacho-corelib/retry"
-	computepb "github.com/PRO-Robotech/kacho-compute/proto/gen/go/kacho/cloud/compute/v1"
 
 	"github.com/PRO-Robotech/kacho-nlb/internal/domain"
 )
@@ -47,7 +50,7 @@ type instanceClient struct {
 }
 
 // NewInstanceClient оборачивает grpc-conn в typed adapter. conn —
-// `clients.Build(...)`. InstanceService живёт на public-listener
+// `clients.Build`. InstanceService живёт на public-listener
 // kacho-compute (`:9090`).
 func NewInstanceClient(conn grpc.ClientConnInterface) InstanceClient {
 	if conn == nil {

@@ -1,10 +1,13 @@
-// Package config — viper-based YAML config для kacho-nlb (evgeniy §8.J / KAC-160).
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
+// Package config — viper-based YAML config для kacho-nlb.
 //
-// Иерархия секций — спека `docs/superpowers/specs/2026-05-23-kacho-nlb-design.md §6.9`:
+// Иерархия секций — спека `docs/superpowers/specs/2026-05-23-kacho-nlb-design.md `:
 //
 //	logger / api-server / metrics / healthcheck / repository.postgres /
 //	authn / extapi / authz.iam (+ cache, listen-invalidator) /
-//	fga.register-drainer (SEC-D) / mtls (SEC-B opt-in).
+//	fga.register-drainer  / mtls (opt-in).
 //
 // ENV-binding через viper с делимитером `__`:
 //
@@ -15,9 +18,9 @@
 //	KACHO_NLB_LOGGER__LEVEL                     → logger.level
 //
 // Defaults — в `defaults.go` (`RegisterDefaults`); validation — в `validate.go`
-// (`Config.Validate()`, `Mode` enum); loader — в `load.go` (`Load(path)`).
+// (`Config.Validate`, `Mode` enum); loader — в `load.go` (`Load(path)`).
 //
-// **Anti-pattern protection (evgeniy §J.2/J.3/J.6):**
+// **Anti-pattern protection :**
 //   - НЕ envconfig в struct tags — только mapstructure через viper.
 //   - НЕ defaults в struct tags — только в `RegisterDefaults`.
 //   - НЕ `bool productionMode` — `Mode` enum (ModeDev / ModeProduction).
@@ -53,12 +56,12 @@ type Config struct {
 	Jobs        JobsConfig        `mapstructure:"jobs"`
 
 	// InternalLifecycle — параметры InternalResourceLifecycleService.Subscribe
-	// (D-13 server-stream к kacho-iam, см.
+	// (server-stream к kacho-iam, см.
 	// `internal/apps/kacho/api/internal_lifecycle`).
 	InternalLifecycle InternalLifecycleConfig `mapstructure:"internal-lifecycle"`
 }
 
-// Mode возвращает резолвленный enum-режим (после `Validate()`).
+// Mode возвращает резолвленный enum-режим (после `Validate`).
 func (c Config) Mode() ModeEnum {
 	m, _ := ParseMode(c.ModeRaw)
 	return m
@@ -83,6 +86,10 @@ type APIServerConfig struct {
 
 type MetricsConfig struct {
 	Enable bool `mapstructure:"enable"`
+	// Address — listen-адрес cluster-internal diagnostic HTTP-listener'а
+	// (metrics + /healthz + /readyz). Default `:9101` (см. RegisterDefaults).
+	// Пустая строка ИЛИ enable=false → listener не поднимается (back-compat).
+	Address string `mapstructure:"address"`
 }
 
 type HealthcheckConfig struct {
@@ -103,17 +110,17 @@ type PostgresConfig struct {
 	SlaveURL     string        `mapstructure:"slave-url"`     // optional read-replica DSN
 
 	// PasswordFromEnv — имя ENV-переменной с паролем, который подставляется
-	// в URL/SlaveURL по shell-placeholder'у `$(<ИМЯ>)` на этапе Load() (см.
+	// в URL/SlaveURL по shell-placeholder'у `$(<ИМЯ>)` на этапе Load (см.
 	// load.go::expandPasswordFromEnv). Пароль — Secret в Helm, в ConfigMap
 	// его держать нельзя; viper не понимает `$(VAR)` синтаксис, поэтому
 	// expand делаем явно. Пустая строка — substitution отключён (URL
-	// используется как есть). KAC-172 regression-fix.
+	// используется как есть). regression-fix.
 	PasswordFromEnv string `mapstructure:"password-from-env"`
 }
 
 // ─── Authn (transport TLS) ───────────────────────────────────────────────────
 
-// AuthnConfig — TLS-параметры серверной части (опционально). См. evgeniy §8.J.1.
+// AuthnConfig — TLS-параметры серверной части (опционально). См.
 type AuthnConfig struct {
 	Type string         `mapstructure:"type"` // none | tls
 	TLS  AuthnTLSConfig `mapstructure:"tls"`
@@ -137,7 +144,7 @@ type ExtAPIConfig struct {
 	VPC             ExtAPIEndpoint `mapstructure:"vpc"`
 	Compute         ExtAPIEndpoint `mapstructure:"compute"`
 	IAM             ExtAPIEndpoint `mapstructure:"iam"`
-	// Geo — kacho-geo (Geography Region/Zone, leaf-owner; epic kacho-geo S4).
+	// Geo — kacho-geo (Geography Region/Zone, leaf-owner; kacho-geo).
 	// NetworkLoadBalancer.region_id / TargetGroup.region_id валидируются через
 	// geo.RegionService.Get (sync precheck). Ребро nlb→geo заменяет прежнее
 	// nlb→compute «ради region»; nlb→compute остаётся для InstanceService
@@ -148,7 +155,7 @@ type ExtAPIConfig struct {
 
 // ExtAPIEndpoint — параметры одного peer-сервиса. Public/Internal — два
 // отдельных адреса (NLB зовёт internal-сервисы напрямую через cluster-internal
-// :9091, не через api-gateway). TLS опционален (см. evgeniy §8.J.1).
+// :9091, не через api-gateway). TLS опционален.
 type ExtAPIEndpoint struct {
 	Addr         string        `mapstructure:"addr"`          // host:port (public RPC)
 	InternalAddr string        `mapstructure:"internal-addr"` // host:port (internal :9091)
@@ -164,22 +171,32 @@ type AuthzConfig struct {
 	ListenInvalidator AuthzListenInvalidatorConfig `mapstructure:"listen-invalidator"`
 	ListFilter        AuthzListFilterConfig        `mapstructure:"list-filter"`
 	Breakglass        bool                         `mapstructure:"breakglass"` // dev-only; production validation rejects
+
+	// TrustedForwarderSANs — allow-list cert-identity SAN'ов, которым разрешено
+	// форвардить end-user principal-metadata (обычно единственный — api-gateway SA).
+	// Пробрасывается в grpcsrv.UnaryTrustedPrincipalExtract(WithTrustedForwarders)
+	// на ОБОИХ листенерах. Пусто (default) → любой mTLS-verified peer доверен как
+	// форвардер (паритет с insecure dev back-compat и kacho-iam internal); задаётся в
+	// production для defense-in-depth против confused-deputy (внутренний сервис со
+	// своим валидным cert'ом не может выдать себя за пользователя). ENV
+	// `KACHO_NLB_AUTHZ__TRUSTED_FORWARDER_SANS` (comma-separated).
+	TrustedForwarderSANs []string `mapstructure:"trusted-forwarder-sans"`
 }
 
-// AuthzListFilterConfig — per-object filtered List (RBAC sub-phase D §11; issue
-// #111). Каждый публичный List<Resource> прогоняет id-set через
+// AuthzListFilterConfig — per-object filtered List (RBAC).
+// Каждый публичный List<Resource> прогоняет id-set через
 // iam.AuthorizeService.ListObjects(subject, action, "lb_*") и отдаёт пересечение
 // (только доступные объекты), read==enforce, fail-closed (security.md). Endpoint
-// — iam (там AuthorizeService); по умолчанию переиспользуется conn, которым nlb
+// iam (там AuthorizeService); по умолчанию переиспользуется conn, которым nlb
 // уже зовёт iam (см. main.go buildListFilter), mTLS — через mtls.iam-register.
 type AuthzListFilterConfig struct {
-	// Enabled — master-switch. default true (D §11 «применяется во всех доменах»).
+	// Enabled — master-switch. default true (D «применяется во всех доменах»).
 	// false → use-case'ы получают nil-Filter → нефильтрованный project-scoped
 	// passthrough (dev / graceful start без iam).
 	Enabled bool `mapstructure:"enabled"`
 	// Timeout — per-request deadline к iam.ListObjects (default 500ms).
 	Timeout time.Duration `mapstructure:"timeout"`
-	// CacheTTL — TTL decision-cache (default 5s; NFR ≤10s).
+	// CacheTTL — TTL decision-cache (default 5s; ≤10s).
 	CacheTTL time.Duration `mapstructure:"cache-ttl"`
 	// CacheMaxEntries — bound cache + MaxResults cap (default 10000).
 	CacheMaxEntries int `mapstructure:"cache-max-entries"`
@@ -196,7 +213,7 @@ type AuthzIAMConfig struct {
 
 type AuthzCacheConfig struct {
 	Enable bool          `mapstructure:"enable"` // default true (positive-only)
-	TTL    time.Duration `mapstructure:"ttl"`    // default 5s (NFR KAC-108: ≤10s)
+	TTL    time.Duration `mapstructure:"ttl"`    // default 5s (≤10s)
 	Size   int           `mapstructure:"size"`   // LRU capacity; 0 → 10_000 default
 }
 
@@ -206,20 +223,20 @@ type AuthzListenInvalidatorConfig struct {
 	IAMDirectDSN string `mapstructure:"iam-dsn"` // dedicated pgx conn to iam-DB (optional)
 }
 
-// ─── FGA (owner-tuple registration via IAM, SEC-D) ───────────────────────────
+// ─── FGA (owner-tuple registration via IAM) ───────────────────────────
 
-// FGAConfig — SEC-D: kacho-nlb НЕ ходит в FGA напрямую (эпик #6, GitHub Issue N5).
+// FGAConfig — kacho-nlb НЕ ходит в FGA напрямую.
 // Прямой best-effort tuple-write (OpenFGA endpoint/store/model) удалён; вместо него
 // owner-hierarchy tuple пишется register-intent'ом в `fga_register_outbox` в той же
 // writer-tx (Вариант A), а register-drainer применяет его через kacho-iam
 // InternalIAMService.RegisterResource/UnregisterResource по mTLS.
 type FGAConfig struct {
-	// RegisterDrainer — SEC-D register-drainer (fga_register_outbox → IAM
-	// RegisterResource/UnregisterResource). OQ-SEC-D-5: default-on (без него
+	// RegisterDrainer — register-drainer (fga_register_outbox → IAM
+	// RegisterResource/UnregisterResource).: default-on (без него
 	// созданные ресурсы не получат owner-tuple — деградация хуже текущей).
 	RegisterDrainer FGARegisterDrainerConfig `mapstructure:"register-drainer"`
 
-	// RequireIAM — sub-phase 1.4 S3 fail-closed boot-gate (D-8). Когда true,
+	// RequireIAM — fail-closed boot-gate. Когда true,
 	// мутирующий Create отказывает (UNAVAILABLE) и readiness=NotReady, пока
 	// register-drainer не подключён к IAM — ни один ресурс не создаётся без
 	// доставляемого owner-tuple-intent'а. Default false (dev back-compat). В
@@ -229,11 +246,11 @@ type FGAConfig struct {
 }
 
 // FGARegisterDrainerConfig — параметры corelib outbox/drainer на таблице
-// `kacho_nlb.fga_register_outbox` (SEC-D Вариант A). Drainer — внутренняя
+// `kacho_nlb.fga_register_outbox` (Вариант A). Drainer — внутренняя
 // goroutine (не cross-cluster flag); под FOR UPDATE SKIP LOCKED claim одна
 // реплика дренит каждую строку (exactly-once across pods).
 type FGARegisterDrainerConfig struct {
-	Enable       bool          `mapstructure:"enable"`        // default true (OQ-SEC-D-5)
+	Enable       bool          `mapstructure:"enable"`        // default true
 	BatchSize    int           `mapstructure:"batch-size"`    // default 32
 	PollFallback time.Duration `mapstructure:"poll-fallback"` // default 30s (missed-NOTIFY safety)
 	MaxAttempts  int           `mapstructure:"max-attempts"`  // default 10 (poison threshold)
@@ -241,11 +258,11 @@ type FGARegisterDrainerConfig struct {
 	BackoffMax   time.Duration `mapstructure:"backoff-max"`   // default 30s
 }
 
-// ─── mTLS (SEC-B opt-in, per-edge) ───────────────────────────────────────────
+// ─── mTLS (opt-in, per-edge) ───────────────────────────────────────────
 
-// MTLSConfig — per-edge mTLS via corelib SEC-B value-structs. enable=false
-// (default) → insecure (dev backward-compat, эпик §5). Каждое ребро —
-// независимый enable (эпик §6.5 rollback per-edge).
+// MTLSConfig — per-edge mTLS via corelib value-structs. enable=false
+// (default) → insecure (dev backward-compat). Каждое ребро —
+// независимый enable (rollback per-edge).
 //
 // ENV (viper, делимитер `.`→`__`; hyphen in a section name stays literal):
 // mapstructure лоуэркейсит имена полей corelib-структур →
@@ -264,25 +281,25 @@ type MTLSConfig struct {
 	// Server — server-cert на public+internal listener'ах (RequireAndVerify-
 	// ClientCert при enable=true).
 	Server grpcsrv.TLSServer `mapstructure:"server"`
-	// IAMRegister — client-cert на ВНУТРЕННЕМ ребре nlb→iam-internal (:9091):
+	// IAMRegister — client-cert на ВНУТРЕННЕМ ребре nlb→iam-internal (9091):
 	// InternalIAMService.Check (per-RPC authz-gate) + RegisterResource/
-	// UnregisterResource (register-drainer, SEC-D-17/21). ServerName =
-	// kacho-iam-internal.* (фактический :9091 dial-host). SEC-I (I6/OQ-5):
+	// UnregisterResource (register-drainer). ServerName =
+	// kacho-iam-internal.* (фактический :9091 dial-host).:
 	// этот же conn несёт Check, поэтому read/authz authz-ребро покрыто им.
 	IAMRegister grpcclient.TLSClient `mapstructure:"iam-register"`
-	// IAMProject — client-cert на ПУБЛИЧНОМ ребре nlb→iam (:9090):
-	// ProjectService.Get (existence + leaf-owner). SEC-I (OQ-5 (b),
+	// IAMProject — client-cert на ПУБЛИЧНОМ ребре nlb→iam (9090):
+	// ProjectService.Get (existence + leaf-owner). ((b),
 	// per-listener split): отдельное поле, потому что public dial-host =
 	// kacho-iam.* (≠ kacho-iam-internal.*) и единый ServerName не может быть
-	// корректен для обоих listener'ов под SEC-H RequireAndVerifyClientCert (I6,
-	// latent-bug D-04). ServerName = kacho-iam.* (фактический :9090 dial-host).
+	// корректен для обоих listener'ов под RequireAndVerifyClientCert (
+	// latent-bug). ServerName = kacho-iam.* (фактический :9090 dial-host).
 	IAMProject grpcclient.TLSClient `mapstructure:"iam-project"`
-	// VPC — client-cert на ребре nlb→vpc (Address/Subnet/NIC IPAM, SEC-D-18).
+	// VPC — client-cert на ребре nlb→vpc (Address/Subnet/NIC IPAM).
 	VPC grpcclient.TLSClient `mapstructure:"vpc"`
 	// Compute — client-cert на ребре nlb→compute (Instance-resolve; geography
 	// region-валидация перенесена на ребро nlb→geo, см. Geo ниже).
 	Compute grpcclient.TLSClient `mapstructure:"compute"`
-	// Geo — client-cert на ребре nlb→geo (RegionService.Get, epic kacho-geo S4).
+	// Geo — client-cert на ребре nlb→geo (RegionService.Get, kacho-geo).
 	Geo grpcclient.TLSClient `mapstructure:"geo"`
 }
 
@@ -293,18 +310,18 @@ type JobsConfig struct {
 	TargetDrain TargetDrainConfig `mapstructure:"target-drain"`
 }
 
-// TargetDrainConfig — параметры Phase B 2-phase drain runner (KAC-159).
+// TargetDrainConfig — параметры двухфазного drain runner.
 type TargetDrainConfig struct {
 	// Interval — период между тиками drain-runner'а. Default 10s
 	// (см. RegisterDefaults). Должен быть > 0.
 	Interval time.Duration `mapstructure:"interval"`
 }
 
-// ─── InternalLifecycle (D-13 stream) ─────────────────────────────────────────
+// ─── InternalLifecycle (stream) ─────────────────────────────────────────
 
-// InternalLifecycleConfig — параметры InternalResourceLifecycleService.Subscribe
-// (KAC-157). Server-stream к kacho-iam для FGA tuple-sync; cluster-internal
-// only (port 9091, workspace CLAUDE.md «Запреты» #6).
+// InternalLifecycleConfig — параметры InternalResourceLifecycleService.Subscribe.
+// Server-stream к kacho-iam для FGA tuple-sync; cluster-internal
+// only (port 9091, Internal-only).
 type InternalLifecycleConfig struct {
 	// MaxStreams — максимальное число одновременных Subscribe-стримов.
 	// Каждый стрим держит dedicated pgx.Conn для LISTEN/NOTIFY (вне pool'а),

@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+
+# Copyright (c) PRO-Robotech
+# SPDX-License-Identifier: BUSL-1.1
+
 # tests/newman/scripts/run.sh — newman runner for kacho-nlb regression suites.
 #
 # Usage:

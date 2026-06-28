@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package config_test
 
 import (
@@ -12,9 +15,9 @@ import (
 	"github.com/PRO-Robotech/kacho-nlb/internal/apps/kacho/config"
 )
 
-// mtls_test.go — SEC-D S3: opt-in mTLS per-edge config (SEC-B corelib value-
-// structs). Scenarios SEC-D-16 (disabled default → insecure), SEC-D-17/18/19
-// (enabled → creds build), fail-closed on missing CA. Newman SEC-D-21 (mismatch)
+// mtls_test.go — opt-in mTLS per-edge config (corelib value-
+// structs). Scenarios (disabled default → insecure),
+// (enabled → creds build), fail-closed on missing CA. Newman (mismatch)
 // is an e2e concern; here we verify the config→creds wiring contract.
 
 // minimalEnv sets the only hard-required config field (postgres URL) so
@@ -24,7 +27,7 @@ func minimalEnv(t *testing.T) {
 	t.Setenv("KACHO_NLB_REPOSITORY__POSTGRES__URL", "postgres://u:p@h/kacho_nlb")
 }
 
-// TestMTLS_SECD16_DisabledDefaultInsecure — SEC-D-16: every edge mTLS off by
+// TestMTLS_SECD16_DisabledDefaultInsecure — every edge mTLS off by
 // default → insecure creds build without reading any cert file (dev unchanged).
 func TestMTLS_SECD16_DisabledDefaultInsecure(t *testing.T) {
 	minimalEnv(t)
@@ -47,7 +50,7 @@ func TestMTLS_SECD16_DisabledDefaultInsecure(t *testing.T) {
 	require.NoError(t, err)
 }
 
-// TestMTLS_SECD17_EnabledClientCredsBuild — SEC-D-17/18/19: a per-edge client
+// TestMTLS_SECD17_EnabledClientCredsBuild — a per-edge client
 // config loaded from ENV with valid cert material builds mTLS dial creds.
 func TestMTLS_SECD17_EnabledClientCredsBuild(t *testing.T) {
 	minimalEnv(t)
@@ -72,7 +75,7 @@ func TestMTLS_SECD17_EnabledClientCredsBuild(t *testing.T) {
 }
 
 // TestMTLS_SECD_FailClosedMissingCA — enable=true but ca_files empty → error
-// (fail-closed, no silent insecure downgrade; эпик §6.5 / SEC-D-20).
+// (fail-closed, no silent insecure downgrade).
 func TestMTLS_SECD_FailClosedMissingCA(t *testing.T) {
 	minimalEnv(t)
 	t.Setenv("KACHO_NLB_MTLS__IAM-REGISTER__ENABLE", "true")

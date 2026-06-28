@@ -1,7 +1,10 @@
-// cmd/migrator/main_test.go — KAC-160; покрывает только парсинг cobra-флагов
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
+// cmd/migrator/main_test.go —; покрывает только парсинг cobra-флагов
 // + резолвинг диалекта/DSN. Реальный apply миграций — integration-тесты в
 // internal/repo/...integration_test.go (testcontainers Postgres + goose),
-// которые появятся в KAC-148. Тут — быстрые unit-тесты без БД и без Docker.
+// которые появятся в. Тут — быстрые unit-тесты без БД и без Docker.
 package main
 
 import (
@@ -99,7 +102,7 @@ func TestBuildRunner_DSNFromFlag(t *testing.T) {
 
 func TestBuildRunner_EnvDSNFallback(t *testing.T) {
 	t.Setenv("KACHO_NLB_REPOSITORY__POSTGRES__URL", "postgres://envuser:envpass@h/db")
-	opts := &rootOptions{dialect: "postgres" /* dsn пуст */}
+	opts := &rootOptions{dialect: "postgres" /* dsn пуст*/}
 	r, err := buildRunner(opts, fstest.MapFS{"0001_x.sql": &fstest.MapFile{Data: []byte("-- empty")}})
 	if err != nil {
 		t.Fatalf("buildRunner: %v", err)

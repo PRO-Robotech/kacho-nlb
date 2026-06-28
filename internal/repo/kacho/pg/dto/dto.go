@@ -1,8 +1,11 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 // Package dto — pgmodel ↔ domain.X конвертация для kacho-nlb.
 //
 // Расположение: `internal/repo/kacho/pg/dto/`. Domain-пакет ничего не знает про
 // JSONB-сериализацию (workspace CLAUDE.md «Чистая архитектура»); этот пакет
-// — единственное место, где доменные типы (HealthCheck, LbLabels) превращаются
+// единственное место, где доменные типы (HealthCheck, LbLabels) превращаются
 // в JSONB-tape и обратно.
 //
 // Используется repo-impl'ом в `internal/repo/kacho/pg/`.
@@ -157,7 +160,7 @@ func isHealthCheckZero(hc domain.HealthCheck) bool {
 
 // OptString — option.ValueOf[T] → *string для DB. Some("") и None
 // различаются: Some("") пишет пустую строку, None пишет NULL (для nullable
-// колонок). В schemas с DEFAULT '' и NOT NULL — caller использует empty-string
+// колонок). В schemas с DEFAULT пустой строки и NOT NULL — caller использует empty-string
 // для None (см. ListenerOptToStr / OptToStr ниже).
 func OptString[T ~string](v option.ValueOf[T]) string {
 	if s, ok := v.Maybe(); ok {

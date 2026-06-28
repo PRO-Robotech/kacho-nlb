@@ -1,5 +1,7 @@
-// Package authzfilter — per-object filtered List для kacho-nlb (RBAC sub-phase D,
-// §11, D-40..D-47; workspace issue #111).
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
+// Package authzfilter — per-object filtered List для kacho-nlb (RBAC).
 //
 // Каждый публичный List<Resource> handler/use-case прогоняет id-set ресурса
 // через iam.AuthorizeService.ListObjects(subject, action, "lb_*") и отдаёт
@@ -59,8 +61,8 @@ func (d Decision) IDs() []string { return d.AllowedIDs }
 // как bypass (use-case проверяет filter == nil).
 type Filter interface {
 	// ListAllowedIDs возвращает Decision для (subject, resourceType, action).
-	// resourceType — FGA object type ("lb_network_load_balancer", ...).
-	// action — semantic permission ("loadbalancer.networkLoadBalancers.list", ...) —
+	// resourceType — FGA object type ("lb_network_load_balancer",...).
+	// action — semantic permission ("loadbalancer.networkLoadBalancers.list",...) —
 	// iam-сервер мапит на FGA relation (viewer). subject — FGA subject
 	// ("user:usr_..." / "service_account:sa_...").
 	ListAllowedIDs(ctx context.Context, subject, resourceType, action string) (Decision, error)
@@ -174,7 +176,7 @@ func (f *FGAFilter) ListAllowedIDs(ctx context.Context, subject, resourceType, a
 		return f.handleErr(err)
 	}
 
-	// KAC-214: wildcard_grant → subject имеет unbounded reach над типом → bypass
+	// wildcard_grant → subject имеет unbounded reach над типом → bypass
 	// (resource_ids пуст на сервере при wildcard, поэтому НЕ трактуем как Empty).
 	if resp.GetWildcardGrant() {
 		d := Decision{BypassAll: true}

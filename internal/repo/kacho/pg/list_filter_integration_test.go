@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package pg_test
 
 import (
@@ -12,19 +15,19 @@ import (
 	"github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho"
 )
 
-// RBAC sub-phase D (§11, LST-2/LST-6, D-46) — repo-layer per-object filter.
+// RBAC — repo-layer per-object filter.
 //
-// Каждый List<Resource>Filter получает поле AllowedIDs []string (FGA-allow-set
+// Каждый List<Resource>Filter получает поле AllowedIDs string (FGA-allow-set
 // от iam ListObjects). Семантика (зеркало kacho-compute disk_repo.go):
 //   - AllowedIDs == nil  → фильтр не применяется (bypass / нет authz).
 //   - len(AllowedIDs)==0 → пустой результат (0 строк, без SQL-выборки) — пустой
 //     грант не должен возвращать все строки (no-leak).
 //   - len>0              → `WHERE id = ANY($allowed)` ВНУТРИ SQL, ДО LIMIT, чтобы
-//     keyset-пагинация была плотной по отфильтрованному набору (D-46).
+//     keyset-пагинация была плотной по отфильтрованному набору.
 //
 // Эти тесты ссылаются на ещё-не-существующее поле AllowedIDs → RED до GREEN.
 
-// LST-2: AllowedIDs subset → ровно перечисленные LB.
+// AllowedIDs subset → ровно перечисленные LB.
 func TestLB_List_AllowedIDsSubset(t *testing.T) {
 	repo, cleanup := newRepo(t, setupTestDB(t))
 	defer cleanup()
@@ -89,7 +92,7 @@ func TestLB_List_EmptyAllowedIDsReturnsNone(t *testing.T) {
 	require.Len(t, gotAll, 1)
 }
 
-// D-46 LST-6: pagination АФТЕР фильтра — N accessible из M общих, плотные страницы.
+// pagination АФТЕР фильтра — N accessible из M общих, плотные страницы.
 func TestLB_List_PaginationAfterFilter(t *testing.T) {
 	repo, cleanup := newRepo(t, setupTestDB(t))
 	defer cleanup()

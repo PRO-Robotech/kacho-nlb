@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package targetgroup
 
 import (
@@ -8,8 +11,8 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/PRO-Robotech/kacho-corelib/operations"
-	lbv1 "github.com/PRO-Robotech/kacho-nlb/proto/gen/go/kacho/cloud/loadbalancer/v1"
 	operationpb "github.com/PRO-Robotech/kacho-corelib/proto/gen/go/kacho/cloud/operation"
+	lbv1 "github.com/PRO-Robotech/kacho-nlb/proto/gen/go/kacho/cloud/loadbalancer/v1"
 
 	"github.com/PRO-Robotech/kacho-nlb/internal/domain"
 	"github.com/PRO-Robotech/kacho-nlb/internal/dto"
@@ -19,7 +22,7 @@ import (
 // mapDomainErr транслирует sentinel-ошибки `domain` и `kacho`(repo) в gRPC-status.
 // Если err уже gRPC-status — пробрасываем как есть (sync corelib/errors).
 //
-// Mirror'ит соглашение loadbalancer.mapDomainErr (стабильная YC-style форма
+// Mirror'ит соглашение loadbalancer.mapDomainErr (стабильная форма
 // ошибки доходит до клиента; raw pgx-текст НЕ leak'аем).
 func mapDomainErr(err error) error {
 	if err == nil {
@@ -137,7 +140,7 @@ func tgRecordToProto(rec *kachorepo.TargetGroupRecord) (*lbv1.TargetGroup, error
 	}
 	var dst *lbv1.TargetGroup
 	if err := dto.Transfer(dto.FromTo(*rec, &dst)); err != nil {
-		return nil, status.Errorf(codes.Internal, "dto.Transfer TargetGroup: %v", err)
+		return nil, mapDomainErr(err)
 	}
 	return dst, nil
 }

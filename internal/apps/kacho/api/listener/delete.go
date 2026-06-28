@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package listener
 
 import (
@@ -19,7 +22,7 @@ import (
 	kachorepo "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho"
 )
 
-// DeleteUseCase — async Delete Listener (acceptance GWT-LST-022..LST-025).
+// DeleteUseCase — async Delete Listener.
 //
 // Sync (handler-thread):
 //  1. listener_id required.
@@ -31,15 +34,15 @@ import (
 //     parallel UPDATE/DELETE losses race fast.
 //  2. Free VIP branch:
 //     - auto-alloc (BYO=false): vpc.InternalAddressService.FreeIP(address_id).
-//     - BYO       (BYO=true) : vpc.InternalAddressService.ClearReference(address_id).
+//     - BYO       (BYO=true): vpc.InternalAddressService.ClearReference(address_id).
 //     Failure → outbox `nlb_listener:<id> FAILED` + ops.MarkDone(error UNAVAILABLE);
 //     listener row остаётся в `status='DELETING'` для retry by `free_ip_runner`
-//     (Wave 9 follow-up). Verbatim acceptance GWT-LST-024.
+//     (follow-up). Verbatim.
 //  3. repo.Writer.Listeners.Delete + 2× outbox emit (`nlb_listener:<id> DELETED`
 //     + `nlb_load_balancer:<lb_id> UPDATED`).
 //  4. ops.MarkDone(response=Empty).
 //
-// BYO vs auto-alloc detection (design §4.2 / acceptance LST-022/LST-023):
+// BYO vs auto-alloc detection:
 // текущая schema хранит `address_id` для обоих вариантов (BYO — original id;
 // auto — id новосозданного Address из AllocateExternalIP/AllocateInternalIP).
 // Чтобы различить branch — храним ещё одну метку. На уровне domain.Listener
@@ -53,8 +56,8 @@ import (
 // Pragmatic shortcut: heuristic ниже — Address.Name префикс `nlb-listener-<short-id>`
 // (детерминированный builder в acquireVIP). Это надёжный признак auto-alloc
 // branch; альтернативно можно расширить domain.Listener дополнительной flag-
-// колонкой `address_byo bool` — отложено в KAC-152 follow-up (требует миграции
-// schema; acceptance работает и с эвристикой). См. GWT-LST-022/-023.
+// колонкой `address_byo bool` — отложено в follow-up (требует миграции
+// schema; acceptance работает и с эвристикой). См. /-023.
 type DeleteUseCase struct {
 	repo          RepoFactory
 	opsRepo       OperationsRepo
@@ -86,6 +89,9 @@ func (u *DeleteUseCase) Run(ctx context.Context, req *lbv1.DeleteListenerRequest
 	if id == "" {
 		return nil, status.Error(codes.InvalidArgument, "listener_id required")
 	}
+	if err := validateListenerID(id); err != nil {
+		return nil, err
+	}
 
 	rd, err := u.repo.Reader(ctx)
 	if err != nil {
@@ -107,11 +113,11 @@ func (u *DeleteUseCase) Run(ctx context.Context, req *lbv1.DeleteListenerRequest
 		},
 	)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "operations.New: %v", err)
+		return nil, mapDomainErr(err)
 	}
 	principal := operations.PrincipalFromContext(ctx)
 	if err := u.opsRepo.CreateWithPrincipal(ctx, op, principal); err != nil {
-		return nil, status.Errorf(codes.Internal, "ops.Create: %v", err)
+		return nil, mapDomainErr(err)
 	}
 
 	snap := *cur
@@ -192,7 +198,7 @@ func (u *DeleteUseCase) doDelete(ctx context.Context, cur *kachorepo.ListenerRec
 	}()
 	if err := w.Listeners().Delete(ctx, listenerID); err != nil {
 		// ErrNotFound — idempotent (двойной Delete): продолжаем, emit DELETED
-		// для consumers (acceptance LST-022 idempotency).
+		// для consumers (idempotency).
 		if !errors.Is(err, domain.ErrNotFound) {
 			return nil, mapDomainErr(err)
 		}
@@ -209,7 +215,7 @@ func (u *DeleteUseCase) doDelete(ctx context.Context, cur *kachorepo.ListenerRec
 	); err != nil {
 		return nil, mapDomainErr(fmt.Errorf("%w: outbox emit lb UPDATED: %v", domain.ErrInternal, err))
 	}
-	// SEC-D: FGA-unregister-intent (parent-link) in the SAME tx as the Delete —
+	// FGA-unregister-intent (parent-link) in the SAME tx as the Delete —
 	// register-drainer removes the parent-link tuple via IAM.UnregisterResource.
 	if err := w.FGARegisterOutbox().Emit(ctx, domain.FGAEventUnregister,
 		listenerUnregisterIntent(listenerID, lbID)); err != nil {
@@ -222,7 +228,7 @@ func (u *DeleteUseCase) doDelete(ctx context.Context, cur *kachorepo.ListenerRec
 
 	any, err := anypb.New(&emptypb.Empty{})
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "anypb.New Empty: %v", err)
+		return nil, mapDomainErr(err)
 	}
 	return any, nil
 }
@@ -261,8 +267,8 @@ func (u *DeleteUseCase) detectBYO(ctx context.Context, addressID, listenerID str
 
 // releaseVIP — branch:
 //
-//	byo == true  → ClearReference (Address остаётся у tenant'а; LST-023).
-//	byo == false → FreeIP (kacho-vpc delete Address целиком; LST-022).
+//	byo == true  → ClearReference (Address остаётся у tenant'а).
+//	byo == false → FreeIP (kacho-vpc delete Address целиком).
 //
 // Failure мапится в gRPC через mapDomainErr. NotFound → idempotent ok.
 func (u *DeleteUseCase) releaseVIP(ctx context.Context, addressID, listenerID string, byo bool) error {
@@ -278,7 +284,7 @@ func (u *DeleteUseCase) releaseVIP(ctx context.Context, addressID, listenerID st
 
 // markFailedAndReturn — best-effort outbox emit `nlb_listener:<id> FAILED`
 // + return wrapped error для ops.MarkError. listener row остаётся в DELETING
-// state — retry'ит background `free_ip_runner` (Wave 9 follow-up, GWT-LST-024).
+// state — retry'ит background `free_ip_runner` (follow-up).
 func (u *DeleteUseCase) markFailedAndReturn(ctx context.Context, listenerID, projectID string, original error) error {
 	w, err := u.repo.Writer(ctx)
 	if err == nil {

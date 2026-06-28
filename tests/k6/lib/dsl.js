@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 // Resource-lifecycle DSL helpers — wrap raw REST calls with sane defaults so
 // scenario files stay readable.
 //

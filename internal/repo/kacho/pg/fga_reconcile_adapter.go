@@ -1,12 +1,15 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 // fga_reconcile_adapter.go — per-service adapters for the corelib
-// outbox/reconciler (sub-phase 1.4 S3 backstop, D-6).
+// outbox/reconciler (backstop).
 //
 // The reconciler orchestrates re-drive / derive-from-state backfill / inverse-
 // orphan GC; the DOMAIN knowledge (which tables hold tenant resources, their
 // project_id, whether one still exists) is per-service and injected through
 // reconciler.ResourceEnumerator + reconciler.TupleRegistry. This file implements
 // those ports over the kacho_nlb resource tables (project-hierarchy only — every
-// nlb resource carries project_id; no owner-self-grant backfill, D-4).
+// nlb resource carries project_id; no owner-self-grant backfill).
 package pg
 
 import (

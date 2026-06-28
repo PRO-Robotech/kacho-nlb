@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package domain_test
 
 import (
@@ -141,7 +144,7 @@ func TestHealthCheck_Validate_Timeout(t *testing.T) {
 func TestHealthCheck_Validate_Thresholds(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
-		name              string
+		name               string
 		unhealthy, healthy int32
 		wantErr            bool
 	}{

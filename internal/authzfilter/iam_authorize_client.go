@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package authzfilter
 
 import (
@@ -22,9 +25,9 @@ type grpcAuthorizeClient struct {
 
 // ListObjects пробрасывает request в kacho-iam AuthorizeService.
 //
-// W1.4 (KAC-178 follow-up, зеркало compute/iam_authorize_client + nlb
+// (follow-up, зеркало compute/iam_authorize_client + nlb
 // check_client): outgoing ctx обёрнут auth.PropagateOutgoing, чтобы iam-side
-// grpcsrv.UnaryPrincipalExtract увидел РЕАЛЬНОГО caller'а (а не SystemPrincipal()
+// grpcsrv.UnaryPrincipalExtract увидел РЕАЛЬНОГО caller'а (а не SystemPrincipal
 // = user:bootstrap). Без wrap'а iam authzguard видит "system:bootstrap" и отбивает
 // ListObjects → nlb list-filter возвращал бы 403/Unavailable для всех user'ов.
 func (g *grpcAuthorizeClient) ListObjects(ctx context.Context, req *iamv1.ListObjectsRequest, opts ...grpc.CallOption) (*iamv1.ListObjectsResponse, error) {

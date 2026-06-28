@@ -1,3 +1,6 @@
+# Copyright (c) PRO-Robotech
+# SPDX-License-Identifier: BUSL-1.1
+
 """Targets sub-resource cases (TGT-*) — AddTargets / RemoveTargets.
 
 Acceptance: docs/specs/sub-phase-4.0-nlb-acceptance.md §6 (GWT-TGT-001..016).

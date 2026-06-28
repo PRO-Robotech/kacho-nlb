@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package domain_test
 
 import (
@@ -93,8 +96,8 @@ func TestTarget_Validate_WeightBoundary(t *testing.T) {
 	})
 }
 
-// TestTarget_ExternalIP_Bogon — acceptance TGR-011 verbatim list +
-// public/private IP allowed (design §2.5).
+// TestTarget_ExternalIP_Bogon — с фиксированным текстом list +
+// public/private IP allowed.
 func TestTarget_ExternalIP_Bogon(t *testing.T) {
 	t.Parallel()
 	cases := []struct {

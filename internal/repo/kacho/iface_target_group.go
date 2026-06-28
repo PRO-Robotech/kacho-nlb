@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package kacho
 
 import (
@@ -19,7 +22,7 @@ type TargetGroupReaderIface interface {
 	ListTargets(ctx context.Context, tgID string) ([]*TargetRecord, error)
 
 	// ListDrainingExpired — targets, у которых status='DRAINING' и
-	// drain_started_at < now() - delay (для Phase B drain-runner). Skill
+	// drain_started_at < now - delay (для фаза B drain-runner). Skill
 	// workspace CLAUDE.md «within-service refs», но это lifecycle-query, не CAS.
 	// delaySeconds — TG.deregistration_delay_seconds.
 	ListDrainingExpired(ctx context.Context, tgID string, delaySeconds int32) ([]*TargetRecord, error)
@@ -45,19 +48,19 @@ type TargetGroupWriterIface interface {
 	// MoveProject — UPDATE target_groups SET project_id=$1 WHERE id=$2.
 	MoveProject(ctx context.Context, id, newProjectID string) (*TargetGroupRecord, error)
 
-	// AddTargets — INSERT targets ... ON CONFLICT DO NOTHING (идемпотентный
+	// AddTargets — INSERT targets... ON CONFLICT DO NOTHING (идемпотентный
 	// re-add того же identity-tuple). Возвращает количество реально вставленных
 	// строк (для outbox-action UPDATED только если >0).
 	AddTargets(ctx context.Context, tgID string, targets []domain.Target) (int, error)
 
-	// RemoveTargetsMarkDraining — Phase A 2-phase drain (design §4.4).
+	// RemoveTargetsMarkDraining — фаза A двухфазного drain.
 	// Для каждого target из targetIDs обновляет status='DRAINING' +
-	// drain_started_at=now() (CHECK drain_consistency инфорсит NULL/NOT NULL).
+	// drain_started_at=now (CHECK drain_consistency инфорсит NULL/NOT NULL).
 	// Возвращает количество фактически обновлённых строк (для outbox).
 	RemoveTargetsMarkDraining(ctx context.Context, tgID string, targetIDs []string) (int, error)
 
-	// DeleteTargetsDrained — Phase B (jobs/target_drain_runner). DELETE targets
-	// WHERE status='DRAINING' AND drain_started_at < now() - $delay::interval.
+	// DeleteTargetsDrained — фаза B (jobs/target_drain_runner). DELETE targets
+	// WHERE status='DRAINING' AND drain_started_at < now - $delay::interval.
 	// Возвращает количество удалённых строк.
 	DeleteTargetsDrained(ctx context.Context, tgID string, delaySeconds int32) (int, error)
 

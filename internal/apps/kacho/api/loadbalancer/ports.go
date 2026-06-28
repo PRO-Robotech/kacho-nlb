@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package loadbalancer
 
 import (
@@ -6,7 +9,7 @@ import (
 	kachorepo "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho"
 )
 
-// Port-интерфейсы use-case-слоя NetworkLoadBalancer (Clean Architecture / evgeniy §2.B).
+// Port-интерфейсы use-case-слоя NetworkLoadBalancer (Clean Architecture).
 //
 // Use-case'ы внутри пакета зависят ТОЛЬКО от этих port-ов; конкретные реализации
 // (pgx-Repository, gRPC-typed-clients, FGA writer) инжектируются в composition
@@ -25,7 +28,7 @@ type ProjectClient = iamclient.ProjectClient
 
 // RegionClient — Get(regionID) → *geoclient.Region. Используется sync-precheck
 // в Create use-case'е для валидации `region_id` через geo.RegionService.Get
-// (epic kacho-geo S4; ребро nlb→geo заменило nlb→compute «ради region»).
+// (kacho-geo; ребро nlb→geo заменило nlb→compute «ради region»).
 type RegionClient = geoclient.RegionClient
 
 // Logger — узкий port логгера; вся работа use-case'ов и worker'ов идёт через

@@ -1,3 +1,6 @@
+# Copyright (c) PRO-Robotech
+# SPDX-License-Identifier: BUSL-1.1
+
 """Case-set для D-consumer (§11, D-40..D-47) — per-object filtered List в kacho-nlb.
 
 Источник истины — docs/specs/rbac-rules-model-2026-acceptance.md под-фаза D

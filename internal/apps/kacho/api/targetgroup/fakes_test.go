@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package targetgroup
 
 import (
@@ -40,7 +43,7 @@ type fakeRepo struct {
 	targets          map[string]map[string]*kachorepo.TargetRecord // tgID → target.ID → row
 	pivot            map[string]bool                               // "lbID/tgID" → attached
 	outbox           []fakeOutboxEvent
-	fga              []fgaIntentEvent // SEC-D FGARegisterOutbox intents (flushed on Commit)
+	fga              []fgaIntentEvent // FGARegisterOutbox intents (flushed on Commit)
 	failOnInsert     error
 	failOnUpdate     error
 	failOnDelete     error
@@ -128,7 +131,7 @@ type fakeWriter struct {
 	pendingMark   []pendingMarkDraining
 }
 
-// fgaIntentEvent records one FGARegisterOutbox.Emit (SEC-D) for assertions.
+// fgaIntentEvent records one FGARegisterOutbox.Emit  for assertions.
 type fgaIntentEvent struct {
 	EventType string
 	Intent    domain.FGARegisterIntent
@@ -253,7 +256,7 @@ func (q *fakeTGReader) Get(_ context.Context, id string) (*kachorepo.TargetGroup
 func (q *fakeTGReader) List(_ context.Context, f kachorepo.TargetGroupFilter, _ kachorepo.Pagination) ([]*kachorepo.TargetGroupRecord, string, error) {
 	q.r.mu.Lock()
 	defer q.r.mu.Unlock()
-	// RBAC sub-phase D §11: per-object FGA allow-set push-down (parity с pg repo).
+	// RBAC: per-object FGA allow-set push-down (parity с pg repo).
 	var allowed map[string]struct{}
 	if f.AllowedIDs != nil {
 		if len(f.AllowedIDs) == 0 {
@@ -481,7 +484,7 @@ func (q *fakeTGWriter) Delete(_ context.Context, id string) error {
 	if _, ok := q.r.tgs[id]; !ok {
 		return fmt.Errorf("%w: TargetGroup %s not found", kachorepo.ErrNotFound, id)
 	}
-	// emulate FK 23503 when targets still exist (GWT-TGR-024).
+	// emulate FK 23503 when targets still exist.
 	if m, ok := q.r.targets[id]; ok && len(m) > 0 {
 		return fmt.Errorf("%w: TargetGroup %s has child targets (FK 23503)", kachorepo.ErrFailedPrecondition, id)
 	}
@@ -793,7 +796,7 @@ func (f *fakeSubnetClient) Get(ctx context.Context, id string) (*vpc.Subnet, err
 	return &vpc.Subnet{ID: id, ZoneID: "ru-central1-a", V4CIDRBlocks: []string{"10.0.0.0/24"}}, nil
 }
 
-// fakeFGARegisterOutbox records SEC-D FGARegisterOutbox.Emit into the writer's
+// fakeFGARegisterOutbox records FGARegisterOutbox.Emit into the writer's
 // pending buffer (flushed to fakeRepo.fga on Commit, dropped on Abort).
 type fakeFGARegisterOutbox struct{ w *fakeWriter }
 
@@ -837,9 +840,9 @@ func contextWithUser(name string) context.Context {
 }
 
 // fieldViolationsText — собирает все FieldViolation.Description из gRPC-status
-// err.Details (corelib InvalidArgument().AddFieldViolation()) в одну строку,
+// err.Details (corelib InvalidArgument.AddFieldViolation) в одну строку,
 // + сам status.Message впереди. Используется для assert.Contains в тестах,
-// где verbatim текст ошибки лежит в BadRequest details.
+// где с фиксированным текстом текст ошибки лежит в BadRequest details.
 func fieldViolationsText(err error) string {
 	if err == nil {
 		return ""

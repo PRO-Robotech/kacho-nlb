@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package domain
 
 import (
@@ -6,9 +9,9 @@ import (
 	"time"
 )
 
-// FGA-register-intent (SEC-D) — pure-Go domain value-types for the
+// FGA-register-intent  — pure-Go domain value-types for the
 // transactional-outbox FGA-via-IAM relay. They replace the former direct
-// best-effort `internal/fgawrite` HTTP helpers (GitHub Issue N5): instead of
+// best-effort `internal/fgawrite` HTTP helpers: instead of
 // writing tuples to FGA after Commit, the worker serialises the resource's
 // owner-hierarchy tuples into a FGARegisterIntent and persists it in the SAME
 // writer-tx as the resource INSERT/DELETE (one commit, no dual-write). A
@@ -23,7 +26,7 @@ import (
 
 // FGA object-type strings of the kacho-nlb authorization model.
 //
-// KAC-178 §2: `lb_*` (NOT `nlb_*`) — matches the FGA model
+// `lb_*` (NOT `nlb_*`) — matches the FGA model
 // (`type lb_network_load_balancer / lb_listener / lb_target_group` in
 // kacho-proto fga_model.fga) and api-gateway permission_catalog.json.
 const (
@@ -34,7 +37,7 @@ const (
 
 // FGA relation strings emitted in kacho-nlb tuples.
 //
-// KAC-178 §2: creator relation is "admin" (NOT "owner"): the `lb_*` model
+// creator relation is "admin" (NOT "owner"): the `lb_*` model
 // defines only viewer/editor/admin. "admin" is the closest fit for creator
 // semantics (full control). "project" links a resource to its project for the
 // hierarchy cascade; "load_balancer" is the parent-link relation
@@ -46,7 +49,7 @@ const (
 )
 
 // FGA register-intent event types (parity with the CHECK constraint in
-// migration 0002 and with kacho-iam SEC-A RegisterResource/UnregisterResource).
+// migration 0002 and with kacho-iam RegisterResource/UnregisterResource).
 const (
 	FGAEventRegister   = "fga.register"
 	FGAEventUnregister = "fga.unregister"
@@ -69,7 +72,7 @@ func (t FGATuple) Valid() bool {
 }
 
 // FGARegisterIntent is the full set of owner-hierarchy tuples for one resource
-// (project-hierarchy + optional creator + optional parent-link). OQ-SEC-D-2:
+// (project-hierarchy + optional creator + optional parent-link).:
 // the whole set is one outbox row → one logical apply unit.
 type FGARegisterIntent struct {
 	// Kind is the resource kind for observability ("NetworkLoadBalancer" /
@@ -81,7 +84,7 @@ type FGARegisterIntent struct {
 	// Tuples is the set of tuple intents to register/unregister.
 	Tuples []FGATuple `json:"tuples"`
 
-	// ---- epic-rsab T3 (D4): tenant labels + parent-scope mirror feed ----
+	// ---- tenant labels + parent-scope mirror feed ----
 	//
 	// nlb forwards these to kacho-iam InternalIAMService.RegisterResource so IAM
 	// populates its output-only `resource_mirror` (label+parent zeркало; source of
@@ -89,7 +92,7 @@ type FGARegisterIntent struct {
 	// containment gate SAME-DB in IAM (no iam→nlb edge — data is pushed by the
 	// consumer, IAM never pulls). All fields are additive/optional — legacy
 	// payloads decode with empty values (graceful back-compat). NOT new edge: the
-	// nlb→iam RegisterResource edge already exists (SEC-A owner-tuple); this only
+	// nlb→iam RegisterResource edge already exists (owner-tuple); this only
 	// extends the payload. Mirror carries ONLY tenant-facing labels+parent — never
 	// underlay/placement (security.md инфра-чувствительные).
 
@@ -101,10 +104,10 @@ type FGARegisterIntent struct {
 	// containment). nlb leaves it empty today (no project→account resolve on the
 	// resource hot-path); IAM handles an empty parent gracefully.
 	ParentAccountID string `json:"parent_account_id,omitempty"`
-	// SourceVersion — monotonic per-object marker (β-hardening). Stamped from the DB
-	// clock (now()) by the outbox emitter INSIDE the resource writer-tx (see
+	// SourceVersion — monotonic per-object marker (hardening). Stamped from the DB
+	// clock (now) by the outbox emitter INSIDE the resource writer-tx (see
 	// repo/kacho/pg fgaRegisterEmitter). For sequential mutations of one object a
-	// later mutation's tx commits-after the earlier, so its now() is strictly
+	// later mutation's tx commits-after the earlier, so its now is strictly
 	// greater → monotonic per-object. The register-drainer forwards it as
 	// RegisterResourceRequest.source_version so kacho-iam applies the mirror UPSERT
 	// last-SOURCE-state-wins (a reordered stale intent → no-op, not an overwrite).

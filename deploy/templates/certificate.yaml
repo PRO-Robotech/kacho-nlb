@@ -1,3 +1,6 @@
+# Copyright (c) PRO-Robotech
+# SPDX-License-Identifier: BUSL-1.1
+
 {{- if .Values.mtls.enable }}
 {{- $m := .Values.mtls }}
 {{- $issuer := $m.issuer | default dict }}

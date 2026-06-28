@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package vpc
 
 import (
@@ -71,7 +74,7 @@ func TestAddressClient_Get_InternalIPv4Free(t *testing.T) {
 		Address: &vpcpb.Address_InternalIpv4Address{
 			InternalIpv4Address: &vpcpb.InternalIpv4Address{
 				Address: "10.128.0.42",
-				Scope: &vpcpb.InternalIpv4Address_SubnetId{SubnetId: "e9b-1"},
+				Scope:   &vpcpb.InternalIpv4Address_SubnetId{SubnetId: "e9b-1"},
 			},
 		},
 	}
@@ -93,7 +96,7 @@ func TestAddressClient_Get_InternalIPv6(t *testing.T) {
 		Address: &vpcpb.Address_InternalIpv6Address{
 			InternalIpv6Address: &vpcpb.InternalIpv6Address{
 				Address: "fd00::42",
-				Scope: &vpcpb.InternalIpv6Address_SubnetId{SubnetId: "e9b-1"},
+				Scope:   &vpcpb.InternalIpv6Address_SubnetId{SubnetId: "e9b-1"},
 			},
 		},
 	}

@@ -1,10 +1,10 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package loadbalancer
 
 import (
 	"context"
-
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 
 	"github.com/PRO-Robotech/kacho-corelib/operations"
 	lbv1 "github.com/PRO-Robotech/kacho-nlb/proto/gen/go/kacho/cloud/loadbalancer/v1"
@@ -13,7 +13,7 @@ import (
 // ListOperationsUseCase — per-resource history через operations.ListFilter с
 // фильтром по `resource_id` (NetworkLoadBalancerId). Sync read.
 //
-// Acceptance: GWT-NLB-043..GWT-NLB-046.
+// Acceptance:.
 type ListOperationsUseCase struct {
 	opsRepo operations.Repo
 }
@@ -31,13 +31,16 @@ func (u *ListOperationsUseCase) Execute(
 	if id == "" {
 		return nil, errInvalidArg("network_load_balancer_id", "required")
 	}
+	if err := validateLoadBalancerID(id); err != nil {
+		return nil, err
+	}
 	ops, next, err := u.opsRepo.List(ctx, operations.ListFilter{
 		ResourceID: id,
 		PageSize:   req.GetPageSize(),
 		PageToken:  req.GetPageToken(),
 	})
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "list operations: %v", err)
+		return nil, mapDomainErr(err)
 	}
 	resp := &lbv1.ListNetworkLoadBalancerOperationsResponse{NextPageToken: next}
 	for i := range ops {

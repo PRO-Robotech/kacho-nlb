@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package listener
 
 import (
@@ -14,7 +17,7 @@ import (
 )
 
 // ListUseCase — sync list listeners фильтрованный по `load_balancer_id`
-// (acceptance GWT-LST-017). Cursor-based pagination через repo'шный
+// . Cursor-based pagination через repo'шный
 // `(created_at, id)` token (см. listener_repo.go).
 //
 // Поддерживаемые фильтры (per proto + design):
@@ -39,7 +42,7 @@ func NewListUseCase(repo RepoFactory, authz authzfilter.Filter) *ListUseCase {
 //	req.LoadBalancerId == "" → InvalidArgument "load_balancer_id required"
 //	repo error               → mapDomainErr (sentinel-aware)
 func (u *ListUseCase) Run(ctx context.Context, req *lbv1.ListListenersRequest) (*lbv1.ListListenersResponse, error) {
-	// KAC-229: project-scoped (parity with NLB/TG List). project_id is required;
+	// project-scoped (parity with NLB/TG List). project_id is required;
 	// load_balancer_id is an optional filter (restrict to one parent LB).
 	projectID := req.GetProjectId()
 	if projectID == "" {
@@ -57,7 +60,7 @@ func (u *ListUseCase) Run(ctx context.Context, req *lbv1.ListListenersRequest) (
 		Name:           name,
 	}
 
-	// RBAC sub-phase D §11: per-object FGA filter (см. loadbalancer/list.go).
+	// RBAC: per-object FGA filter (см. loadbalancer/list.go).
 	dec, err := authzfilter.Resolve(ctx, u.authz,
 		authzfilter.ResourceTypeListener, authzfilter.ActionListenerList)
 	if err != nil {

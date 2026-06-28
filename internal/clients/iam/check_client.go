@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package iam
 
 import (
@@ -18,8 +21,8 @@ import (
 )
 
 // CheckClient — per-RPC FGA authorization gate; обёртка над
-// `kacho.iam.v1.InternalIAMService.Check`. Используется Wave 8 authz-interceptor
-// (`internal/check`). Подключение типа KAC-133 passthrough — sentinel
+// `kacho.iam.v1.InternalIAMService.Check`. Используется authz-interceptor
+// (`internal/check`). Подключение типа passthrough — sentinel
 // `authz.ErrNoPath` пробрасывается наружу (interceptor решает DecisionNoPath →
 // пропустить вызов в handler, который вернёт NOT_FOUND из DB).
 type CheckClient interface {
@@ -42,7 +45,7 @@ type checkClient struct {
 
 // NewCheckClient оборачивает grpc-conn в typed adapter. conn должен быть к
 // kacho-iam **internal**-listener (`:9091`) — InternalIAMService.Check не
-// публикуется на external endpoint (см. workspace CLAUDE.md «Запреты» #6).
+// публикуется на external endpoint (Internal-only).
 func NewCheckClient(conn grpc.ClientConnInterface) CheckClient {
 	if conn == nil {
 		return nil
@@ -69,8 +72,8 @@ func (c *checkClient) Check(ctx context.Context, subjectID, relation, object str
 		return false, fmt.Errorf("%w: object is empty", domain.ErrInvalidArg)
 	}
 
-	// KAC-178 §1 follow-up (W1.4): outgoing ctx wrap with auth.PropagateOutgoing
-	// so iam-side UnaryPrincipalExtract sees real caller (not SystemPrincipal()).
+	// follow-up: outgoing ctx wrap with auth.PropagateOutgoing
+	// so iam-side UnaryPrincipalExtract sees real caller (not SystemPrincipal).
 	ctx = auth.PropagateOutgoing(ctx)
 
 	var resp *iampb.CheckResponse
@@ -89,7 +92,7 @@ func (c *checkClient) Check(ctx context.Context, subjectID, relation, object str
 	if resp.GetAllowed() {
 		return true, nil
 	}
-	// Passthrough `no-path` reason (KAC-133): interceptor → DecisionNoPath →
+	// Passthrough `no-path` reason: interceptor → DecisionNoPath →
 	// handler вернёт NOT_FOUND из DB. Reason-формат — substring "no path"
 	// (kacho-iam emits "no FGA path: <object>") либо явный prefix.
 	if isNoPathReason(resp.GetReason()) {

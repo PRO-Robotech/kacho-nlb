@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package pg
 
 import (
@@ -12,7 +15,7 @@ import (
 
 // Repository — pgxpool-impl корневого CQRS-контракта (kacho.Repository).
 //
-// Skill evgeniy §6 G.4: Reader идёт на slave-реплику, Writer — на master.
+// Reader идёт на slave-реплику, Writer — на master.
 // Если slavePool не настроен — Reader открывает read-only TX на master-pool'е
 // (fallback, текущее dev/prod-поведение). Когда реальная реплика появится —
 // composition root передаёт второй pool, переключение прозрачно для use-case'ов.
@@ -36,7 +39,7 @@ func New(masterPool, slavePool *pgxpool.Pool) *Repository {
 }
 
 // Reader открывает read-only TX (read-committed) на slave-pool'е (или master
-// fallback). Возвращённый reader обязан быть закрыт через Close() — это
+// fallback). Возвращённый reader обязан быть закрыт через Close — это
 // rollback'ит TX и возвращает соединение в пул.
 func (r *Repository) Reader(ctx context.Context) (kacho.RepositoryReader, error) {
 	tx, err := r.slave.BeginTx(ctx, pgx.TxOptions{AccessMode: pgx.ReadOnly})
@@ -46,8 +49,8 @@ func (r *Repository) Reader(ctx context.Context) (kacho.RepositoryReader, error)
 	return &readerImpl{tx: tx}, nil
 }
 
-// Writer открывает RW TX на master-pool'е. Caller обязан вызвать либо Commit(),
-// либо Abort() (Abort идемпотентен — безопасно через defer сразу после открытия).
+// Writer открывает RW TX на master-pool'е. Caller обязан вызвать либо Commit,
+// либо Abort (Abort идемпотентен — безопасно через defer сразу после открытия).
 func (r *Repository) Writer(ctx context.Context) (kacho.RepositoryWriter, error) {
 	tx, err := r.master.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
@@ -57,7 +60,7 @@ func (r *Repository) Writer(ctx context.Context) (kacho.RepositoryWriter, error)
 }
 
 // Close — no-op (pool'ы управляются composition root, не репозиторием).
-// Метод есть в Repository-интерфейсе чтобы тестовый код мог .Close() мокать
+// Метод есть в Repository-интерфейсе чтобы тестовый код мог.Close мокать
 // без reach'а в pool.
 func (r *Repository) Close() {}
 
@@ -99,10 +102,10 @@ func (r *readerImpl) Close() error {
 // writerImpl — RW TX state.
 type writerImpl struct {
 	tx        pgx.Tx
-	finalised bool // true после Commit() или Abort() — защита от double-finalize
+	finalised bool // true после Commit или Abort — защита от double-finalize
 }
 
-// Writer-side returns: G.2 — writer видит свои writes (reader-методы — поверх
+// Writer-side returns: — writer видит свои writes (reader-методы — поверх
 // той же pgx.Tx).
 func (w *writerImpl) LoadBalancers() kacho.LoadBalancerWriterIface {
 	return &loadBalancerWriter{
@@ -129,14 +132,14 @@ func (w *writerImpl) AttachedTargetGroups() kacho.AttachedTargetGroupWriterIface
 }
 
 // Outbox — emit события в `nlb_outbox` в той же tx-области writer'а.
-// DML + outbox-emit атомарны (skill evgeniy §6 G.5).
+// DML + outbox-emit атомарны.
 func (w *writerImpl) Outbox() kacho.OutboxEmitter {
 	return &outboxEmitter{tx: w.tx}
 }
 
 // FGARegisterOutbox — emit FGA-register-intent в `fga_register_outbox` в той же
-// tx-области writer'а (SEC-D). DML ресурса + register-intent атомарны одной
-// writer-tx (epic §3.1 Вариант A — no dual-write).
+// tx-области writer'а. DML ресурса + register-intent атомарны одной
+// writer-tx (Вариант A — no dual-write).
 func (w *writerImpl) FGARegisterOutbox() kacho.FGARegisterEmitter {
 	return &fgaRegisterEmitter{tx: w.tx}
 }

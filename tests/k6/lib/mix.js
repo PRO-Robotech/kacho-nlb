@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 // Workload mix per design §7.4.
 //
 //   60% reads          (NLB.Get / NLB.List / TG.Get)

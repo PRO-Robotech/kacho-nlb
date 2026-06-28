@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package kacho
 
 import (
@@ -8,8 +11,8 @@ import (
 
 // LoadBalancerReaderIface — read-операции NetworkLoadBalancer.
 type LoadBalancerReaderIface interface {
-	// Get возвращает LB по id. Pgx ErrNoRows → ErrNotFound с verbatim
-	// YC-text `"NetworkLoadBalancer <id> not found"`.
+	// Get возвращает LB по id. Pgx ErrNoRows → ErrNotFound с с фиксированным текстом
+	// текст ошибки по конвенции Kachō `"NetworkLoadBalancer <id> not found"`.
 	Get(ctx context.Context, id string) (*LoadBalancerRecord, error)
 
 	// List — cursor-based pagination + filter. Возвращает page +
@@ -24,14 +27,14 @@ type LoadBalancerReaderIface interface {
 	HasListeners(ctx context.Context, lbID string) (bool, error)
 
 	// HasAttachedTargetGroups — `EXISTS` для Delete-precheck + AttachedTG
-	// pre-Move check (design §5.6).
+	// pre-Move check.
 	HasAttachedTargetGroups(ctx context.Context, lbID string) (bool, error)
 }
 
-// LoadBalancerWriterIface — write-операции + read (writer видит свои writes, G.2).
+// LoadBalancerWriterIface — write-операции + read (writer видит свои writes).
 //
 // DML-методы НЕ открывают свою TX и НЕ emit'ят outbox — caller (use-case)
-// вызывает `RepositoryWriter.Outbox().Emit(...)` после успешного DML; atomicity
+// вызывает `RepositoryWriter.Outbox.Emit` после успешного DML; atomicity
 // DML + outbox гарантируется тем, что обе операции идут через одну pgx.Tx
 // (writer-instance).
 type LoadBalancerWriterIface interface {
@@ -53,7 +56,7 @@ type LoadBalancerWriterIface interface {
 	SetStatusCAS(ctx context.Context, id string, expected, newStatus domain.LBStatus) (*LoadBalancerRecord, error)
 
 	// MoveProject меняет project_id у LB и каскадно — у его листенеров (denorm
-	// sync в одной TX, design §4.7). Возвращает обновлённый LB-record.
+	// sync в одной TX). Возвращает обновлённый LB-record.
 	MoveProject(ctx context.Context, id, newProjectID string) (*LoadBalancerRecord, error)
 
 	// Delete — DELETE load_balancers WHERE id=$1. FK-violation (есть дети —

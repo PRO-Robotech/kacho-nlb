@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package domain
 
 import "errors"
@@ -6,13 +9,13 @@ import "errors"
 //
 // Живут в leaf-пакете `domain`, чтобы:
 //   - mock'и репо могли возвращать их без import-cycle с `internal/service`;
-//   - `service.mapRepoErr` (subsequent KAC-149) маппил SQLSTATE → один из этих
+//   - `service.mapRepoErr` маппит SQLSTATE → один из этих
 //     sentinel-ов → gRPC-code единообразно.
 //
 // `errors.Is` работает по identity — service- и repo-пакеты ре-экспортируют
 // эти переменные через type-alias (зеркалит kacho-vpc / kacho-compute).
 //
-// gRPC-маппинг (см. CLAUDE.md §6 «Error mapping» kacho-compute / kacho-vpc):
+// gRPC-маппинг:
 //
 //	ErrNotFound            → codes.NotFound
 //	ErrAlreadyExists       → codes.AlreadyExists       (UNIQUE-violation 23505)

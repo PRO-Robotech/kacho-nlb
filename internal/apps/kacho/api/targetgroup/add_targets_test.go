@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package targetgroup
 
 import (
@@ -26,7 +29,7 @@ func mkAddUC(repo *fakeRepo, opsRepo *fakeOpsRepo) *AddTargetsUseCase {
 	)
 }
 
-// GWT-TGT-001 — AddTargets with all 4 identity variants in one request.
+// AddTargets with all 4 identity variants in one request.
 func TestAdd_AllFourIdentities(t *testing.T) {
 	repo := newFakeRepo()
 	tg := makeTG("prj-acme", "all-variants")
@@ -56,7 +59,7 @@ func TestAdd_AllFourIdentities(t *testing.T) {
 	assert.Equal(t, kachopg.OutboxActionUpdated, events[0].Action)
 }
 
-// GWT-TGT-002 — idempotent re-add (ON CONFLICT DO NOTHING, no outbox).
+// idempotent re-add (ON CONFLICT DO NOTHING, no outbox).
 func TestAdd_IdempotentReAdd_NoOutbox(t *testing.T) {
 	repo := newFakeRepo()
 	tg := makeTG("prj-acme", "idem")
@@ -81,7 +84,7 @@ func TestAdd_IdempotentReAdd_NoOutbox(t *testing.T) {
 	require.Empty(t, repo.outboxEvents(), "no outbox emit when inserted=0")
 }
 
-// GWT-TGT-004 — ip_ref outside subnet CIDR → InvalidArgument.
+// ip_ref outside subnet CIDR → InvalidArgument.
 func TestAdd_IPRef_OutsideCIDR(t *testing.T) {
 	repo := newFakeRepo()
 	tg := makeTG("prj-acme", "out-cidr")
@@ -111,7 +114,7 @@ func TestAdd_IPRef_OutsideCIDR(t *testing.T) {
 	require.Contains(t, final.Error.Message, "10.0.0.0/24")
 }
 
-// GWT-TGT-005 — weight out-of-bounds (BVA).
+// weight out-of-bounds (BVA).
 func TestAdd_Weight_OutOfBounds(t *testing.T) {
 	repo := newFakeRepo()
 	tg := makeTG("prj-acme", "weight-bva")
@@ -128,7 +131,7 @@ func TestAdd_Weight_OutOfBounds(t *testing.T) {
 	require.Contains(t, fieldViolationsText(err), "weight must be in range [0, 1000]")
 }
 
-// GWT-TGT-006 — instance region mismatch.
+// instance region mismatch.
 func TestAdd_InstanceRegionMismatch(t *testing.T) {
 	repo := newFakeRepo()
 	tg := makeTG("prj-acme", "inst-rmm") // region ru-central1
@@ -154,7 +157,7 @@ func TestAdd_InstanceRegionMismatch(t *testing.T) {
 	require.Contains(t, final.Error.Message, "target_group region 'ru-central1'")
 }
 
-// GWT-TGT-007 — NIC region mismatch (via parent subnet).
+// NIC region mismatch (via parent subnet).
 func TestAdd_NICRegionMismatch(t *testing.T) {
 	repo := newFakeRepo()
 	tg := makeTG("prj-acme", "nic-rmm")
@@ -183,7 +186,7 @@ func TestAdd_NICRegionMismatch(t *testing.T) {
 	require.Contains(t, final.Error.Message, "region 'ru-central2'")
 }
 
-// GWT-TGT-008 — ip_ref subnet region mismatch.
+// ip_ref subnet region mismatch.
 func TestAdd_IPRefSubnetRegionMismatch(t *testing.T) {
 	repo := newFakeRepo()
 	tg := makeTG("prj-acme", "ipref-rmm")
@@ -211,7 +214,7 @@ func TestAdd_IPRefSubnetRegionMismatch(t *testing.T) {
 	require.Contains(t, final.Error.Message, "region 'ru-central2'")
 }
 
-// GWT-TGT-009 — empty list → InvalidArgument.
+// empty list → InvalidArgument.
 func TestAdd_EmptyList(t *testing.T) {
 	uc := mkAddUC(newFakeRepo(), newFakeOpsRepo())
 	_, err := uc.Execute(context.Background(), &lbv1.AddTargetsRequest{
@@ -222,7 +225,7 @@ func TestAdd_EmptyList(t *testing.T) {
 	require.Contains(t, status.Convert(err).Message(), "at least one target is required")
 }
 
-// GWT-TGT-010 — TG in DELETING → FailedPrecondition.
+// TG in DELETING → FailedPrecondition.
 func TestAdd_TGDeleting_FailedPrecondition(t *testing.T) {
 	repo := newFakeRepo()
 	tg := makeTG("prj-acme", "deleting")
@@ -244,7 +247,7 @@ func TestAdd_TGDeleting_FailedPrecondition(t *testing.T) {
 	require.Contains(t, final.Error.Message, "target group is being deleted")
 }
 
-// TGT-014 (GWT-TGT-014 instance peer NotFound): instance not found at peer.
+// (instance peer NotFound): instance not found at peer.
 func TestAdd_InstanceNotFound_Verbatim(t *testing.T) {
 	repo := newFakeRepo()
 	tg := makeTG("prj-acme", "inst-nf")

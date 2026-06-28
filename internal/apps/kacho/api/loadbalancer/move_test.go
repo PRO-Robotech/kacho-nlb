@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package loadbalancer
 
 import (
@@ -29,7 +32,7 @@ func TestMove_HappyPath(t *testing.T) {
 	final := awaitOpDone(t, opsRepo, op.ID)
 	require.Nil(t, final.Error)
 	require.Equal(t, domain.ProjectID("prj-dst"), repo.lbs[lbID].ProjectID)
-	// SEC-D: project-rewrite = register(dst) + unregister(src) intents in writer-tx.
+	// project-rewrite = register(dst) + unregister(src) intents in writer-tx.
 	require.Len(t, repo.fga, 2, "expected register(dst)+unregister(src) intents")
 	require.Equal(t, domain.FGAEventRegister, repo.fga[0].EventType)
 	require.Equal(t, "project:prj-dst", repo.fga[0].Intent.Tuples[0].SubjectID)

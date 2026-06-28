@@ -1,3 +1,6 @@
+# Copyright (c) PRO-Robotech
+# SPDX-License-Identifier: BUSL-1.1
+
 # ghz job — gRPC-direct spike against kacho-nlb (mirrors scenarios/spike.js).
 #
 # Short burst at peak (1500 RPS for 30s). Pair with baseline-job (run before

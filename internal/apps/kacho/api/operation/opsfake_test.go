@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package operation
 
 import (
@@ -126,6 +129,44 @@ func (r *fakeOpsRepo) Cancel(_ context.Context, id string) error {
 	return nil
 }
 
+// ownerMatches зеркалит SQL ownership-предикат pgRepo (principal-ключ создателя).
+// AccountID для nlb всегда "" → ветка инертна (как в реальном repo).
+func ownerMatches(op *operations.Operation, owner operations.Owner) bool {
+	return op.Principal.Type == owner.PrincipalType && op.Principal.ID == owner.PrincipalID
+}
+
+// GetOwned — ownership-scoped Get: операция отдаётся только владельцу. Чужой/нет
+// → ErrNotFound (no-leak, неотличимо от «нет такой»).
+func (r *fakeOpsRepo) GetOwned(_ context.Context, id string, owner operations.Owner) (*operations.Operation, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	op, ok := r.ops[id]
+	if !ok || !ownerMatches(op, owner) {
+		return nil, operations.ErrNotFound
+	}
+	cp := *op
+	return &cp, nil
+}
+
+// CancelOwned — атомарный CAS: отменяет операцию владельца, возвращая терминальное
+// состояние (RETURNING). Чужой/нет → ErrNotFound; уже done → ErrAlreadyDone.
+func (r *fakeOpsRepo) CancelOwned(_ context.Context, id string, owner operations.Owner) (*operations.Operation, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	op, ok := r.ops[id]
+	if !ok || !ownerMatches(op, owner) {
+		return nil, operations.ErrNotFound
+	}
+	if op.Done {
+		return nil, operations.ErrAlreadyDone
+	}
+	op.Done = true
+	op.ModifiedAt = time.Now().UTC()
+	op.Error = &status.Status{Code: 1, Message: "operation cancelled"} // codes.Cancelled
+	cp := *op
+	return &cp, nil
+}
+
 // failingOpsRepo — opt-in fake, который возвращает кастомные ошибки на Get / Cancel.
 // Используется для проверки Internal-маппинга (any-non-sentinel error → codes.Internal).
 type failingOpsRepo struct {
@@ -143,14 +184,23 @@ func (r *failingOpsRepo) Get(_ context.Context, _ string) (*operations.Operation
 func (r *failingOpsRepo) List(_ context.Context, _ operations.ListFilter) ([]operations.Operation, string, error) {
 	return nil, "", nil
 }
-func (r *failingOpsRepo) MarkDone(_ context.Context, _ string, _ *anypb.Any) error  { return nil }
+func (r *failingOpsRepo) MarkDone(_ context.Context, _ string, _ *anypb.Any) error { return nil }
 func (r *failingOpsRepo) MarkError(_ context.Context, _ string, _ *status.Status) error {
 	return nil
 }
 func (r *failingOpsRepo) Cancel(_ context.Context, _ string) error { return r.cancelErr }
+func (r *failingOpsRepo) GetOwned(_ context.Context, _ string, _ operations.Owner) (*operations.Operation, error) {
+	return nil, r.getErr
+}
+func (r *failingOpsRepo) CancelOwned(_ context.Context, _ string, _ operations.Owner) (*operations.Operation, error) {
+	return nil, r.cancelErr
+}
 
-// compile-time gates: оба fake-репо удовлетворяют operations.Repo.
+// compile-time gates: оба fake-репо удовлетворяют operations.Repo +
+// OwnedOperationRepo (owner-scoped Get/Cancel).
 var (
-	_ operations.Repo = (*fakeOpsRepo)(nil)
-	_ operations.Repo = (*failingOpsRepo)(nil)
+	_ operations.Repo               = (*fakeOpsRepo)(nil)
+	_ operations.Repo               = (*failingOpsRepo)(nil)
+	_ operations.OwnedOperationRepo = (*fakeOpsRepo)(nil)
+	_ operations.OwnedOperationRepo = (*failingOpsRepo)(nil)
 )

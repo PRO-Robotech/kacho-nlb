@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package listener
 
 import (
@@ -18,21 +21,22 @@ import (
 	kachorepo "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho"
 )
 
-// UpdateUseCase — async Update Listener (acceptance GWT-LST-018..LST-021).
+// UpdateUseCase — async Update Listener.
 //
 // Sync (handler-thread):
 //  1. listener_id required.
 //  2. repo.Reader Listener.Get (NotFound иначе).
-//  3. update_mask discipline:
-//     - empty mask → InvalidArgument (GWT-NLB-019 mirrored; mutating Update без mask запрещён).
+//  3. update_mask discipline (единая для всех ресурсов, api-conventions):
+//     - empty mask → full-object PATCH: применяются все mutable-поля из тела;
+//     immutable из тела silently игнорируются (parity с loadbalancer/targetgroup).
 //     - unknown field → InvalidArgument "field '<X>' is not recognised in update_mask".
 //     - immutable field (load_balancer_id / protocol / port / ip_version /
 //     address_id / subnet_id / region_id / project_id) → InvalidArgument
-//     verbatim YC `"<field> is immutable after Listener.Create"` (GWT-LST-019, LST-020).
+//     по конвенции Kachō `"<field> is immutable after Listener.Create"`.
 //  4. Validate per-mask field (name regex, labels schema, etc).
-//  5. default_target_group_id same-region precheck (GWT-LST-021) — async-soft
+//  5. default_target_group_id same-region precheck  — async-soft
 //     либо sync; здесь делаем sync через kacho-nlb local TG.Get (same-DB
-//     query); cross-region → FailedPrecondition verbatim text.
+//     query); cross-region → FailedPrecondition фиксированный текст.
 //  6. opsRepo.CreateWithPrincipal + operations.Run.
 //
 // Async worker:
@@ -60,7 +64,7 @@ var listenerMutableMaskPaths = map[string]struct{}{
 	"proxy_protocol_v2":       {},
 }
 
-// Immutable update_mask paths (in mask → InvalidArgument with verbatim text).
+// Immutable update_mask paths (in mask → InvalidArgument with фиксированный текст).
 var listenerImmutableMaskPaths = map[string]struct{}{
 	"load_balancer_id": {},
 	"protocol":         {},
@@ -80,12 +84,12 @@ func (u *UpdateUseCase) Run(ctx context.Context, req *lbv1.UpdateListenerRequest
 	if id == "" {
 		return nil, status.Error(codes.InvalidArgument, "listener_id required")
 	}
-
-	mask := req.GetUpdateMask()
-	if mask == nil || len(mask.GetPaths()) == 0 {
-		return nil, status.Error(codes.InvalidArgument, "update_mask is required and must not be empty")
+	if err := validateListenerID(id); err != nil {
+		return nil, err
 	}
-	if err := validateListenerMask(mask.GetPaths()); err != nil {
+
+	mask := req.GetUpdateMask().GetPaths()
+	if err := validateListenerMask(mask); err != nil {
 		return nil, err
 	}
 
@@ -101,48 +105,62 @@ func (u *UpdateUseCase) Run(ctx context.Context, req *lbv1.UpdateListenerRequest
 		return nil, mapDomainErr(err)
 	}
 
-	// Apply mask-driven mutations on a copy of current domain entity.
+	// Apply mask-driven mutations on a copy of current domain entity. Empty mask →
+	// full-object PATCH: apply пропускает все mutable-поля (parity с
+	// loadbalancer.applyUpdateMask / targetgroup.applyUpdateMaskTG).
 	next := cur.Listener
+	apply := func(field string) bool {
+		if len(mask) == 0 {
+			return true
+		}
+		for _, p := range mask {
+			if p == field {
+				return true
+			}
+		}
+		return false
+	}
 	tgRegionCheckNeeded := false
 	tgIDToCheck := ""
-	for _, p := range mask.GetPaths() {
-		switch p {
-		case "name":
-			n := domain.LbName(req.GetName())
-			if err := n.Validate(); err != nil {
-				_ = rd.Close()
-				return nil, err
-			}
-			next.Name = n
-		case "description":
-			d := domain.LbDescription(req.GetDescription())
-			if err := d.Validate(); err != nil {
-				_ = rd.Close()
-				return nil, err
-			}
-			next.Description = d
-		case "labels":
-			lbls := domain.LabelsFromMap(req.GetLabels())
-			if err := domain.ValidateLabels(lbls); err != nil {
-				_ = rd.Close()
-				return nil, err
-			}
-			next.Labels = lbls
-		case "default_target_group_id":
-			tg := req.GetDefaultTargetGroupId()
-			if tg == "" {
-				next.DefaultTargetGroupID = option.ValueOf[domain.ResourceID]{}
-			} else {
-				next.DefaultTargetGroupID = option.MustNewOption(domain.ResourceID(tg))
-				tgIDToCheck = tg
-				tgRegionCheckNeeded = true
-			}
-		case "proxy_protocol_v2":
-			next.ProxyProtocolV2 = req.GetProxyProtocolV2()
+	if apply("name") {
+		n := domain.LbName(req.GetName())
+		if err := n.Validate(); err != nil {
+			_ = rd.Close()
+			return nil, err
+		}
+		next.Name = n
+	}
+	if apply("description") {
+		d := domain.LbDescription(req.GetDescription())
+		if err := d.Validate(); err != nil {
+			_ = rd.Close()
+			return nil, err
+		}
+		next.Description = d
+	}
+	if apply("labels") {
+		lbls := domain.LabelsFromMap(req.GetLabels())
+		if err := domain.ValidateLabels(lbls); err != nil {
+			_ = rd.Close()
+			return nil, err
+		}
+		next.Labels = lbls
+	}
+	if apply("default_target_group_id") {
+		tg := req.GetDefaultTargetGroupId()
+		if tg == "" {
+			next.DefaultTargetGroupID = option.ValueOf[domain.ResourceID]{}
+		} else {
+			next.DefaultTargetGroupID = option.MustNewOption(domain.ResourceID(tg))
+			tgIDToCheck = tg
+			tgRegionCheckNeeded = true
 		}
 	}
+	if apply("proxy_protocol_v2") {
+		next.ProxyProtocolV2 = req.GetProxyProtocolV2()
+	}
 
-	// Same-region precheck for default_target_group_id (GWT-LST-021).
+	// Same-region precheck for default_target_group_id.
 	if tgRegionCheckNeeded {
 		tg, terr := rd.TargetGroups().Get(ctx, tgIDToCheck)
 		_ = rd.Close()
@@ -171,21 +189,21 @@ func (u *UpdateUseCase) Run(ctx context.Context, req *lbv1.UpdateListenerRequest
 		&lbv1.UpdateListenerMetadata{ListenerId: id},
 	)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "operations.New: %v", err)
+		return nil, mapDomainErr(err)
 	}
 	principal := operations.PrincipalFromContext(ctx)
 	if err := u.opsRepo.CreateWithPrincipal(ctx, op, principal); err != nil {
-		return nil, status.Errorf(codes.Internal, "ops.Create: %v", err)
+		return nil, mapDomainErr(err)
 	}
 
-	// epic-rsab T3.1 (#113, REVOKE-04, parity with LB/TG update.go labelsInMask):
+	// (parity with LB/TG update.go labelsInMask):
 	// re-emit the FGA-register mirror-feed (carrying the NEW labels) ONLY when
 	// labels change — labels in mask, or empty mask (full PATCH always reapplies
-	// labels). A non-labels Update is a mirror no-op (skip the intent, G-2). Full
-	// label removal → mirror.upsert with empty labels (NOT Unregister, G-3) — the
+	// labels). A non-labels Update is a mirror no-op (skip the intent). Full
+	// label removal → mirror.upsert with empty labels (NOT Unregister) — the
 	// listener still lives; this stales label selectors without dropping the
 	// resource registration.
-	emitMirror := listenerLabelsInMask(mask.GetPaths())
+	emitMirror := listenerLabelsInMask(mask)
 
 	// Snapshot inputs into worker closure to avoid handler-ctx capture.
 	snap := next
@@ -227,13 +245,13 @@ func validateListenerMask(paths []string) error {
 	return nil
 }
 
-// doUpdate — worker-side flow. When emitMirror is true (labels changed, T3.1
-// REVOKE-04), the FGA-register mirror-feed intent is written in the SAME
-// writer-tx as the resource UPDATE (no dual-write, SEC-D / G-4); the emitter
+// doUpdate — worker-side flow. When emitMirror is true (labels changed),
+// the FGA-register mirror-feed intent is written in the SAME
+// writer-tx as the resource UPDATE (no dual-write); the emitter
 // stamps a monotonic source_version so IAM applies the mirror last-source-wins.
 func (u *UpdateUseCase) doUpdate(ctx context.Context, next domain.Listener, emitMirror bool) (*anypb.Any, error) {
 	// Transient UPDATING status guard. CAS handles concurrent Delete (status
-	// already DELETING → FailedPrecondition; client sees verbatim text).
+	// already DELETING → FailedPrecondition; client sees фиксированный текст).
 	w, err := u.repo.Writer(ctx)
 	if err != nil {
 		return nil, mapDomainErr(err)
@@ -260,8 +278,8 @@ func (u *UpdateUseCase) doUpdate(ctx context.Context, next domain.Listener, emit
 	); err != nil {
 		return nil, mapDomainErr(fmt.Errorf("%w: outbox emit listener UPDATED: %v", domain.ErrInternal, err))
 	}
-	// T3.1 (#113, REVOKE-04): refresh the IAM resource_mirror with the current
-	// labels in the SAME writer-tx (G-2 gated, G-3 upsert-not-unregister, G-4
+	// refresh the IAM resource_mirror with the current
+	// labels in the SAME writer-tx (gated, upsert-not-unregister,
 	// atomic). Label removal → upsert with empty labels, which stales the γ
 	// label selector while keeping the listener registered.
 	if emitMirror {
@@ -277,13 +295,13 @@ func (u *UpdateUseCase) doUpdate(ctx context.Context, next domain.Listener, emit
 	return marshalListener(updated)
 }
 
-// listenerMirrorIntent builds the T3.1 (#113) mirror-feed register-intent for an
-// UPDATED Listener: the parent-link tuple (re-register is idempotent in IAM per
-// SEC-A) carrying the refreshed labels + parent-project so kacho-iam updates its
+// listenerMirrorIntent builds the mirror-feed register-intent for an
+// UPDATED Listener: the parent-link tuple (re-register is idempotent in IAM)
+// carrying the refreshed labels + parent-project so kacho-iam updates its
 // resource_mirror. No creator tuple — Update never re-assigns ownership; this is a
 // pure labels-refresh feed (parity with lbMirrorIntent / tgMirrorIntent). Empty
 // labels (full removal) is a valid upsert payload — it stales the label selector
-// without unregistering the listener (G-3). source_version is stamped by the
+// without unregistering the listener. source_version is stamped by the
 // outbox emitter from the DB clock inside the writer-tx.
 func listenerMirrorIntent(l *kachorepo.ListenerRecord) domain.FGARegisterIntent {
 	id := string(l.ID)

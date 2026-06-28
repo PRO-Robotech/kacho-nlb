@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 // Scenario: stress
 //
 // Purpose: find the breakpoint where error rate begins to climb. NOT a

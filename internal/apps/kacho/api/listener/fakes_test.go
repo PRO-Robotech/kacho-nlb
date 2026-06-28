@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package listener
 
 import (
@@ -14,8 +17,8 @@ import (
 
 	vpcclient "github.com/PRO-Robotech/kacho-nlb/internal/clients/vpc"
 	"github.com/PRO-Robotech/kacho-nlb/internal/domain"
-	// Blank-import регистрирует Listener/time DTO трансферы (skill evgeniy
-	// §3 C.4); без него dto.Transfer Listener возвращает «no transfer
+	// Blank-import регистрирует Listener/time DTO трансферы; без него
+	// dto.Transfer Listener возвращает «no transfer
 	// registered» в worker'е.
 	_ "github.com/PRO-Robotech/kacho-nlb/internal/dto/type2pb"
 	kachorepo "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho"
@@ -32,7 +35,7 @@ import (
 //
 // Хранит таблицы listeners + load_balancers + target_groups + outbox; CQRS
 // reader/writer возвращают одну и ту же in-memory таблицу (writer-side
-// видит свои writes, как evgeniy §G.2). Commit/Abort моделируется через
+// видит свои writes, как). Commit/Abort моделируется через
 // snapshot-restore при Abort'е.
 type fakeRepo struct {
 	mu            sync.Mutex
@@ -40,7 +43,7 @@ type fakeRepo struct {
 	loadBalancers map[string]*kachorepo.LoadBalancerRecord
 	targetGroups  map[string]*kachorepo.TargetGroupRecord
 	outbox        []fakeOutboxEvent
-	fga           []fgaIntentEvent // SEC-D FGARegisterOutbox intents (flushed on Commit)
+	fga           []fgaIntentEvent // FGARegisterOutbox intents (flushed on Commit)
 	insertErr     error            // injected error for next Insert
 	commitErr     error            // injected error for next Commit
 	currentWriter *fakeWriter
@@ -138,7 +141,7 @@ type fakeWriter struct {
 	finalize   bool
 }
 
-// fgaIntentEvent records one FGARegisterOutbox.Emit (SEC-D) for assertions.
+// fgaIntentEvent records one FGARegisterOutbox.Emit  for assertions.
 type fgaIntentEvent struct {
 	EventType string
 	Intent    domain.FGARegisterIntent
@@ -282,7 +285,7 @@ func (r *fakeListenerReader) Get(_ context.Context, id string) (*kachorepo.Liste
 func (r *fakeListenerReader) List(_ context.Context, f kachorepo.ListenerFilter, p kachorepo.Pagination) ([]*kachorepo.ListenerRecord, string, error) {
 	r.r.mu.Lock()
 	defer r.r.mu.Unlock()
-	// RBAC sub-phase D §11: per-object FGA allow-set push-down (parity с pg repo).
+	// RBAC: per-object FGA allow-set push-down (parity с pg repo).
 	var allowed map[string]struct{}
 	if f.AllowedIDs != nil {
 		if len(f.AllowedIDs) == 0 {
@@ -589,7 +592,7 @@ func (r *fakeOpsRepo) List(_ context.Context, f operations.ListFilter) ([]operat
 	for _, op := range r.ops {
 		if f.ResourceID != "" {
 			// Crude resource_id match: scan metadata bytes for listener_id field
-			// — but in tests we'll seed metadata with listener_id and just check
+			// but in tests we'll seed metadata with listener_id and just check
 			// substring on the description if necessary. Simpler: use the
 			// extractResourceID by re-running unmarshal — but for fakes we
 			// short-circuit by description contains.
@@ -808,7 +811,7 @@ func (c *fakeSubnetClient) Get(_ context.Context, id string) (*vpcclient.Subnet,
 	return nil, fmt.Errorf("%w: Subnet %s not found", domain.ErrInvalidArg, id)
 }
 
-// fakeFGARegisterOutbox records SEC-D FGARegisterOutbox.Emit into the writer's
+// fakeFGARegisterOutbox records FGARegisterOutbox.Emit into the writer's
 // pending buffer (flushed to fakeRepo.fga on Commit, dropped on Abort).
 type fakeFGARegisterOutbox struct{ w *fakeWriter }
 
@@ -844,7 +847,7 @@ func splitSubject(s string) [2]string {
 	return out
 }
 
-// committedFGA — SEC-D: all FGA-register/unregister intents flushed by committed
+// committedFGA — all FGA-register/unregister intents flushed by committed
 // writers (parity with loadbalancer test pkg `repo.fga` direct access).
 func (r *fakeRepo) committedFGA() []fgaIntentEvent {
 	r.mu.Lock()

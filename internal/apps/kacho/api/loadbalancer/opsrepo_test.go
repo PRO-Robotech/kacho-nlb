@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package loadbalancer
 
 import (
@@ -18,6 +21,9 @@ import (
 type fakeOpsRepo struct {
 	mu  sync.Mutex
 	ops map[string]*operations.Operation
+	// listErr — если задан, List возвращает его (для no-leak теста: репо-ошибка
+	// не должна протечь raw-текстом в gRPC Internal).
+	listErr error
 }
 
 func newFakeOpsRepo() *fakeOpsRepo {
@@ -53,6 +59,9 @@ func (r *fakeOpsRepo) Get(ctx context.Context, id string) (*operations.Operation
 func (r *fakeOpsRepo) List(ctx context.Context, filter operations.ListFilter) ([]operations.Operation, string, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.listErr != nil {
+		return nil, "", r.listErr
+	}
 	var out []operations.Operation
 	for _, op := range r.ops {
 		if filter.ResourceID != "" {

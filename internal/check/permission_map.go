@@ -1,8 +1,11 @@
-// Package check — FGA Check interceptor + permission map для kacho-nlb (KAC-156).
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
+// Package check — FGA Check interceptor + permission map для kacho-nlb.
 //
 // Каждый RPC kacho-nlb проходит через FGA `Check` (kacho-corelib/authz.Interceptor)
 // до выполнения handler'а. Маппинг RPC → required (relation, object, permission)
-// — статическая таблица `PermissionMap()`, собранная из 4-х под-сервисов
+// статическая таблица `PermissionMap`, собранная из 4-х под-сервисов
 // (NetworkLoadBalancer, Listener, TargetGroup, Operation).
 //
 // Drift-test (`drift_test.go`) гарантирует, что **каждый** публичный RPC
@@ -10,9 +13,9 @@
 // Несовпадение → CI fail до merge'а.
 //
 // Source-of-truth permission catalog — `kacho-iam/internal/authzmap/permission_catalog.go`
-// (30 строк под namespace `loadbalancer.*`, design §6.2). Эти 30 имён
+// (30 строк под namespace `loadbalancer.*`). Эти 30 имён
 // валидируются iam'ом против каталога при создании custom roles. Все 30 строк
-// перечислены в `Catalog()` ниже; 27 из них привязаны к конкретным RPC через
+// перечислены в `Catalog` ниже; 27 из них привязаны к конкретным RPC через
 // PermissionMap, ещё 3 (`loadbalancer.operations.{get,cancel,list}`) — это
 // "catalog-only" permissions: OperationService.Get/Cancel помечены
 // `(kacho.iam.authz.v1.permission) = "<exempt>"` в proto-аннотации (Public,
@@ -25,24 +28,31 @@ import (
 	lbv1 "github.com/PRO-Robotech/kacho-nlb/proto/gen/go/kacho/cloud/loadbalancer/v1"
 )
 
-// FGA object types kacho-nlb (см. design §6.1 — 3 типа).
+// FGA object types kacho-nlb (3 типа).
 //
 // `objectTypeProject` — parent scope: на нём висят RBAC bindings;
 // используется для Create / List (caller должен иметь `editor`/`viewer`
 // на project'е).
 const (
-	// KAC-227: object types MUST match the FGA model (iam/v1/fga_model.fga) and
+	// object types MUST match the FGA model (iam/v1/fga_model.fga) and
 	// the nlb owner-tuple intents (internal/domain FGAObjectType*, applied via
-	// SEC-D fga_register_outbox → IAM) — both use the `lb_*` prefix. The
+	// fga_register_outbox → IAM) — both use the `lb_*` prefix. The
 	// interceptor Checks these object types; mismatched names → no tuple →
 	// per-RPC 403 even when the gateway-edge FGA Check allowed.
 	objectTypeProject      = "project"
 	objectTypeLoadBalancer = "lb_network_load_balancer"
 	objectTypeListener     = "lb_listener"
 	objectTypeTargetGroup  = "lb_target_group"
+
+	// objectTypeCluster / clusterSingletonRoot — singleton root объекта FGA-иерархии
+	// (cluster ▸ account ▸ project ▸ resource). Используется как scope cluster-floor
+	// Check'а для internal RPC, не привязанного к конкретному project/ресурсу
+	// (InternalResourceLifecycleService.Subscribe).
+	objectTypeCluster    = "cluster"
+	clusterSingletonRoot = "cluster_kacho_root"
 )
 
-// FGA relations (design §6.1). Дублирует константы из
+// FGA relations. Дублирует константы из
 // `kacho-iam/internal/authzmap` (там — source of truth); тут — backend
 // view-only, чтобы не плодить cross-repo import просто ради двух строк.
 const (
@@ -55,10 +65,10 @@ const (
 	relationEditor = "editor"
 
 	// verb-bearing relations (v_*) — enforcement резолвит object-self action на
-	// verb, а не на tier (anchor-эпик «Explicit RBAC model 2026», D-6/D-6a:
+	// verb, а не на tier (anchor- «Explicit RBAC model 2026», /D-6a:
 	// доступ по verb развязан с tier). Материализуются per-object reconciler'ом
 	// kacho-iam; consumer гейтит ими object-self RPC. Source of truth relation-имён
-	// — kacho-iam/internal/authzmap; тут — backend view-only.
+	// kacho-iam/internal/authzmap; тут — backend view-only.
 	//
 	//	v_get    — чтение содержимого самого ресурса (Get / GetTargetStates);
 	//	v_list   — видимость операций на самом ресурсе (ListOperations) — НЕ
@@ -69,9 +79,27 @@ const (
 	relationVList   = "v_list"
 	relationVUpdate = "v_update"
 	relationVDelete = "v_delete"
+
+	// relationSystemViewer — cluster-scoped read relation (`cluster.system_viewer`
+	// = [user, service_account] в FGA-модели). Floor для internal read/stream RPC,
+	// который не имеет project/resource-scope (InternalResourceLifecycleService.
+	// Subscribe). Легитимный internal-reader (kacho-iam consumer) держит
+	// `system_viewer@cluster:cluster_kacho_root` (seed как в kacho-iam SystemViewerFloor);
+	// любой другой subject → PermissionDenied.
+	relationSystemViewer = "system_viewer"
 )
 
-// Permission strings (design §6.2). Каждая строка должна совпадать с
+// staticClusterFloor — ObjectExtractor, всегда возвращающий
+// (cluster, cluster_kacho_root) независимо от request'а. Нужен для stream-RPC:
+// corelib stream-interceptor вызывает Extract с req==nil (request недоступен до
+// первого Recv), поэтому scope обязан быть фиксированным cluster-singleton'ом.
+func staticClusterFloor() authz.ObjectExtractor {
+	return func(any) (string, string, error) {
+		return objectTypeCluster, clusterSingletonRoot, nil
+	}
+}
+
+// Permission strings. Каждая строка должна совпадать с
 // каталогом `kacho-iam/internal/authzmap/permission_catalog.go`.
 //
 // Формат — `loadbalancer.<resource>.<verb>`. Drift-test проверяет:
@@ -79,7 +107,7 @@ const (
 //     поля в PermissionMap;
 //   - уникальность Permission строк внутри PermissionMap;
 //   - суммарный набор (PermissionMap + `catalogOnlyOperationPermissions`) =
-//     30 distinct (design §6.2 §AZD-019).
+//     30 distinct.
 const (
 	// NLB (12)
 	permNLBGet               = "loadbalancer.networkLoadBalancers.get"
@@ -124,7 +152,7 @@ const (
 // (PermissionMap values ∪ catalogOnlyOperationPermissions = 30).
 var catalogOnlyOperationPermissions = []string{permOPGet, permOPCancel, permOPList}
 
-// Catalog возвращает union всех 30 catalog strings (design §6.2):
+// Catalog возвращает union всех 30 catalog strings:
 // 27 RPC-mapped через PermissionMap + 3 catalog-only operation strings.
 //
 // Сортировка не гарантируется; drift-test сравнивает как set.
@@ -143,7 +171,7 @@ func Catalog() []string {
 // PermissionMap — карта `<gRPC FullMethod>` → required relation + extract +
 // permission.
 //
-// Семантика per-RPC (design §6.3 + §6.5):
+// Семантика per-RPC:
 //   - Create / List              — на parent scope `project:<project_id>` (из request);
 //   - Get/Update/Delete/<verb>   — на самом ресурсе `nlb_<type>:<id>`;
 //   - OperationService.Get/Cancel — `Public: true` (proto-аннотация `<exempt>`);
@@ -151,7 +179,7 @@ func Catalog() []string {
 //     здесь нерелевантен (op-id opaque + поллится creator'ом сразу после Create —
 //     в этом окне tuple ещё может не быть видим).
 //
-// **List RPCs** помечены `ScopeFiltered: true` (per design §3.8 / KAC-127 #25):
+// **List RPCs** помечены `ScopeFiltered: true`:
 // handler сам делает ListObjects-based фильтрацию (200 + filtered/EMPTY если
 // caller не имеет grant'а в project'е). Single per-RPC Check здесь
 // семантически неверен — он бы отверг весь вызов `no path` 403 ДО того, как
@@ -162,14 +190,14 @@ func Catalog() []string {
 // nlb_*`) — это гарантирует authz на source project через FGA cascade
 // (`editor on nlb_*` ← `editor on project`). Проверка editor'а на
 // destination_project_id — задача handler'а (он зовёт `iam.Check` напрямую
-// перед `repo.Update(project_id=<dst>)`). Acceptance §AZD-006 покрывает оба
+// перед `repo.Update(project_id=<dst>)`). Acceptance покрывает оба
 // edge'а в end-to-end newman case.
 //
 // **AttachTargetGroup**: per-RPC Check — `editor on nlb_load_balancer:<lb_id>`.
-// Дополнительный `viewer on nlb_target_group:<tg_id>` (design §6.5) —
-// handler'ом перед attach (`iam.Check` напрямую). Acceptance §AZD-007.
+// Дополнительный `viewer on nlb_target_group:<tg_id>` проверяется
+// handler'ом перед attach (`iam.Check` напрямую).
 //
-// scope-guard (KAC-108): для Get/Update/Delete/<verb> мы НЕ резолвим
+// scope-guard: для Get/Update/Delete/<verb> мы НЕ резолвим
 // project_id из БД заранее — лишний DB-trip; relation проверяется на самом
 // ресурсе, FGA-модель E3 настроена так, что `editor on nlb_load_balancer` →
 // computed через `editor on project` → `member on group`.
@@ -278,7 +306,7 @@ func PermissionMap() authz.RPCMap {
 			}),
 		},
 		"/kacho.cloud.loadbalancer.v1.ListenerService/List": {
-			// KAC-229: project-scoped (parity with NLB/TG List). viewer on the
+			// project-scoped (parity with NLB/TG List). viewer on the
 			// project; data-level ListObjects still filters by accessible LBs.
 			Relation:      relationViewer,
 			Permission:    permLstList,
@@ -393,10 +421,29 @@ func PermissionMap() authz.RPCMap {
 		// Get/Cancel ⇒ Public, без per-RPC FGA Check. Семантика: op-id opaque
 		// + creator поллит сразу после Create, в этом окне FGA-tuple ещё может
 		// быть не виден (no path) → лишний 403. Owner-check для Cancel
-		// (acceptance §AZD-011 "only the operation creator may cancel") —
+		// ("only the operation creator may cancel") —
 		// handler'ом на основе `operation.created_by` в БД.
 		// =========================
 		"/kacho.cloud.operation.OperationService/Get":    {Public: true},
 		"/kacho.cloud.operation.OperationService/Cancel": {Public: true},
+
+		// =========================
+		// InternalResourceLifecycleService (cluster-internal :9091, stream).
+		//
+		// Subscribe стримит resource_id/project_id ВСЕХ проектов kacho-nlb. Internal-
+		// листенер гоняет ТОТ ЖЕ authzIntr, что и public (security.md «authN+authZ на
+		// ОБОИХ listener'ах»; «Internal = trusted» — запрещённое допущение). Поэтому
+		// RPC обязан быть в map'е: не Public (это слило бы стрим всем), а с реальным
+		// Check на cluster-floor `system_viewer` @ singleton `cluster:cluster_kacho_root`.
+		// Легитимный consumer (kacho-iam) держит `system_viewer@cluster` (seed как в
+		// kacho-iam SystemViewerFloor); любой другой subject → PermissionDenied.
+		//
+		// Permission намеренно пустой: это НЕ tenant-facing каталожный permission
+		// (30-string `loadbalancer.*`-каталог покрывает только public-RPC) — gate тут
+		// чисто relation-based, как cluster-floor у других сервисов.
+		"/kacho.cloud.loadbalancer.v1.InternalResourceLifecycleService/Subscribe": {
+			Relation: relationSystemViewer,
+			Extract:  staticClusterFloor(),
+		},
 	}
 }

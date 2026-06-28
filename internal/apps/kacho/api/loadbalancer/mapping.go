@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package loadbalancer
 
 import (
@@ -18,11 +21,11 @@ import (
 
 // mapDomainErr транслирует sentinel-ошибки `domain`/`kacho` (repo) и peer-client
 // ошибки в gRPC-status. Stripping sentinel prefix производится через
-// `stripSentinel` так, чтобы YC-style текст ошибки доезжал до клиента в чистом
+// `stripSentinel` так, чтобы текст ошибки доезжал до клиента в чистом
 // виде (без префиксов вроде "not found: NetworkLoadBalancer xxx not found").
 //
 // Если err уже является gRPC-status (например, sync-валидация из corelib/errors)
-// — пробрасываем как есть.
+// пробрасываем как есть.
 func mapDomainErr(err error) error {
 	if err == nil {
 		return nil
@@ -51,8 +54,8 @@ func mapDomainErr(err error) error {
 }
 
 // stripSentinel убирает sentinel-prefix "<text>: " из строки ошибки, чтобы
-// чистый verbatim-YC текст доходил до клиента. Если префикса нет —
-// возвращает err.Error() как есть. Защищает от пустого результата (fallback
+// чистый по конвенции Kachō текст доходил до клиента. Если префикса нет —
+// возвращает err.Error как есть. Защищает от пустого результата (fallback
 // на fallbackText).
 func stripSentinel(err error, fallbackText string) string {
 	if err == nil {
@@ -75,7 +78,7 @@ func stripSentinel(err error, fallbackText string) string {
 }
 
 // operationToProto конвертирует domain `operations.Operation` в proto Operation.
-// Включает principal_* поля (KAC-105).
+// Включает principal_* поля.
 func operationToProto(op *operations.Operation) *operationpb.Operation {
 	p := &operationpb.Operation{
 		Id:                   op.ID,
@@ -105,7 +108,7 @@ func lbRecordToProto(rec *kachorepo.LoadBalancerRecord) (*lbv1.NetworkLoadBalanc
 	}
 	var dst *lbv1.NetworkLoadBalancer
 	if err := dto.Transfer(dto.FromTo(*rec, &dst)); err != nil {
-		return nil, status.Errorf(codes.Internal, "dto.Transfer NetworkLoadBalancer: %v", err)
+		return nil, mapDomainErr(err)
 	}
 	return dst, nil
 }
@@ -115,5 +118,3 @@ func lbRecordToProto(rec *kachorepo.LoadBalancerRecord) (*lbv1.NetworkLoadBalanc
 func errInvalidArg(field, msg string) error {
 	return status.Errorf(codes.InvalidArgument, "%s: %s", field, msg)
 }
-
-

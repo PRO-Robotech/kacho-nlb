@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package authzfilter
 
 import (
@@ -38,7 +41,7 @@ func TestSubjectFromCtx_ServiceAccount(t *testing.T) {
 
 // system principal (background / dev) → "" (use-case treats as bypass).
 func TestSubjectFromCtx_SystemIsEmpty(t *testing.T) {
-	// Bare context resolves to SystemPrincipal() → "".
+	// Bare context resolves to SystemPrincipal → "".
 	if got := SubjectFromCtx(context.Background()); got != "" {
 		t.Fatalf("system (bare ctx): want empty, got %q", got)
 	}
@@ -48,7 +51,7 @@ func TestSubjectFromCtx_SystemIsEmpty(t *testing.T) {
 	}
 }
 
-// fakeResolveFilter — minimal Filter for Resolve() normalisation tests.
+// fakeResolveFilter — minimal Filter for Resolve normalisation tests.
 type fakeResolveFilter struct {
 	dec     Decision
 	err     error
@@ -108,7 +111,7 @@ func TestResolve_UserSubjectCallsFilter(t *testing.T) {
 	}
 }
 
-// filter status error is passed through verbatim (fail-closed).
+// filter status error is passed through с фиксированным текстом (fail-closed).
 func TestResolve_FilterStatusErrPassthrough(t *testing.T) {
 	flt := &fakeResolveFilter{err: status.Error(codes.Unavailable, "iam down")}
 	_, err := Resolve(ctxWithPrincipal("user", "usr_alice"), flt,

@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 // Long-Running Operation polling helper.
 //
 // All kacho-nlb mutations return `operation.Operation`; the client polls

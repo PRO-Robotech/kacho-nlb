@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package loadbalancer
 
 import (
@@ -5,8 +8,6 @@ import (
 	"fmt"
 	"log/slog"
 
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/anypb"
 
 	"github.com/PRO-Robotech/kacho-corelib/ids"
@@ -17,7 +18,7 @@ import (
 )
 
 // DetachTargetGroupUseCase — idempotent DELETE from attached_target_groups
-// pivot. Acceptance: GWT-NLB-036..GWT-NLB-038.
+// pivot. Acceptance:.
 //
 // 0 affected rows → no-op (idempotent). Trigger lb_status_recompute переводит
 // LB.status ACTIVE→INACTIVE если убрали последний pair / последний listener.
@@ -43,9 +44,15 @@ func (u *DetachTargetGroupUseCase) Execute(
 	if lbID == "" {
 		return nil, errInvalidArg("network_load_balancer_id", "required")
 	}
+	if err := validateLoadBalancerID(lbID); err != nil {
+		return nil, err
+	}
 	tgID := req.GetTargetGroupId()
 	if tgID == "" {
 		return nil, errInvalidArg("target_group_id", "required")
+	}
+	if err := validateTargetGroupRefID(tgID); err != nil {
+		return nil, err
 	}
 
 	rd, err := u.repo.Reader(ctx)
@@ -67,11 +74,11 @@ func (u *DetachTargetGroupUseCase) Execute(
 		},
 	)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "build operation: %v", err)
+		return nil, mapDomainErr(err)
 	}
 	principal := operations.PrincipalFromContext(ctx)
 	if err := u.opsRepo.CreateWithPrincipal(ctx, op, principal); err != nil {
-		return nil, status.Errorf(codes.Internal, "operation persist: %v", err)
+		return nil, mapDomainErr(err)
 	}
 	projectID := string(lb.ProjectID)
 	operations.Run(ctx, u.opsRepo, op.ID, func(workerCtx context.Context) (*anypb.Any, error) {
@@ -121,7 +128,7 @@ func (u *DetachTargetGroupUseCase) doDetach(ctx context.Context, lbID, tgID, pro
 	}
 	out, err := anypb.New(pb)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "marshal response: %v", err)
+		return nil, mapDomainErr(err)
 	}
 	return out, nil
 }

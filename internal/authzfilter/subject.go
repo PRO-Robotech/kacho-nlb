@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package authzfilter
 
 import (
@@ -44,7 +47,7 @@ func Resolve(ctx context.Context, filter Filter, resourceType, action string) (D
 	}
 	dec, err := filter.ListAllowedIDs(ctx, subject, resourceType, action)
 	if err != nil {
-		// Fail-closed (D-47): любая ошибка фильтра — Unavailable. FGAFilter уже
+		// Fail-closed: любая ошибка фильтра — Unavailable. FGAFilter уже
 		// маппит на gRPC-status; defensive guard на случай, если реализация Filter
 		// вернула не-status ошибку (иначе она утекла бы как codes.Unknown, не
 		// fail-closed). НЕ возвращаем нефильтрованный список — no-leak.

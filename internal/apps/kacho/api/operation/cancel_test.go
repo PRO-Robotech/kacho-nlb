@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package operation
 
 import (
@@ -15,7 +18,7 @@ import (
 	operationpb "github.com/PRO-Robotech/kacho-corelib/proto/gen/go/kacho/cloud/operation"
 )
 
-// TestOperation_OP005_CancelInFlight — GWT-OP-005.
+// TestOperation_OP005_CancelInFlight —.
 //
 // Given: long-running op in-flight; subject = creator of op.
 // When:  OperationService.Cancel(operation_id=<op-id>).
@@ -45,7 +48,7 @@ func TestOperation_OP005_CancelInFlight(t *testing.T) {
 	assert.True(t, stored.Done)
 }
 
-// TestOperation_OP006_CancelAlreadyDone — GWT-OP-006.
+// TestOperation_OP006_CancelAlreadyDone —.
 //
 // When:  Cancel an op already done=true.
 // Then:  FAILED_PRECONDITION; message contains "already completed".
@@ -92,6 +95,53 @@ func TestOperation_Cancel_EmptyOperationID(t *testing.T) {
 	assert.Equal(t, codes.InvalidArgument, st.Code())
 }
 
+// TestOperation_Cancel_CrossTenant_NotFound — (owner-scope on Cancel).
+//
+// Given: in-flight Operation created by principal A.
+// When:  principal B calls Cancel(op-id).
+// Then:  existence-hiding NotFound AND the op stays in-flight (B's Cancel had no
+//
+//	effect — a foreign caller must not be able to abort another tenant's mutation).
+func TestOperation_Cancel_CrossTenant_NotFound(t *testing.T) {
+	repo := newFakeOpsRepo()
+	h := NewHandler(repo)
+
+	op, err := operations.New(ids.PrefixOperationNLB, "in-flight owned by A", nil)
+	require.NoError(t, err)
+	require.NoError(t, repo.CreateWithPrincipal(context.Background(), op,
+		operations.Principal{Type: "user", ID: "usr_alice"}))
+
+	ctxB := operations.WithPrincipal(context.Background(),
+		operations.Principal{Type: "user", ID: "usr_bob"})
+	_, err = h.Cancel(ctxB, &operationpb.CancelOperationRequest{OperationId: op.ID})
+	require.Error(t, err)
+	st, ok := grpcstatus.FromError(err)
+	require.True(t, ok)
+	assert.Equal(t, codes.NotFound, st.Code())
+
+	stored, gerr := repo.Get(context.Background(), op.ID)
+	require.NoError(t, gerr)
+	assert.False(t, stored.Done, "cross-tenant Cancel must not affect the op")
+}
+
+// TestOperation_Cancel_Owner_OK — creator cancels their own in-flight op (no regress).
+func TestOperation_Cancel_Owner_OK(t *testing.T) {
+	repo := newFakeOpsRepo()
+	h := NewHandler(repo)
+
+	op, err := operations.New(ids.PrefixOperationNLB, "owned in-flight", nil)
+	require.NoError(t, err)
+	pa := operations.Principal{Type: "user", ID: "usr_alice"}
+	require.NoError(t, repo.CreateWithPrincipal(context.Background(), op, pa))
+
+	got, err := h.Cancel(operations.WithPrincipal(context.Background(), pa),
+		&operationpb.CancelOperationRequest{OperationId: op.ID})
+	require.NoError(t, err)
+	assert.True(t, got.GetDone())
+	require.NotNil(t, got.GetError())
+	assert.EqualValues(t, 1, got.GetError().GetCode())
+}
+
 func TestOperation_Cancel_RepoError_MapsToInternal(t *testing.T) {
 	fail := &failingOpsRepo{cancelErr: errors.New("pgx: connection refused")}
 	h := NewHandler(fail)
@@ -108,8 +158,8 @@ func TestOperation_Cancel_RepoError_MapsToInternal(t *testing.T) {
 
 func TestOperation_Cancel_DoubleCancel(t *testing.T) {
 	// Дополнительный case: Cancel применённый дважды подряд — первый OK, второй FailedPrecondition.
-	// Контракт acceptance §7 GWT-OP-006: Cancel НЕ идемпотентен (расхождение с типичным
-	// Delete-семантикой; design choice следует verbatim YC / kacho-vpc / kacho-compute).
+	// Контракт: Cancel НЕ идемпотентен (расхождение с типичным
+	// Delete-семантикой; design choice следует по конвенции Kachō / kacho-vpc / kacho-compute).
 	repo := newFakeOpsRepo()
 	h := NewHandler(repo)
 

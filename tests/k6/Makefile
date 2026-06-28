@@ -1,3 +1,6 @@
+# Copyright (c) PRO-Robotech
+# SPDX-License-Identifier: BUSL-1.1
+
 # k6 load-test targets for kacho-nlb.
 #
 # Defaults assume port-forward of api-gateway to localhost:18080. Override

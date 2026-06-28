@@ -1,3 +1,6 @@
+-- Copyright (c) PRO-Robotech
+-- SPDX-License-Identifier: BUSL-1.1
+
 -- +goose Up
 
 -- Additive, nullable account_id denormalization on kacho_nlb.operations so the

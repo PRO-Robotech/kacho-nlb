@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 // semaphore.go — простой buffered-channel limiter для concurrent stream slots.
 //
 // Используется handler-ом Subscribe: каждый stream должен сначала захватить

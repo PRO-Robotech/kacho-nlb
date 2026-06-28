@@ -1,3 +1,6 @@
+# Copyright (c) PRO-Robotech
+# SPDX-License-Identifier: BUSL-1.1
+
 """OperationService cases (OP-*) — kacho-nlb opsproxy through api-gateway."""
 
 CASES = []

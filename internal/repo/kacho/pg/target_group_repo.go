@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package pg
 
 import (
@@ -151,7 +154,7 @@ func (r *targetGroupReader) List(ctx context.Context, f kacho.TargetGroupFilter,
 		args = append(args, f.Name)
 		argIdx++
 	}
-	// RBAC sub-phase D §11: per-object FGA filter push-down (см. load_balancer_repo.go).
+	// RBAC: per-object FGA filter push-down (см. load_balancer_repo.go).
 	if f.AllowedIDs != nil {
 		if len(f.AllowedIDs) == 0 {
 			return nil, "", nil
@@ -417,9 +420,9 @@ func (w *targetGroupWriter) AddTargets(ctx context.Context, tgID string, targets
 	return inserted, nil
 }
 
-// RemoveTargetsMarkDraining — Phase A 2-phase drain: status='DRAINING' +
-// drain_started_at=now(). CHECK targets_drain_consistency требует drain_started_at
-// IS NOT NULL когда status='DRAINING' (миграция 0001 GWT-DB-012).
+// RemoveTargetsMarkDraining — фаза A двухфазного drain: status='DRAINING' +
+// drain_started_at=now. CHECK targets_drain_consistency требует drain_started_at
+// IS NOT NULL когда status='DRAINING' (миграция 0001).
 func (w *targetGroupWriter) RemoveTargetsMarkDraining(ctx context.Context, tgID string, targetIDs []string) (int, error) {
 	if len(targetIDs) == 0 {
 		return 0, nil
@@ -438,8 +441,8 @@ func (w *targetGroupWriter) RemoveTargetsMarkDraining(ctx context.Context, tgID 
 	return int(tag.RowsAffected()), nil
 }
 
-// DeleteTargetsDrained — Phase B: DELETE WHERE status='DRAINING' AND
-// drain_started_at < now() - $delay::interval.
+// DeleteTargetsDrained — фаза B: DELETE WHERE status='DRAINING' AND
+// drain_started_at < now - $delay::interval.
 func (w *targetGroupWriter) DeleteTargetsDrained(ctx context.Context, tgID string, delaySeconds int32) (int, error) {
 	tag, err := w.tx.Exec(ctx,
 		`DELETE FROM kacho_nlb.targets

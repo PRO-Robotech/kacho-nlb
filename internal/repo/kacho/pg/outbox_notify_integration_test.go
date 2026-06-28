@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package pg_test
 
 import (
@@ -21,7 +24,7 @@ import (
 //
 // Тест ниже принимает DSN параметром и сам открывает pgx.Conn.
 
-// TestOutboxNotify_FiresOnInsert — GWT-DB-003: trigger nlb_outbox_notify_trg
+// TestOutboxNotify_FiresOnInsert — trigger nlb_outbox_notify_trg
 // шлёт pg_notify('nlb_outbox', sequence_no::text) после INSERT.
 func TestOutboxNotify_FiresOnInsert(t *testing.T) {
 	dsn := setupTestDB(t)

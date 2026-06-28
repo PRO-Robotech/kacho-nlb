@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+
+# Copyright (c) PRO-Robotech
+# SPDX-License-Identifier: BUSL-1.1
+
 # CI / interactive runner for kacho-nlb k6 scenarios.
 #
 # Usage:

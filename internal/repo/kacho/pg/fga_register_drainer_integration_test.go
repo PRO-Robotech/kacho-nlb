@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package pg_test
 
 import (
@@ -25,12 +28,12 @@ import (
 	"github.com/PRO-Robotech/kacho-nlb/internal/domain"
 )
 
-// fga_register_drainer_integration_test.go — SEC-D S2: register-drainer applies
+// fga_register_drainer_integration_test.go — register-drainer applies
 // FGA-register/unregister intents through kacho-iam InternalIAMService.Register-
-// Resource / UnregisterResource by mTLS. Scenarios SEC-D-09/10/11/12/13/14.
+// Resource / UnregisterResource by mTLS. Scenarios.
 //
 // The drainer mechanics themselves (claim / mark / poison / NOTIFY) are covered
-// by corelib W1.1; here we test the nlb consumer-applier (iam.NewRegisterApplier
+// by corelib; here we test the nlb consumer-applier (iam.NewRegisterApplier
 // + iam.DecodeFGARegisterIntent) end-to-end against testcontainers Postgres with
 // the migration-0002 fga_register_outbox table, driven by a scripted fake
 // RegisterResourceClient (no real OpenFGA — record-recorder).
@@ -48,7 +51,7 @@ type registerCall struct {
 // and applies a scriptable reply policy: the first failN calls return failCode,
 // then OK. With failN==0 every call returns OK (happy). A per-tuple applied set
 // models IAM idempotency (repeat owner-tuple → OK, NOT AlreadyExists) so the
-// recorder can assert "tuple present exactly once" (SEC-D-12).
+// recorder can assert "tuple present exactly once".
 type fakeIAMRegister struct {
 	mu       sync.Mutex
 	calls    []registerCall
@@ -80,7 +83,7 @@ func (f *fakeIAMRegister) RegisterResource(
 		f.record(registerCall{"register", in.GetSubjectId(), in.GetRelation(), in.GetObject()})
 		return nil, err
 	}
-	// Idempotent set-presence (models SEC-A: repeat owner-tuple → OK, tuple
+	// Idempotent set-presence (models: repeat owner-tuple → OK, tuple
 	// stored exactly once). A replay keeps presence at 1, never duplicates.
 	f.mu.Lock()
 	f.applied[tupleKey(in.GetSubjectId(), in.GetRelation(), in.GetObject())] = 1
@@ -192,7 +195,7 @@ func waitRow(t testing.TB, ctx context.Context, tc *testContext, deadline time.D
 	return rows[0]
 }
 
-// ---- SEC-D-09: happy register apply ----------------------------------------
+// ---- happy register apply ----------------------------------------
 
 func TestFGARegisterDrainer_SECD09_HappyApply(t *testing.T) {
 	tc := newTestCtx(t)
@@ -219,7 +222,7 @@ func TestFGARegisterDrainer_SECD09_HappyApply(t *testing.T) {
 	assert.Equal(t, "project:"+projectID, calls[0].subjectID)
 }
 
-// ---- SEC-D-10: happy unregister apply --------------------------------------
+// ---- happy unregister apply --------------------------------------
 
 func TestFGARegisterDrainer_SECD10_UnregisterApply(t *testing.T) {
 	tc := newTestCtx(t)
@@ -243,7 +246,7 @@ func TestFGARegisterDrainer_SECD10_UnregisterApply(t *testing.T) {
 	require.Len(t, fake.callsFor("unregister", obj), 1, "exactly one UnregisterResource call")
 }
 
-// ---- SEC-D-11 (CRITICAL): IAM Unavailable → intent durable → recover -------
+// ---- IAM Unavailable → intent durable → recover -------
 
 func TestFGARegisterDrainer_SECD11_IAMDownThenRecover(t *testing.T) {
 	tc := newTestCtx(t)
@@ -280,7 +283,7 @@ func TestFGARegisterDrainer_SECD11_IAMDownThenRecover(t *testing.T) {
 		"tuple applied exactly once after recovery")
 }
 
-// ---- SEC-D-12: idempotent re-apply (crash between apply and mark) -----------
+// ---- idempotent re-apply (crash between apply and mark) -----------
 
 func TestFGARegisterDrainer_SECD12_IdempotentReapply(t *testing.T) {
 	tc := newTestCtx(t)
@@ -315,7 +318,7 @@ func TestFGARegisterDrainer_SECD12_IdempotentReapply(t *testing.T) {
 		"tuple present exactly once — replay did not duplicate")
 }
 
-// ---- SEC-D-13: concurrent two replicas → exactly-once ----------------------
+// ---- concurrent two replicas → exactly-once ----------------------
 
 func TestFGARegisterDrainer_SECD13_ConcurrentTwoReplicas(t *testing.T) {
 	tc := newTestCtx(t)
@@ -372,13 +375,13 @@ func TestFGARegisterDrainer_SECD13_ConcurrentTwoReplicas(t *testing.T) {
 	require.Equal(t, n, applied, "exactly n distinct tuples applied")
 }
 
-// ---- SEC-D-14: permanent poison (InvalidArgument) --------------------------
+// ---- permanent poison (InvalidArgument) --------------------------
 
 func TestFGARegisterDrainer_SECD14_PermanentPoison(t *testing.T) {
 	tc := newTestCtx(t)
 	ctx := context.Background()
 	fake := newFakeIAMRegister()
-	// Always InvalidArgument (models SEC-C poison-classification — malformed tuple).
+	// Always InvalidArgument (models poison-classification — malformed tuple).
 	atomic.StoreInt64(&fake.failN, 1<<30)
 	fake.failCode = codes.InvalidArgument
 

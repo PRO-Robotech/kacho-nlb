@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package check
 
 import (
@@ -23,7 +26,7 @@ import (
 // идентичны, но интерфейсы разные (peer-client живёт в `internal/clients/iam`,
 // нужен для composition root; authz-interceptor требует kacho-corelib интерфейс).
 //
-// Sentinel passthrough (KAC-133):
+// Sentinel passthrough:
 //   - peer-client возвращает `authz.ErrNoPath` если IAM сказал
 //     allowed=false с причиной "no path" → adapter транзитом передаёт
 //     наружу (interceptor → DecisionNoPath → handler → NOT_FOUND из БД).
@@ -37,7 +40,7 @@ type IAMCheckClient struct {
 
 // NewIAMCheckClient — конструктор adapter'а. peer обычно создаётся в
 // composition root через `iamclient.NewCheckClient(grpcConn)`. Если peer=nil
-// — adapter тоже nil (caller decides: fail если не в breakglass mode).
+// adapter тоже nil (caller decides: fail если не в breakglass mode).
 func NewIAMCheckClient(peer iamclient.CheckClient) *IAMCheckClient {
 	if peer == nil {
 		return nil
@@ -46,7 +49,7 @@ func NewIAMCheckClient(peer iamclient.CheckClient) *IAMCheckClient {
 }
 
 // Check — реализация `authz.CheckClient.Check`. Просто транзит к peer-клиенту;
-// все sentinel-ы (`authz.ErrNoPath`, `domain.ErrUnavailable`, ...) уже
+// все sentinel-ы (`authz.ErrNoPath`, `domain.ErrUnavailable`,...) уже
 // нормализованы в peer-client'е, дополнительной обработки не требуется.
 func (c *IAMCheckClient) Check(ctx context.Context, subjectID, relation, object string) (bool, error) {
 	if c == nil || c.peer == nil {

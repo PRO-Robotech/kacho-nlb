@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package domain
 
 import (
@@ -5,14 +8,14 @@ import (
 	"go.uber.org/multierr"
 )
 
-// Listener — domain entity Listener (design §2.2). Принадлежит LoadBalancer'у;
+// Listener — domain entity Listener. Принадлежит LoadBalancer'у;
 // `RegionID` денормализован from-LB (same-region constraint — DB-CHECK).
 //
-// Address-семантика (design §2.6 / acceptance LST-001..LST-007):
+// Address-семантика:
 //   - AddressID пуст и AllocatedAddress пуст → auto-alloc на Create через
 //     vpc.InternalAddressService.AllocateExternalIP/InternalIP.
 //   - AddressID задан (BYO) → vpc.AddressService.Get + SetReference в worker'е.
-//   - SubnetID обязателен для type=INTERNAL (acceptance LST-006); для EXTERNAL
+//   - SubnetID обязателен для type=INTERNAL; для EXTERNAL
 //     игнорируется.
 type Listener struct {
 	ID                   ResourceID
@@ -35,7 +38,7 @@ type Listener struct {
 }
 
 // Validate — все семантически-нагруженные поля. Bind-семантика
-// AddressID/SubnetID vs Type/IPVersion (LST-004..LST-007) проверяется в
+// AddressID/SubnetID vs Type/IPVersion  проверяется в
 // use-case-слое (требует знание LB-родителя) — в Validate проверяем только
 // форму конкретных полей.
 func (l Listener) Validate() error {

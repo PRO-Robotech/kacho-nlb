@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 // Scenario: spike
 //
 // Purpose: burst tolerance + recovery characterisation. Step from baseline

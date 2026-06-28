@@ -1,5 +1,8 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 // postgres.go — production-реализация [Dialect] для PostgreSQL через
-// goose + pgx driver (skill evgeniy §9 K.3).
+// goose + pgx driver.
 //
 // Источник pattern'а — `kacho-vpc/internal/apps/migrator/postgres.go`.
 package migrator

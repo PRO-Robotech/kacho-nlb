@@ -1,3 +1,6 @@
+# Copyright (c) PRO-Robotech
+# SPDX-License-Identifier: BUSL-1.1
+
 """TargetGroupService cases (TGR-*).
 
 Acceptance: docs/specs/sub-phase-4.0-nlb-acceptance.md §5 (GWT-TGR-001..028).

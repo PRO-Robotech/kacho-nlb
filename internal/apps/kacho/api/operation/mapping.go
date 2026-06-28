@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package operation
 
 import (
@@ -9,7 +12,7 @@ import (
 
 // operationToProto конвертирует domain `operations.Operation` в proto Operation.
 //
-// Включает principal_* поля (KAC-105) — vpc/compute mapping этот шаг исторически
+// Включает principal_* поля  — vpc/compute mapping этот шаг исторически
 // пропускал; для greenfield-сервиса (kacho-nlb) делаем корректно сразу.
 func operationToProto(op *operations.Operation) *operationpb.Operation {
 	p := &operationpb.Operation{

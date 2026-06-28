@@ -1,5 +1,8 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 // Package vpc — typed adapter-клиенты к kacho-vpc (Clean Architecture
-// outbound adapter, KAC-151).
+// outbound adapter).
 //
 // kacho-vpc — owner Network/Subnet/SecurityGroup/Address/NetworkInterface.
 // kacho-nlb валидирует:

@@ -1,3 +1,6 @@
+# Copyright (c) PRO-Robotech
+# SPDX-License-Identifier: BUSL-1.1
+
 BINARY_API     := kacho-loadbalancer
 BINARY_MIG     := migrator
 CMD_API        := ./cmd/kacho-loadbalancer

@@ -1,3 +1,6 @@
+# Copyright (c) PRO-Robotech
+# SPDX-License-Identifier: BUSL-1.1
+
 """NetworkLoadBalancerService cases (NLB-*) — 12 RPC × full RPC × class matrix.
 
 Acceptance source: docs/specs/sub-phase-4.0-nlb-acceptance.md §3 (GWT-NLB-001..048).

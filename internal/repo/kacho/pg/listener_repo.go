@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package pg
 
 import (
@@ -106,7 +109,7 @@ func (r *listenerReader) List(ctx context.Context, f kacho.ListenerFilter, p kac
 		args = append(args, f.Name)
 		argIdx++
 	}
-	// RBAC sub-phase D §11: per-object FGA filter push-down (см. load_balancer_repo.go).
+	// RBAC: per-object FGA filter push-down (см. load_balancer_repo.go).
 	if f.AllowedIDs != nil {
 		if len(f.AllowedIDs) == 0 {
 			return nil, "", nil

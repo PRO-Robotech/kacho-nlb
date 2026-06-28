@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+
+# Copyright (c) PRO-Robotech
+# SPDX-License-Identifier: BUSL-1.1
+
 """
 tests/newman/scripts/validate-cases.py — MANDATORY case-uniqueness + catalog validation.
 

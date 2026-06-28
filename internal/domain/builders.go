@@ -1,22 +1,25 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package domain
 
 import "github.com/PRO-Robotech/kacho-corelib/ids"
 
 // Factory-builders для domain-сущностей. Inline-литералы domain-структур с
 // magic-defaults (Status="CREATING", CrossZoneEnabled=true, SlowStart=0,
-// DeregistrationDelay=300) в use-case-слое — запрещены (evgeniy §I.7–§I.8 /
-// AP-2). Все «как должна выглядеть свежесозданная сущность»-defaults живут
+// DeregistrationDelay=300) в use-case-слое — запрещены.
+// Все «как должна выглядеть свежесозданная сущность»-defaults живут
 // здесь, в одном месте — единственном legal-источнике этих констант.
 
 // NewLoadBalancer строит новую LoadBalancer-сущность с заданными tenant-полями
 // (project/region/name/type/description/labels) и safe-defaults:
 //   - ID: свежий `nlb`-prefixed crockford-base32 (corelib/ids);
-//   - Status: CREATING (acceptance §3 NLB-001);
-//   - SessionAffinity: FIVE_TUPLE (design §2.2 default);
-//   - CrossZoneEnabled: true (design §2.2 default);
+//   - Status: CREATING;
+//   - SessionAffinity: FIVE_TUPLE (default);
+//   - CrossZoneEnabled: true (default);
 //   - DeletionProtection: false.
 //
-// Caller обязан вызвать `lb.Validate()` перед repo.Insert — builder не
+// Caller обязан вызвать `lb.Validate` перед repo.Insert — builder не
 // валидирует, чтобы service-слой собрал все ошибки за один проход.
 func NewLoadBalancer(
 	projectID ProjectID,
@@ -79,7 +82,7 @@ func NewListener(
 //   - HealthCheck: caller задаёт (нет sensible default — это required-поле);
 //   - DeregistrationDelaySeconds: DefaultDeregistrationDelay (300);
 //   - SlowStartSeconds: DefaultSlowStart (0);
-//   - Status: ACTIVE (TG нет staging-фазы; acceptance §5).
+//   - Status: ACTIVE (TG нет staging-фазы).
 func NewTargetGroup(
 	projectID ProjectID,
 	regionID RegionID,

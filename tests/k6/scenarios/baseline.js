@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 // Scenario: baseline
 //
 // Purpose: production-like sustained load with FULL SLO assertions. This is

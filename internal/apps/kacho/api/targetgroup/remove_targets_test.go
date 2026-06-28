@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package targetgroup
 
 import (
@@ -17,7 +20,7 @@ import (
 	kachopg "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho/pg"
 )
 
-// GWT-TGT-011 — Phase A (immediate DRAINING-mark + outbox UPDATED + done<500ms).
+// фаза A (immediate DRAINING-mark + outbox UPDATED + done<500ms).
 func TestRemove_PhaseAMarksDraining(t *testing.T) {
 	repo := newFakeRepo()
 	tg := makeTG("prj-acme", "drain-now")
@@ -63,7 +66,7 @@ func TestRemove_PhaseAMarksDraining(t *testing.T) {
 	assert.Equal(t, kachopg.OutboxActionUpdated, events[0].Action)
 }
 
-// GWT-TGT-012 — identity not in TG → no-op (no outbox, no error).
+// identity not in TG → no-op (no outbox, no error).
 func TestRemove_NonExistentIdentity_NoOp(t *testing.T) {
 	repo := newFakeRepo()
 	tg := makeTG("prj-acme", "no-match")

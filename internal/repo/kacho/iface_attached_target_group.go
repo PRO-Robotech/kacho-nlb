@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package kacho
 
 import "context"
@@ -22,7 +25,7 @@ type AttachedTargetGroupWriterIface interface {
 	// Attach — INSERT attached_target_groups ON CONFLICT DO NOTHING.
 	// Возвращает (record, attached=true) если row вставлена, либо
 	// (existing-record, attached=false) если pair уже существовал
-	// (idempotent attach — acceptance NLB-033).
+	// (idempotent attach —).
 	//
 	// FK-violation на load_balancer_id / target_group_id →
 	// ErrFailedPrecondition (LB или TG не существуют).

@@ -1,7 +1,10 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package listener_test
 
-// listener_fga_register_integration_test.go — sub-phase T3.1 (#113), scenario
-// T3.1-REVOKE-04 (acceptance §3.2). Verifies the consumer-side mirror-feed for
+// listener_fga_register_integration_test.go —, scenario
+// . Verifies the consumer-side mirror-feed for
 // nlb.listener through the REAL Create/Update use-cases (testcontainers Postgres):
 //
 //   - Create: listenerRegisterIntent must carry the resource's labels (was a
@@ -9,19 +12,19 @@ package listener_test
 //     a freshly created listener, mirror.labels empty).
 //   - Update (labels-in-mask): the Update worker must emit a mirror.upsert
 //     RegisterResource carrying the CURRENT labels in the SAME writer-tx as the
-//     listener UPDATE (G-2/G-3/G-4). Full label removal ⇒ upsert with labels={}
+//     listener UPDATE. Full label removal ⇒ upsert with labels={}
 //     (NOT Unregister — the resource still lives), which stales the label selector.
 //
-// Semantics anchor: T3.1-REVOKE-04 (with the "after Create visibility appears"
+// Semantics anchor: (with the "after Create visibility appears"
 // sub-step — Create must emit labels, otherwise the revoke below would be a
 // false-green over an empty mirror).
 //
-// File path note: acceptance §3.2 names this `internal/repo/listener_fga_register_
+// File path note: names this `internal/repo/listener_fga_register_
 // integration_test.go`. nlb's established layout exercises use-cases from their own
 // package (`internal/apps/kacho/api/listener/`, see integration_test.go); placing
 // the test here runs the ACTUAL Create/Update emit path (not a hand-built intent),
-// which is the faithful TDD-red anchor. The load-bearing function name from §3.2
-// is preserved verbatim.
+// which is the faithful TDD-red anchor. The load-bearing function name from
+// is preserved с фиксированным текстом.
 
 import (
 	"context"
@@ -71,9 +74,9 @@ func queryListenerRegisterRows(t *testing.T, ic *integrationCtx, resourceID stri
 	return out
 }
 
-// TestListenerRepo_T31Revoke04_CreateEmitsLabels_UpdateRevokes — T3.1-REVOKE-04.
+// TestListenerRepo_T31Revoke04_CreateEmitsLabels_UpdateRevokes —.
 //
-// Double-bug fix verification for nlb.listener (acceptance §0.1, §0.2 G-1):
+// Double-bug fix verification for nlb.listener:
 //
 //	(a) Create  → mirror-feed intent carries the listener's labels (visibility
 //	    появляется). Was bare intent without Labels → RED.

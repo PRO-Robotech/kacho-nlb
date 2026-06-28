@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package compute
 
 import (
@@ -14,7 +17,7 @@ import (
 
 // startFakeCompute поднимает gRPC server in-memory (TCP loopback :0).
 // nil-fake — service не регистрируется. После выноса Geography в kacho-geo
-// (epic kacho-geo S4) kacho-nlb зовёт у compute только InstanceService.
+// (kacho-geo) kacho-nlb зовёт у compute только InstanceService.
 func startFakeCompute(
 	t *testing.T,
 	instances computepb.InstanceServiceServer,

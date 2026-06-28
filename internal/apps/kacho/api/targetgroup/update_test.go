@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package targetgroup
 
 import (
@@ -16,7 +19,7 @@ import (
 	kachopg "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho/pg"
 )
 
-// epic-rsab T3 (D4, T3-02 nlb-side): Update(labels) re-emits the FGA-register
+// (nlb-side): Update(labels) re-emits the FGA-register
 // mirror-feed intent (carrying the new labels + parent) in the writer-tx so
 // kacho-iam keeps its resource_mirror current under label-change reconcile.
 func TestUpdate_LabelsMask_EmitsMirrorIntent(t *testing.T) {
@@ -42,7 +45,7 @@ func TestUpdate_LabelsMask_EmitsMirrorIntent(t *testing.T) {
 	assert.Equal(t, "prj-acme", ev.Intent.ParentProjectID)
 }
 
-// epic-rsab T3 (D4, compute-β-04 parity): a non-labels Update is a mirror no-op —
+// (compute parity): a non-labels Update is a mirror no-op —
 // no FGA-register intent (avoids a useless RegisterResource round-trip).
 func TestUpdate_NonLabelsMask_NoMirrorIntent(t *testing.T) {
 	repo := newFakeRepo()
@@ -63,7 +66,7 @@ func TestUpdate_NonLabelsMask_NoMirrorIntent(t *testing.T) {
 	require.Empty(t, repo.fga, "non-labels Update emits no mirror intent")
 }
 
-// GWT-TGR-018 — Update mutable fields via mask.
+// Update mutable fields via mask.
 func TestUpdate_MutableFields(t *testing.T) {
 	repo := newFakeRepo()
 	tg := makeTG("prj-acme", "to-update")
@@ -87,7 +90,7 @@ func TestUpdate_MutableFields(t *testing.T) {
 	assert.Equal(t, kachopg.OutboxActionUpdated, events[0].Action)
 }
 
-// GWT-TGR-019 — immutable project_id / region_id → InvalidArgument verbatim.
+// immutable project_id / region_id → InvalidArgument с фиксированным текстом.
 func TestUpdate_Immutable_RegionID(t *testing.T) {
 	repo := newFakeRepo()
 	tg := makeTG("prj-acme", "imm-region")
@@ -117,7 +120,7 @@ func TestUpdate_Immutable_ProjectID(t *testing.T) {
 	require.Contains(t, status.Convert(err).Message(), "TargetGroupService.Move")
 }
 
-// GWT-TGR-020 — targets via mask → InvalidArgument verbatim.
+// targets via mask → InvalidArgument с фиксированным текстом.
 func TestUpdate_Targets_ForbiddenViaMask(t *testing.T) {
 	repo := newFakeRepo()
 	tg := makeTG("prj-acme", "imm-targets")

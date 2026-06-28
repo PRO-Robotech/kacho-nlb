@@ -1,13 +1,16 @@
-// load.go — viper loader (evgeniy §8.J).
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
+// load.go — viper loader.
 //
 // Flow:
 //
-//  1. v := viper.New()
-//  2. v.SetEnvPrefix("KACHO_NLB"); v.SetEnvKeyReplacer(".", "__"); AutomaticEnv()
+//  1. v := viper.New
+//  2. v.SetEnvPrefix("KACHO_NLB"); v.SetEnvKeyReplacer(".", "__"); AutomaticEnv
 //  3. RegisterDefaults(v)
-//  4. if path != "" → v.SetConfigFile(path); ReadInConfig()
+//  4. if path != "" → v.SetConfigFile(path); ReadInConfig
 //  5. var cfg Config; v.Unmarshal(&cfg)
-//  6. cfg.Validate() — multierr-combined required-checks
+//  6. cfg.Validate — multierr-combined required-checks
 package config
 
 import (
@@ -66,7 +69,7 @@ func Load(path string) (*Config, error) {
 	return &cfg, nil
 }
 
-// expandPasswordFromEnv — KAC-172. Helm рендерит `postgres.url` с
+// expandPasswordFromEnv —. Helm рендерит `postgres.url` с
 // shell-style placeholder `$(KACHO_NLB_DB_PASSWORD)` (password хранится в
 // Secret, не в ConfigMap). Viper не expand'ит `$(VAR)` синтаксис, поэтому
 // без явной подстановки migrator/api-server передают literal placeholder в

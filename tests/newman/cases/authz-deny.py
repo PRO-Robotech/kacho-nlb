@@ -1,3 +1,6 @@
+# Copyright (c) PRO-Robotech
+# SPDX-License-Identifier: BUSL-1.1
+
 """Authz cases (AZD-*) — per-RPC deny matrix + lifecycle + cache + custom roles.
 
 Acceptance: docs/specs/sub-phase-4.0-nlb-acceptance.md §8 (GWT-AZD-001..030).

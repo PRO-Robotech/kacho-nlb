@@ -1,11 +1,14 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 // integration_test.go — testcontainers (postgres:16-alpine) + реальный gRPC
 // server (bufconn) + client-stream через NewInternalResourceLifecycleServiceClient.
 //
-// Покрывает acceptance §9 GWT-XRES-004..006:
+// Покрывает:
 //
-//   - GWT-XRES-004: catchup всех уже-существующих outbox-row + live-event через NOTIFY ≤ 100ms.
-//   - GWT-XRES-005: reconnect с from=last_seen_seq → catchup продолжается.
-//   - GWT-XRES-006: 33-й concurrent stream при cap=32 → ResourceExhausted.
+//   - catchup всех уже-существующих outbox-row + live-event через NOTIFY ≤ 100ms.
+//   - reconnect с from=last_seen_seq → catchup продолжается.
+//   - 33-й concurrent stream при cap=32 → ResourceExhausted.
 //   - Filter by kinds (resource_type whitelist).
 //   - Graceful cancel: ctx cancel → stream closes без error.
 //   - UNLISTEN cleanup после disconnect (нет «sticky» подписки).
@@ -45,6 +48,7 @@ import (
 	lbv1 "github.com/PRO-Robotech/kacho-nlb/proto/gen/go/kacho/cloud/loadbalancer/v1"
 
 	"github.com/PRO-Robotech/kacho-nlb/internal/migrations"
+	kachopg "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho/pg"
 )
 
 // =============================================================================
@@ -96,9 +100,10 @@ func setupIntTestEnv(t *testing.T, maxStreams int) *intTestEnv {
 	require.NoError(t, err)
 	t.Cleanup(func() { pool.Close() })
 
-	// gRPC bufconn server + Subscribe handler.
+	// gRPC bufconn server + Subscribe handler. Lifecycle-фид — pgx-адаптер из
+	// repo-слоя (app-слой держит только порт kacho.LifecycleFeed).
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	h := NewHandler(dsnSP, maxStreams, log)
+	h := NewHandler(kachopg.NewLifecycleFeed(dsnSP), maxStreams, log)
 
 	srv := grpc.NewServer()
 	lbv1.RegisterInternalResourceLifecycleServiceServer(srv, h)
@@ -188,7 +193,7 @@ func receiveN(t testing.TB, stream grpc.ServerStreamingClient[lbv1.ResourceLifec
 }
 
 // =============================================================================
-// GWT-XRES-004 — catchup of pre-existing events + live event via NOTIFY
+// catchup of pre-existing events + live event via NOTIFY
 // =============================================================================
 
 // TestSubscribe_CatchupAndLive — все события, существовавшие на момент Subscribe,
@@ -241,7 +246,7 @@ func TestSubscribe_CatchupAndLive(t *testing.T) {
 }
 
 // =============================================================================
-// GWT-XRES-005 — reconnect with resume_from_event_id
+// reconnect with resume_from_event_id
 // =============================================================================
 
 // TestSubscribe_ResumeFromCursor — после disconnect клиент шлёт
@@ -275,7 +280,7 @@ func TestSubscribe_ResumeFromCursor(t *testing.T) {
 		ResumeFromEventId: lastSeen,
 	})
 	require.NoError(t, err)
-	// Должны получить event #3..#5 = 3 события.
+	// Должны получить event.. = 3 события.
 	rest := receiveN(t, stream2, 3, 5*time.Second)
 	for i, ev := range rest {
 		assert.Equal(t, strconv.FormatInt(seqs[i+2], 10), ev.GetEventId(),
@@ -284,7 +289,7 @@ func TestSubscribe_ResumeFromCursor(t *testing.T) {
 }
 
 // =============================================================================
-// GWT-XRES-006 — semaphore (max concurrent streams)
+// semaphore (max concurrent streams)
 // =============================================================================
 
 // TestSubscribe_MaxStreamsSemaphore — при cap=2 первые 2 stream'а оk,
@@ -308,7 +313,7 @@ func TestSubscribe_MaxStreamsSemaphore(t *testing.T) {
 	// пока Held = 2.
 	waitForSlotsHeld(t, env.handler, 2, 2*time.Second)
 
-	// 3-й stream — должен мгновенно fail. Recv() вернёт ResourceExhausted.
+	// 3-й stream — должен мгновенно fail. Recv вернёт ResourceExhausted.
 	ctxC, cancelC := context.WithCancel(context.Background())
 	defer cancelC()
 	streamC, err := env.client.Subscribe(ctxC, &lbv1.SubscribeRequest{})
@@ -516,7 +521,7 @@ func TestSubscribe_MovedEventCarriesOldProject(t *testing.T) {
 // Helpers
 // =============================================================================
 
-// waitForSlotsHeld периодически опрашивает sem.Held() пока не достигнет want
+// waitForSlotsHeld периодически опрашивает sem.Held пока не достигнет want
 // или таймаут. Используется в тестах с асинхронным lifecycle handler'а
 // (Subscribe возвращает grpc-stream до того как handler сделал TryAcquire).
 func waitForSlotsHeld(t testing.TB, h *Handler, want int, deadline time.Duration) {
@@ -530,4 +535,3 @@ func waitForSlotsHeld(t testing.TB, h *Handler, want int, deadline time.Duration
 	}
 	t.Fatalf("waitForSlotsHeld: Held=%d, want %d (timeout %v)", h.sem.Held(), want, deadline)
 }
-

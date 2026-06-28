@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package kacho
 
 import (
@@ -7,10 +10,10 @@ import (
 )
 
 // FGARegisterEmitter — emit одного FGA-register-intent в
-// `kacho_nlb.fga_register_outbox` (SEC-D). Использует pgx.Tx writer'а, поэтому
+// `kacho_nlb.fga_register_outbox`. Использует pgx.Tx writer'а, поэтому
 // INSERT/DELETE ресурса + register-intent commit'ятся атомарно одной writer-tx
-// (epic §3.1 Вариант A — no dual-write, в отличие от прежнего best-effort
-// fgawrite после Commit, GitHub Issue N5).
+// (Вариант A — no dual-write, в отличие от прежнего best-effort
+// fgawrite после Commit).
 //
 // eventType ∈ {domain.FGAEventRegister, domain.FGAEventUnregister}. CHECK
 // constraint в `fga_register_outbox` (миграция 0002) защищает от typo →

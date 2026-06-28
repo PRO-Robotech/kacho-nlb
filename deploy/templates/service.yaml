@@ -1,3 +1,6 @@
+# Copyright (c) PRO-Robotech
+# SPDX-License-Identifier: BUSL-1.1
+
 {{/*
 Two Services so api-gateway (public clients) and peer services (internal
 listener) get separate DNS records — workspace CLAUDE.md "Запреты" #6:

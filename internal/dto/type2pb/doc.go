@@ -1,4 +1,7 @@
-// Package type2pb — реализации DTO трансферов domain/repo → proto (evgeniy §3.C).
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
+// Package type2pb — реализации DTO трансферов domain/repo → proto.
 //
 // Per-resource файлы:
 //
@@ -12,5 +15,5 @@
 //	                     зарегистрирован чтобы tests/handlers могли uniform-вызывать
 //	                     dto.Transfer для всех output-типов)
 //
-// init() каждого файла регистрирует трансфер в dto.RegTransfer.
+// init каждого файла регистрирует трансфер в dto.RegTransfer.
 package type2pb

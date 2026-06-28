@@ -1,10 +1,13 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package pg_test
 
-// fga_register_labels_integration_test.go — epic-rsab T3 (D4, T3-02 nlb-side):
-// nlb эмитит labels + parent в RegisterResource (зеркало compute-β). Проверяет
+// fga_register_labels_integration_test.go — (nlb-side):
+// nlb эмитит labels + parent в RegisterResource (зеркало compute). Проверяет
 // ЗАПИСЬ расширенного intent в той же writer-tx, что и INSERT ресурса, и что
-// emitter стампит монотонный source_version из DB-clock (now()) в payload
-// (β-hardening last-source-state-wins). drainer тут не запущен — изолируем emit.
+// emitter стампит монотонный source_version из DB-clock (now) в payload
+// (hardening last-source-state-wins). drainer тут не запущен — изолируем emit.
 
 import (
 	"context"
@@ -18,9 +21,9 @@ import (
 )
 
 // TestFGARegisterOutbox_T3_CreateIntentCarriesLabelsParentSourceVersion —
-// T3-02 nlb-side: Create TargetGroup с labels → fga.register intent payload несёт
+// nlb-side: Create TargetGroup с labels → fga.register intent payload несёт
 // labels + parent_project_id + монотонный source_version (стампится emitter'ом из
-// now() внутри writer-tx). Это то, что register-drainer форвардит в IAM
+// now внутри writer-tx). Это то, что register-drainer форвардит в IAM
 // resource_mirror для γ-selector matchLabels.
 func TestFGARegisterOutbox_T3_CreateIntentCarriesLabelsParentSourceVersion(t *testing.T) {
 	tc := newTestCtx(t)
@@ -61,7 +64,7 @@ func TestFGARegisterOutbox_T3_CreateIntentCarriesLabelsParentSourceVersion(t *te
 // TestFGARegisterOutbox_T3_UpdateLabelsEmitsRegisterIntent — Update(labels-mask)
 // → fga.register intent re-emitted in the same writer-tx as the resource UPDATE,
 // carrying the NEW labels. Keeps the IAM mirror current under label-change
-// reconcile (T3-06). A later mutation's source_version is strictly newer.
+// reconcile. A later mutation's source_version is strictly newer.
 func TestFGARegisterOutbox_T3_UpdateLabelsEmitsRegisterIntent(t *testing.T) {
 	tc := newTestCtx(t)
 	ctx := context.Background()

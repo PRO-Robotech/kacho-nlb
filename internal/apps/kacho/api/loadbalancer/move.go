@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package loadbalancer
 
 import (
@@ -18,7 +21,7 @@ import (
 )
 
 // MoveLoadBalancerUseCase — change project_id (cross-project) keeping region.
-// Sync prechecks (design §4.7):
+// Sync prechecks:
 //   - same-project — InvalidArgument "destination project is the same as source";
 //   - destination project exists (peer ProjectClient.Get);
 //   - LB has no attached target groups (FGA / data-model constraint: cross-project
@@ -26,10 +29,10 @@ import (
 //
 // Worker: Writer-TX → repo.MoveProject (UPDATE LB + cascade UPDATE listeners) +
 // outbox MOVED + FGA-register(dst project) + FGA-unregister(src project) → Commit
-// (SEC-D Вариант A: project-rewrite = register new-project tuple + unregister
+// (Вариант A: project-rewrite = register new-project tuple + unregister
 // old-project tuple, both in the same writer-tx as MoveProject — no dual-write).
 //
-// Acceptance: GWT-NLB-026..GWT-NLB-031.
+// Acceptance:.
 type MoveLoadBalancerUseCase struct {
 	repo          Repo
 	opsRepo       operations.Repo
@@ -58,6 +61,9 @@ func (u *MoveLoadBalancerUseCase) Execute(
 	id := req.GetNetworkLoadBalancerId()
 	if id == "" {
 		return nil, errInvalidArg("network_load_balancer_id", "required")
+	}
+	if err := validateLoadBalancerID(id); err != nil {
+		return nil, err
 	}
 	dst := req.GetDestinationProjectId()
 	if dst == "" {
@@ -104,11 +110,11 @@ func (u *MoveLoadBalancerUseCase) Execute(
 		},
 	)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "build operation: %v", err)
+		return nil, mapDomainErr(err)
 	}
 	principal := operations.PrincipalFromContext(ctx)
 	if err := u.opsRepo.CreateWithPrincipal(ctx, op, principal); err != nil {
-		return nil, status.Errorf(codes.Internal, "operation persist: %v", err)
+		return nil, mapDomainErr(err)
 	}
 	srcProject := string(cur.ProjectID)
 	operations.Run(ctx, u.opsRepo, op.ID, func(workerCtx context.Context) (*anypb.Any, error) {
@@ -146,7 +152,7 @@ func (u *MoveLoadBalancerUseCase) doMove(ctx context.Context, id, srcProject, ds
 	); err != nil {
 		return nil, mapDomainErr(err)
 	}
-	// SEC-D: project-rewrite as register(dst) + unregister(src) in the SAME tx.
+	// project-rewrite as register(dst) + unregister(src) in the SAME tx.
 	if err := w.FGARegisterOutbox().Emit(ctx, domain.FGAEventRegister,
 		lbUnregisterIntent(id, dstProject)); err != nil {
 		return nil, mapDomainErr(err)
@@ -165,7 +171,7 @@ func (u *MoveLoadBalancerUseCase) doMove(ctx context.Context, id, srcProject, ds
 	}
 	out, err := anypb.New(pb)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "marshal response: %v", err)
+		return nil, mapDomainErr(err)
 	}
 	return out, nil
 }

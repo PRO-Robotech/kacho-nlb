@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package targetgroup
 
 import (
@@ -18,21 +21,21 @@ import (
 	kachopg "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho/pg"
 )
 
-// RemoveTargetsUseCase — KAC-154 Phase A (acceptance §6 GWT-TGT-011..014).
+// RemoveTargetsUseCase — фаза A.
 //
-// Phase A (этот use-case): UPDATE targets SET status='DRAINING',
-// drain_started_at=now() WHERE matching identities → ops.MarkDone(true). Latency
+// фаза A (этот use-case): UPDATE targets SET status='DRAINING',
+// drain_started_at=now WHERE matching identities → ops.MarkDone(true). Latency
 // <500ms (один UPDATE + outbox + Commit).
 //
-// Phase B обрабатывается background-runner'ом `jobs/target_drain_runner.go`
+// фаза B обрабатывается background-runner'ом `jobs/target_drain_runner.go`
 // (запущен из cmd/main.go как параллельная task'а) — DELETE expired rows после
 // tg.deregistration_delay_seconds + outbox UPDATED.
 //
 // Identity-keyed resolution: client passes Target identities (instance_id /
-// nic_id / ip_ref / external_ip), а Phase-A SQL работает по target.id —
+// nic_id / ip_ref / external_ip), а фаза A SQL работает по target.id —
 // resolve identity → target.id делается через ListTargets + match.
 //
-// Idempotency: identity, которой нет в TG, тихо игнорируется (GWT-TGT-012).
+// Idempotency: identity, которой нет в TG, тихо игнорируется.
 // Identity, уже DRAINING, тоже тихо игнорируется (RemoveTargetsMarkDraining
 // фильтрует WHERE status='ACTIVE').
 type RemoveTargetsUseCase struct {
@@ -57,6 +60,9 @@ func (u *RemoveTargetsUseCase) Execute(
 	if tgID == "" {
 		return nil, errInvalidArg("target_group_id", "required")
 	}
+	if err := validateTargetGroupID(tgID); err != nil {
+		return nil, err
+	}
 	if len(req.GetTargets()) == 0 {
 		return nil, status.Error(codes.InvalidArgument, "at least one target is required")
 	}
@@ -77,11 +83,11 @@ func (u *RemoveTargetsUseCase) Execute(
 		&lbv1.RemoveTargetsMetadata{TargetGroupId: tgID},
 	)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "build operation: %v", err)
+		return nil, mapDomainErr(err)
 	}
 	principal := operations.PrincipalFromContext(ctx)
 	if err := u.opsRepo.CreateWithPrincipal(ctx, op, principal); err != nil {
-		return nil, status.Errorf(codes.Internal, "operation persist: %v", err)
+		return nil, mapDomainErr(err)
 	}
 	operations.Run(ctx, u.opsRepo, op.ID, func(workerCtx context.Context) (*anypb.Any, error) {
 		return u.doRemove(workerCtx, tgID, targets)
@@ -159,8 +165,7 @@ func (u *RemoveTargetsUseCase) doRemove(ctx context.Context, tgID string, target
 }
 
 // resolveTargetIdentities — для каждого target в req находит matching target.id
-// среди existing rows. Не найденная identity — silently skipped (idempotent;
-// GWT-TGT-012).
+// среди existing rows. Не найденная identity — silently skipped (idempotent).
 //
 // Match-keys per identity-type:
 //   - instance_id: equal InstanceID.

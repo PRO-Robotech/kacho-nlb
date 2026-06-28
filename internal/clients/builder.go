@@ -1,18 +1,21 @@
-// Package clients — cross-service gRPC client builder для kacho-nlb (KAC-160).
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
+// Package clients — cross-service gRPC client builder для kacho-nlb.
 //
 // Единая точка сборки gRPC-клиентских соединений к peer-сервисам согласно
-// skill evgeniy §9 K.6: «`dial<Peer>` заменить на
+// «`dial<Peer>` заменить на
 // `H-BF/corlib/client/grpc/client-builder.go` — единый паттерн для всех
 // gRPC-клиентов (retries, LB, TLS, metrics)».
 //
-// Builder — обёртка над corlib `ClientFromAddress(...)` с дефолтами kacho-nlb
+// Builder — обёртка над corlib `ClientFromAddress` с дефолтами kacho-nlb
 // (retries=3, dialTimeout=10s, KeepAlive 30s, userAgent="kacho-nlb").
-// Pattern скопирован с kacho-vpc/internal/clients/builder.go (KAC-97).
+// Pattern скопирован с kacho-vpc/internal/clients/builder.go.
 //
 // Этот файл — building block. Конкретные peer-клиенты живут в подпакетах
-// `internal/clients/{iam,compute,vpc}` — тонкие обёртки поверх Build(),
+// `internal/clients/{iam,compute,vpc}` — тонкие обёртки поверх Build,
 // реализующие port-интерфейсы из соответствующих use-case-пакетов
-// (workspace CLAUDE.md "Чистая архитектура"; KAC-151).
+// (Clean Architecture: адаптеры реализуют порты use-case-слоя).
 package clients
 
 import (
@@ -46,10 +49,10 @@ type BuildOptions struct {
 	KeepAliveTime time.Duration // ping every (default 30s)
 	UserAgent     string        // gRPC User-Agent (default "kacho-nlb")
 
-	// MTLSCreds — SEC-D opt-in per-edge mTLS transport-credentials (built from
+	// MTLSCreds — opt-in per-edge mTLS transport-credentials (built from
 	// the corelib grpcclient.TLSClient via clients.MTLSCredsFor). When non-nil it
 	// OVERRIDES the simple TLS bool above: the dial presents a client-cert and
-	// verifies the server-cert against the configured CA + server_name (SEC-B).
+	// verifies the server-cert against the configured CA + server_name.
 	// nil → fall back to buildCreds(opts.TLS) (legacy system-trust TLS / insecure).
 	MTLSCreds credentials.TransportCredentials
 }
@@ -78,7 +81,7 @@ func (o BuildOptions) withDefaults() BuildOptions {
 }
 
 // Build открывает gRPC-клиентское соединение через corlib client-builder
-// (evgeniy §K.6 единый паттерн). Возвращает Conn (`grpc.ClientConnInterface +
+// (единый паттерн). Возвращает Conn (`grpc.ClientConnInterface +
 // io.Closer`), который принимают generated proto-клиенты.
 func Build(ctx context.Context, opts BuildOptions) (Conn, error) {
 	if strings.TrimSpace(opts.Endpoint) == "" {
@@ -86,7 +89,7 @@ func Build(ctx context.Context, opts BuildOptions) (Conn, error) {
 	}
 	opts = opts.withDefaults()
 
-	// SEC-D: per-edge mTLS creds override the legacy TLS bool when provided.
+	// per-edge mTLS creds override the legacy TLS bool when provided.
 	creds := opts.MTLSCreds
 	if creds == nil {
 		creds = buildCreds(opts.TLS)

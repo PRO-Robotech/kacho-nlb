@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package type2pb
 
 import (
@@ -12,8 +15,7 @@ import (
 // Существует ради единого стиля «<resource>{}.toPb» (см. loadbalancer.go).
 type timeObj struct{}
 
-// toPb — truncate до секунд (verbatim YC `YC-DIFF-TIMESTAMP-PRECISION`,
-// design §1.11).
+// toPb — truncate до секунд (по конвенции Kachō).
 func (timeObj) toPb(t time.Time) (*timestamppb.Timestamp, error) {
 	return timestamppb.New(t.Truncate(time.Second)), nil
 }

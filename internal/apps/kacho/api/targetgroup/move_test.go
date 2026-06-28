@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package targetgroup
 
 import (
@@ -16,7 +19,7 @@ import (
 	kachopg "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho/pg"
 )
 
-// GWT-TGR-025 — Move OK (no attached LB).
+// Move OK (no attached LB).
 func TestMove_Happy(t *testing.T) {
 	repo := newFakeRepo()
 	tg := makeTG("prj-src", "movable")
@@ -38,7 +41,7 @@ func TestMove_Happy(t *testing.T) {
 	assert.Equal(t, kachopg.OutboxActionMoved, events[0].Action)
 	assert.Equal(t, kachopg.OutboxActionUpdated, events[1].Action)
 
-	// SEC-D: project-rewrite = register(dst) + unregister(src) intents in writer-tx.
+	// project-rewrite = register(dst) + unregister(src) intents in writer-tx.
 	require.Len(t, repo.fga, 2)
 	assert.Equal(t, domain.FGAEventRegister, repo.fga[0].EventType)
 	assert.Equal(t, "project:prj-dst", repo.fga[0].Intent.Tuples[0].SubjectID)
@@ -46,7 +49,7 @@ func TestMove_Happy(t *testing.T) {
 	assert.Equal(t, "project:prj-src", repo.fga[1].Intent.Tuples[0].SubjectID)
 }
 
-// Same-project destination → InvalidArgument verbatim.
+// Same-project destination → InvalidArgument с фиксированным текстом.
 func TestMove_SameProject_InvalidArg(t *testing.T) {
 	repo := newFakeRepo()
 	tg := makeTG("prj-x", "same-proj")
@@ -61,7 +64,7 @@ func TestMove_SameProject_InvalidArg(t *testing.T) {
 	require.Contains(t, status.Convert(err).Message(), "destination project is the same as source")
 }
 
-// GWT-TGR-026 — attached to LB → FailedPrecondition verbatim.
+// attached to LB → FailedPrecondition с фиксированным текстом.
 func TestMove_HasAttachedLB(t *testing.T) {
 	repo := newFakeRepo()
 	tg := makeTG("prj-y", "attached")
@@ -78,7 +81,7 @@ func TestMove_HasAttachedLB(t *testing.T) {
 		"is attached to 1 load balancer(s); detach before moving")
 }
 
-// Destination project peer NotFound → InvalidArgument with verbatim.
+// Destination project peer NotFound → InvalidArgument with с фиксированным текстом.
 func TestMove_DestProjectNotFound(t *testing.T) {
 	repo := newFakeRepo()
 	tg := makeTG("prj-src", "peer-nf")

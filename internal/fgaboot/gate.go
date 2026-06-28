@@ -1,4 +1,7 @@
-// Package fgaboot wires the corelib fail-closed boot-gate (sub-phase 1.4 D-8)
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
+// Package fgaboot wires the corelib fail-closed boot-gate (8)
 // into kacho-nlb's gRPC server: a unary interceptor that refuses mutating
 // tenant-resource Create RPCs when require-iam is armed and the IAM-connected
 // register-drainer is not up, so no resource is ever created without a

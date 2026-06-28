@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package pg_test
 
 import (
@@ -12,9 +15,9 @@ import (
 	"github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho"
 )
 
-// fga_register_outbox_integration_test.go — SEC-D S1: FGA-register-intent
-// пишется в той же writer-tx, что и INSERT/DELETE ресурса (epic §3.1 Вариант A,
-// no dual-write). Сценарии SEC-D-01/02/03/05/06.
+// fga_register_outbox_integration_test.go — FGA-register-intent
+// пишется в той же writer-tx, что и INSERT/DELETE ресурса (Вариант A,
+// no dual-write). Сценарии.
 //
 // register-drainer тут НЕ запущен — изолируем ЗАПИСЬ intent от ПРИМЕНЕНИЯ
 // (drainer-applier тесты — fga_register_drainer_integration_test.go).
@@ -51,7 +54,7 @@ func queryRegisterRows(t testing.TB, ctx context.Context, tc *testContext) []reg
 	return out
 }
 
-// TestFGARegisterOutbox_SECD01_CreateIntentInWriterTx — Сценарий SEC-D-01/05/06.
+// TestFGARegisterOutbox_SECD01_CreateIntentInWriterTx — Сценарий.
 // Create-flow пишет fga.register-intent в той же writer-tx, что и Insert
 // ресурса; payload содержит ожидаемый набор tuple; обе строки видны после
 // одного Commit.
@@ -79,7 +82,7 @@ func TestFGARegisterOutbox_SECD01_CreateIntentInWriterTx(t *testing.T) {
 		// domain-outbox CREATED row (same tx).
 		require.NoError(t, w.Outbox().Emit(ctx,
 			"nlb_load_balancer", string(lb.ID), projectID, "CREATED", map[string]any{"id": string(lb.ID)}))
-		// SEC-D: FGA-register-intent in the SAME writer-tx.
+		// FGA-register-intent in the SAME writer-tx.
 		require.NoError(t, w.FGARegisterOutbox().Emit(ctx, domain.FGAEventRegister, intent))
 	})
 
@@ -107,7 +110,7 @@ func TestFGARegisterOutbox_SECD01_CreateIntentInWriterTx(t *testing.T) {
 	})
 }
 
-// TestFGARegisterOutbox_SECD02_AbortNoIntent — Сценарий SEC-D-02. Writer-tx
+// TestFGARegisterOutbox_SECD02_AbortNoIntent — Сценарий. Writer-tx
 // абортится → ни Insert ресурса, ни register-intent НЕ остаются (атомарность).
 func TestFGARegisterOutbox_SECD02_AbortNoIntent(t *testing.T) {
 	tc := newTestCtx(t)
@@ -139,7 +142,7 @@ func TestFGARegisterOutbox_SECD02_AbortNoIntent(t *testing.T) {
 	require.Equal(t, 0, n, "no orphan load_balancer row")
 }
 
-// TestFGARegisterOutbox_SECD03_UnregisterIntentOnDelete — Сценарий SEC-D-03.
+// TestFGARegisterOutbox_SECD03_UnregisterIntentOnDelete — Сценарий.
 // Delete-flow пишет fga.unregister-intent в той же writer-tx, что и Delete;
 // строка ресурса удалена в той же tx.
 func TestFGARegisterOutbox_SECD03_UnregisterIntentOnDelete(t *testing.T) {

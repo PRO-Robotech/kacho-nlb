@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package listener
 
 import (
@@ -70,7 +73,7 @@ func TestCreateListener_GWT_LST_001_AutoExternal_HappyPath(t *testing.T) {
 	require.Equal(t, outboxResourceTypeLoadBalancer, events[1].ResourceType)
 	require.Equal(t, outboxActionUpdated, events[1].Action)
 
-	// SEC-D: one fga.register intent written in the SAME writer-tx as the Insert
+	// one fga.register intent written in the SAME writer-tx as the Insert
 	// (not a direct best-effort FGA call). The intent carries the creator tuple
 	// (#admin) + the parent-link tuple (#load_balancer).
 	intents := suite.repo.committedFGA()
@@ -197,7 +200,7 @@ func TestCreateListener_GWT_LST_004_BYO_IPVersionMismatch(t *testing.T) {
 	require.Contains(t, done.Error.Message, "does not match listener ip_version")
 }
 
-// TestCreateListener_GWT_LST_005_BYO_AddressNotFound — InvalidArgument verbatim
+// TestCreateListener_GWT_LST_005_BYO_AddressNotFound — InvalidArgument с фиксированным текстом
 // "address <id> not found".
 func TestCreateListener_GWT_LST_005_BYO_AddressNotFound(t *testing.T) {
 	t.Parallel()
@@ -219,7 +222,7 @@ func TestCreateListener_GWT_LST_005_BYO_AddressNotFound(t *testing.T) {
 }
 
 // TestCreateListener_GWT_LST_005b_BYO_CrossProject — Address.ProjectID != LB.ProjectID
-// → InvalidArgument verbatim text.
+// → InvalidArgument фиксированный текст.
 func TestCreateListener_GWT_LST_005b_BYO_CrossProject(t *testing.T) {
 	t.Parallel()
 	suite := newCreateSuite(t, domain.LBTypeExternal)
@@ -248,7 +251,7 @@ func TestCreateListener_GWT_LST_005b_BYO_CrossProject(t *testing.T) {
 }
 
 // TestCreateListener_GWT_LST_006_Internal_SubnetRequired — INTERNAL LB without
-// subnet_id → InvalidArgument verbatim "subnet_id is required for INTERNAL...".
+// subnet_id → InvalidArgument с фиксированным текстом "subnet_id is required for INTERNAL...".
 func TestCreateListener_GWT_LST_006_Internal_SubnetRequired(t *testing.T) {
 	t.Parallel()
 	suite := newCreateSuite(t, domain.LBTypeInternal)
@@ -428,7 +431,7 @@ func TestCreateListener_GWT_LST_011_DuplicateRegionVIPPortProto(t *testing.T) {
 	awaitOpDone(t, suite.ops, op1.ID, time.Second)
 	require.Len(t, suite.allListeners(), 1)
 
-	// LB-B create: same BYO addr — already used by lst-* listener → LST-003
+	// LB-B create: same BYO addr — already used by lst-* listener →
 	// branch fires (FailedPrecondition on used_by check), не доходим до
 	// region/vip UNIQUE. Тест проверяет, что в любом случае дубль blocked.
 	suite.addresses.seed(&vpcclient.Address{

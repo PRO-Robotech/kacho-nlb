@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package vpc
 
 import (
@@ -357,7 +360,7 @@ type fakeOpServicePolling struct {
 	getCalls  int
 	doneAfter int
 	addrResp  *vpcpb.Address
-	opErr     *opErrStatus // nil → return inline response; non-nil → return with .error set
+	opErr     *opErrStatus // nil → return inline response; non-nil → return with.error set
 }
 
 type opErrStatus struct {
@@ -374,8 +377,8 @@ func (f *fakeOpServicePolling) Get(_ context.Context, req *operationpb.GetOperat
 	}
 	if f.opErr != nil {
 		return &operationpb.Operation{
-			Id:   req.OperationId,
-			Done: true,
+			Id:     req.OperationId,
+			Done:   true,
 			Result: &operationpb.Operation_Error{Error: status.New(f.opErr.code, f.opErr.message).Proto()},
 		}, nil
 	}

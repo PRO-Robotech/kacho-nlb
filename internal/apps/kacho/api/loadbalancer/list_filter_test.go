@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package loadbalancer
 
 import (
@@ -16,13 +19,13 @@ import (
 	"github.com/PRO-Robotech/kacho-nlb/internal/authzfilter"
 )
 
-// RBAC sub-phase D (§11, LST-1..6) per-object filtered List — kacho-nlb consumer.
-// Acceptance D-40..D-47 (docs/specs/rbac-rules-model-2026-acceptance.md):
-//   - LST-2 byName / LST-3 global: List отдаёт только доступные объекты (union
+// RBAC  per-object filtered List — kacho-nlb consumer.
+// Acceptance (docs/specs/rbac-rules-model-2026-acceptance.md):
+//   - byName / global: List отдаёт только доступные объекты (union
 //     армов) — пересечение repo-rows с FGA ListObjects(subject,"...","lb_*").
-//   - LST-5 no-leak: объект вне грантов отсутствует в List И Get→NotFound.
+//   - no-leak: объект вне грантов отсутствует в List И Get→NotFound.
 //   - read==enforce: List-видимость = Check-allow (одна tuple-база, relation viewer).
-//   - D-47 fail-closed: IAM недоступен → Unavailable (НЕ нефильтрованный список).
+//   - fail-closed: IAM недоступен → Unavailable (НЕ нефильтрованный список).
 //
 // Эти тесты ссылаются на ещё-не-существующий internal/authzfilter и на
 // расширенный конструктор NewListLoadBalancersUseCase(repo, filter) →
@@ -63,7 +66,7 @@ func ctxWithUser(id string) context.Context {
 		operations.Principal{Type: "user", ID: id})
 }
 
-// LST-3 global: subject с list-грантом видит все доступные LB; чужие отсутствуют.
+// global: subject с list-грантом видит все доступные LB; чужие отсутствуют.
 func TestListLoadBalancersFilter_OnlyAccessible(t *testing.T) {
 	repo := newFakeRepo()
 	a := seedLB(t, repo, "prj-a", "lb-a1")
@@ -92,7 +95,7 @@ func TestListLoadBalancersFilter_OnlyAccessible(t *testing.T) {
 	assert.Equal(t, "loadbalancer.networkLoadBalancers.list", flt.gotAct)
 }
 
-// LST-5 no-leak: пустой грант → пустой List (НЕ ошибка, НЕ leak).
+// no-leak: пустой грант → пустой List (НЕ ошибка, НЕ leak).
 func TestListLoadBalancersFilter_EmptyGrantEmptyList(t *testing.T) {
 	repo := newFakeRepo()
 	seedLB(t, repo, "prj-a", "lb-secret")
@@ -107,7 +110,7 @@ func TestListLoadBalancersFilter_EmptyGrantEmptyList(t *testing.T) {
 	assert.Empty(t, resp.GetNextPageToken())
 }
 
-// D-47 fail-closed: IAM ListObjects error → Unavailable (НЕ нефильтрованный список).
+// fail-closed: IAM ListObjects error → Unavailable (НЕ нефильтрованный список).
 func TestListLoadBalancersFilter_FailClosed(t *testing.T) {
 	repo := newFakeRepo()
 	seedLB(t, repo, "prj-a", "lb-a1")

@@ -1,4 +1,7 @@
-// geo_addr_test.go — epic S4: kacho-nlb валидирует region через kacho-geo.
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
+// geo_addr_test.go — kacho-nlb валидирует region через kacho-geo.
 //
 // Geo-endpoint биндится из ENV `KACHO_NLB_GEO_GRPC_ADDR` (явный BindEnv,
 // см. defaults.go) → cfg.ExtAPI.Geo.Addr. Mirror того, что compute/vpc/iam

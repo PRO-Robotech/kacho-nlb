@@ -1,12 +1,15 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package iam_test
 
-// register_applier_labels_test.go — epic-rsab T3 (D4): nlb эмитит labels+parent в
-// RegisterResource (зеркало compute-β). Юнит-проверка applier'а: каждый tuple
+// register_applier_labels_test.go — nlb эмитит labels+parent в
+// RegisterResource (зеркало compute). Юнит-проверка applier'а: каждый tuple
 // register/unregister должен форвардить FGARegisterIntent.Labels +
 // ParentProjectID + ParentAccountID + SourceVersion в RegisterResourceRequest /
 // UnregisterResourceRequest. Без Postgres — scripted fake-client recorder.
 //
-// T3-02 (nlb-side): selector для loadbalancer.targetGroups требует, чтобы nlb
+// (nlb-side): selector для loadbalancer.targetGroups требует, чтобы nlb
 // наполнял IAM resource_mirror метками+parent через расширенный payload Internal
 // RegisterResource (не новое ребро — существующее nlb→iam, расширенный payload).
 
@@ -47,8 +50,8 @@ func (c *recordingRegisterClient) UnregisterResource(
 }
 
 // TestRegisterApplier_T3_ForwardsLabelsAndParentOnRegister — fga.register intent
-// carrying labels + parent + source_version → applier forwards them verbatim into
-// RegisterResourceRequest for every tuple in the set (T3-02 nlb-side mirror feed).
+// carrying labels + parent + source_version → applier forwards them с фиксированным текстом into
+// RegisterResourceRequest for every tuple in the set (nlb-side mirror feed).
 func TestRegisterApplier_T3_ForwardsLabelsAndParentOnRegister(t *testing.T) {
 	rec := &recordingRegisterClient{}
 	apply := iam.NewRegisterApplier(rec)
@@ -80,7 +83,7 @@ func TestRegisterApplier_T3_ForwardsLabelsAndParentOnRegister(t *testing.T) {
 
 // TestRegisterApplier_T3_ForwardsLabelsAndParentOnUnregister — symmetry: the
 // mirror fields are carried on Unregister too (object + source_version drive the
-// tombstone-version no-op in IAM; β-hardening parity with compute).
+// tombstone-version no-op in IAM; hardening parity with compute).
 func TestRegisterApplier_T3_ForwardsLabelsAndParentOnUnregister(t *testing.T) {
 	rec := &recordingRegisterClient{}
 	apply := iam.NewRegisterApplier(rec)

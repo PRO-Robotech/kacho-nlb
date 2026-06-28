@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package listener
 
 import (
@@ -34,7 +37,7 @@ type InternalAddressClient = vpcclient.InternalAddressClient
 // subnet validation, same project + denormalised region resolve).
 type SubnetClient = vpcclient.SubnetClient
 
-// FGA owner-hierarchy / creator / parent-link tuple-регистрация — через SEC-D
+// FGA owner-hierarchy / creator / parent-link tuple-регистрация — через
 // transactional-outbox (FGARegisterOutbox emit в writer-tx + register-drainer →
 // IAM), не прямым FGA-клиентом. FGA object-types / relations — `internal/domain`.
 
@@ -49,14 +52,14 @@ func addressOwner(listenerID string) vpcclient.AddressOwner {
 }
 
 // addressOwnerKindNLBListener — Reference.kind для NLB Listener в vpc.Address
-// `used_by` (design §4.2 «owner="nlb_listener:<id>"`).
+// `used_by` («owner="nlb_listener:<id>"`).
 const addressOwnerKindNLBListener = "nlb_listener"
 
 // FGA object-type strings live in `internal/domain` (single source of truth,
 // kacho-nlb-wide): `domain.FGAObjectTypeListener` / `domain.FGAObjectTypeLoadBalancer`.
 
 // outboxResourceTypeListener / outboxResourceTypeLoadBalancer — resource_type
-// в `nlb_outbox` (design §3.9; ограничено CHECK CONSTRAINT в миграции 0001).
+// в `nlb_outbox` (ограничено CHECK CONSTRAINT в миграции 0001).
 const (
 	outboxResourceTypeListener     = "nlb_listener"
 	outboxResourceTypeLoadBalancer = "nlb_load_balancer"

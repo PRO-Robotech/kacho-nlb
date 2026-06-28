@@ -1,6 +1,9 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 // Command migrator — отдельный binary мигратора схемы kacho-nlb.
 //
-// evgeniy §9 K.1+K.3 / AP-9: отдельный CLI use-case = отдельный binary;
+// + /: отдельный CLI use-case = отдельный binary;
 // миграции — НЕ subcommand основного сервиса. Поддерживает разные dialect'ы
 // через [migrator.Dialect] interface (postgres сейчас; cockroach и другие
 // расширяются `RegisterDialect`).
@@ -168,7 +171,7 @@ func buildRunner(opts *rootOptions, migrationsFS fs.FS) (*migrator.Runner, error
 
 	dsn := strings.TrimSpace(opts.dsn)
 	if dsn == "" {
-		// config.Load() сам ловит ENV KACHO_NLB_REPOSITORY__POSTGRES__URL,
+		// config.Load сам ловит ENV KACHO_NLB_REPOSITORY__POSTGRES__URL,
 		// поэтому отдельно os.Getenv не зовём — config — единый source.
 		cfg, cerr := config.Load(opts.configPath)
 		if cerr != nil {

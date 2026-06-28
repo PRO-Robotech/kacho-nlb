@@ -1,19 +1,22 @@
-// target_drain_runner.go — Phase B 2-phase drain background worker (KAC-159).
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
+// target_drain_runner.go — двухфазный drain background worker.
 //
 // Контекст: NetworkLoadBalancer.TargetGroupService.RemoveTargets — двухфазный
-// (acceptance §6 GWT-TGT-011..015 + design §4.4):
+// (+):
 //
-//   - Phase A (synchronous, в request-path RemoveTargets handler'а): атомарный
-//     `UPDATE targets SET status='DRAINING', drain_started_at=now() WHERE ...`.
+//   - фаза A (synchronous, в request-path RemoveTargets handler'а): атомарный
+//     `UPDATE targets SET status='DRAINING', drain_started_at=now WHERE...`.
 //     Клиент сразу видит target вне traffic-pool (data-plane прекращает new
 //     connections), но строка ещё в БД — flow'ам разрешено доиграть.
 //
-//   - Phase B (этот runner): периодический tick (default 10s).
+//   - фаза B (этот runner): периодический tick (default 10s).
 //     `DELETE FROM targets WHERE status='DRAINING' AND
-//        drain_started_at < now() - tg.deregistration_delay_seconds`.
+//     drain_started_at < now - tg.deregistration_delay_seconds`.
 //     После DELETE — INSERT в `nlb_outbox` (DISTINCT per TG)
 //     событие `nlb_target_group:<tg_id> UPDATED` → trigger `nlb_outbox_notify_trg`
-//     шлёт `pg_notify('nlb_outbox', seq)` → D-13 lifecycle stream к iam.
+//     шлёт `pg_notify('nlb_outbox', seq)` → lifecycle stream к iam.
 //
 // Архитектура (workspace CLAUDE.md «Чистая архитектура»): runner использует
 // `*pgxpool.Pool` напрямую, минуя CQRS Repository — это намеренно (godzila
@@ -21,7 +24,7 @@
 // бизнес-логикой; не пересекается с handler'ами).
 //
 // Failure isolation: транзиентные SQL-errors на drainOnce логируются и
-// **НЕ** завершают Run (continue loop). Только `ctx.Done()` exits.
+// **НЕ** завершают Run (continue loop). Только `ctx.Done` exits.
 package jobs
 
 import (
@@ -36,7 +39,7 @@ import (
 
 // drainSQL — атомарный DELETE expired DRAINING targets + DISTINCT outbox emit
 // одним statement'ом (CTE). Per-TG expiry: `drain_started_at + interval` берёт
-// `tg.deregistration_delay_seconds` из owning TG (acceptance §6 GWT-TGT-014).
+// `tg.deregistration_delay_seconds` из owning TG.
 //
 // Возвращает:
 //
@@ -76,7 +79,7 @@ SELECT
     (SELECT count(*) FROM outbox_emitted) AS tgs
 `
 
-// TargetDrainRunner — фоновый worker, реализующий Phase B 2-phase drain.
+// TargetDrainRunner — фоновый worker, реализующий двухфазный drain.
 // Запускается из cmd/kacho-loadbalancer/main.go параллельно с gRPC-серверами
 // через H-BF/corlib/pkg/parallel.ExecAbstract.
 type TargetDrainRunner struct {
@@ -103,7 +106,7 @@ func NewTargetDrainRunner(pool *pgxpool.Pool, logger *slog.Logger, interval time
 // Run блокирует goroutine до отмены ctx. Каждые `r.interval` вызывает
 // drainOnce(ctx); transient errors logging + continue (не exit Run).
 //
-// Возвращает nil после ctx.Done() — это «штатное завершение» runner'а
+// Возвращает nil после ctx.Done — это «штатное завершение» runner'а
 // при SIGTERM (parallel.ExecAbstract воспринимает nil как успех task'а).
 func (r *TargetDrainRunner) Run(ctx context.Context) error {
 	r.logger.InfoContext(ctx, "target drain runner started", "interval", r.interval)
@@ -127,7 +130,7 @@ func (r *TargetDrainRunner) Run(ctx context.Context) error {
 }
 
 // tick — одна итерация: вызывает drainOnce и логирует результат. Транзиентные
-// errors не пропускаются наружу (acceptance §6: «runner respects ctx cancel
+// errors не пропускаются наружу («runner respects ctx cancel
 // cleanly; transient errors do not abort the loop»).
 func (r *TargetDrainRunner) tick(ctx context.Context) {
 	start := time.Now()
@@ -135,7 +138,7 @@ func (r *TargetDrainRunner) tick(ctx context.Context) {
 	took := time.Since(start)
 
 	if err != nil {
-		// ctx.Err() ловится отдельно: cancel в середине tick'а — штатно.
+		// ctx.Err ловится отдельно: cancel в середине tick'а — штатно.
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return
 		}

@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package loadbalancer
 
 import (
@@ -137,7 +140,7 @@ func TestCreateLoadBalancer_RegionNotFound(t *testing.T) {
 	require.NotNil(t, final.Error)
 }
 
-// TestCreateLoadBalancer_FGARegisterIntentEmitted — SEC-D: Create writes a
+// TestCreateLoadBalancer_FGARegisterIntentEmitted — Create writes a
 // fga.register-intent (project-hierarchy + creator) into the writer-tx outbox,
 // not a direct best-effort FGA call.
 func TestCreateLoadBalancer_FGARegisterIntentEmitted(t *testing.T) {

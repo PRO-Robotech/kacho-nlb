@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package listener
 
 import (
@@ -45,7 +48,7 @@ func TestUpdateListener_GWT_LST_018_MutableFields(t *testing.T) {
 }
 
 // TestUpdateListener_GWT_LST_019_ImmutableLoadBalancerID — immutable in mask
-// → InvalidArgument verbatim text.
+// → InvalidArgument фиксированный текст.
 func TestUpdateListener_GWT_LST_019_ImmutableLoadBalancerID(t *testing.T) {
 	t.Parallel()
 	suite := newUpdateSuite(t)
@@ -79,16 +82,26 @@ func TestUpdateListener_GWT_LST_020_ImmutableFields(t *testing.T) {
 	}
 }
 
-// TestUpdateListener_EmptyMask — empty/nil mask → InvalidArgument.
-func TestUpdateListener_EmptyMask(t *testing.T) {
+// TestUpdateListener_EmptyMask_FullPATCH — пустой/nil mask → full-object PATCH:
+// применяются ВСЕ mutable-поля из тела запроса (api-conventions update_mask
+// discipline, parity с loadbalancer/targetgroup applyUpdateMask). НЕ
+// InvalidArgument.
+func TestUpdateListener_EmptyMask_FullPATCH(t *testing.T) {
 	t.Parallel()
 	suite := newUpdateSuite(t)
-	_, err := suite.uc.Run(context.Background(), &lbv1.UpdateListenerRequest{
-		ListenerId: string(suite.listener.ID),
-		UpdateMask: nil,
+	op, err := suite.uc.Run(context.Background(), &lbv1.UpdateListenerRequest{
+		ListenerId:      string(suite.listener.ID),
+		UpdateMask:      nil,
+		Name:            "https",
+		ProxyProtocolV2: true,
 	})
-	require.Error(t, err)
-	require.Equal(t, codes.InvalidArgument, status.Code(err))
+	require.NoError(t, err)
+	done := awaitOpDone(t, suite.ops, op.ID, time.Second)
+	require.Nil(t, done.Error)
+
+	got := suite.getListener(string(suite.listener.ID))
+	require.Equal(t, domain.LbName("https"), got.Name)
+	require.True(t, got.ProxyProtocolV2)
 }
 
 // TestUpdateListener_UnknownMaskField — unknown path → InvalidArgument.
@@ -118,7 +131,7 @@ func TestUpdateListener_NotFound(t *testing.T) {
 }
 
 // TestUpdateListener_GWT_LST_021_DefaultTGRegionMismatch — TG in another region
-// → FailedPrecondition verbatim text.
+// → FailedPrecondition фиксированный текст.
 func TestUpdateListener_GWT_LST_021_DefaultTGRegionMismatch(t *testing.T) {
 	t.Parallel()
 	suite := newUpdateSuite(t)

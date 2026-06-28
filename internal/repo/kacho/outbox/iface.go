@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 // Package outbox — doc-only stub-пакет.
 //
 // Port-интерфейс OutboxEmitter живёт в leaf-пакете `internal/repo/kacho`

@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package targetgroup
 
 import (
@@ -18,7 +21,7 @@ import (
 	kachopg "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho/pg"
 )
 
-// GWT-TGR-021 — Delete OK (no attached LB, no targets).
+// Delete OK (no attached LB, no targets).
 func TestDelete_Happy(t *testing.T) {
 	repo := newFakeRepo()
 	tg := makeTG("prj-acme", "del-happy")
@@ -38,7 +41,7 @@ func TestDelete_Happy(t *testing.T) {
 	assert.Equal(t, kachopg.OutboxActionDeleted, events[0].Action)
 }
 
-// GWT-TGR-022 — Delete fails when attached to LB.
+// Delete fails when attached to LB.
 func TestDelete_HasAttachedLB(t *testing.T) {
 	repo := newFakeRepo()
 	tg := makeTG("prj-acme", "del-att")
@@ -54,7 +57,7 @@ func TestDelete_HasAttachedLB(t *testing.T) {
 		"is attached to 1 load balancer(s); detach first")
 }
 
-// GWT-TGR-023 — Delete fails when targets exist.
+// Delete fails when targets exist.
 func TestDelete_HasTargets(t *testing.T) {
 	repo := newFakeRepo()
 	tg := makeTG("prj-acme", "del-tgt")
@@ -74,7 +77,7 @@ func TestDelete_HasTargets(t *testing.T) {
 		"has 1 target(s); remove them first via RemoveTargets")
 }
 
-// GWT-TGR-024 — concurrent AddTargets between precheck and DELETE → FK fallback
+// concurrent AddTargets between precheck and DELETE → FK fallback
 // FailedPrecondition (TOCTOU). Simulated via failOnDelete injected in fake.
 func TestDelete_FKFallback_OnConcurrentAdd(t *testing.T) {
 	repo := newFakeRepo()

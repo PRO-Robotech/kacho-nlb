@@ -1,12 +1,15 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package domain
 
 import "go.uber.org/multierr"
 
-// LoadBalancer — domain entity NetworkLoadBalancer (design §2.2).
+// LoadBalancer — domain entity NetworkLoadBalancer.
 //
-// Поля семантически-нагруженных колонок — newtypes со встроенным Validate().
-// `CreatedAt` сюда НЕ входит — это DB-managed (DEFAULT now()), живёт в
-// repo-сущности (evgeniy §H.1).
+// Поля семантически-нагруженных колонок — newtypes со встроенным Validate.
+// `CreatedAt` сюда НЕ входит — это DB-managed (DEFAULT now), живёт в
+// repo-сущности.
 type LoadBalancer struct {
 	ID                 ResourceID
 	ProjectID          ProjectID
@@ -22,7 +25,7 @@ type LoadBalancer struct {
 }
 
 // Validate проверяет все семантически-нагруженные поля LoadBalancer
-// (acceptance §3 NLB-003..NLB-005). multierr.Combine агрегирует ошибки;
+// . multierr.Combine агрегирует ошибки;
 // nil — если всё валидно.
 func (lb LoadBalancer) Validate() error {
 	return multierr.Combine(
@@ -36,7 +39,7 @@ func (lb LoadBalancer) Validate() error {
 }
 
 // Equal — deep equality по domain-полям (для noop-detection в Update-flow).
-// `CreatedAt` сюда не входит (он в repo-leaf). evgeniy §D.10.
+// `CreatedAt` сюда не входит (он в repo-leaf).
 func (lb LoadBalancer) Equal(other LoadBalancer) bool {
 	return lb.ID == other.ID &&
 		lb.ProjectID == other.ProjectID &&

@@ -1,23 +1,26 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package listener
 
 import (
 	"context"
 	"log/slog"
 
-	lbv1 "github.com/PRO-Robotech/kacho-nlb/proto/gen/go/kacho/cloud/loadbalancer/v1"
 	operationpb "github.com/PRO-Robotech/kacho-corelib/proto/gen/go/kacho/cloud/operation"
+	lbv1 "github.com/PRO-Robotech/kacho-nlb/proto/gen/go/kacho/cloud/loadbalancer/v1"
 
 	"github.com/PRO-Robotech/kacho-nlb/internal/authzfilter"
 )
 
 // Handler реализует kacho.cloud.loadbalancer.v1.ListenerServiceServer.
 //
-// Thin transport (evgeniy §2.B): parse req → call UseCase → format proto resp.
+// Thin transport: parse req → call UseCase → format proto resp.
 // No business logic, no validation beyond `id is required` (the latter is
 // purely defensive — handler-level early-exit; UseCase repeats the check).
 //
-// Per-resource FGA Check выполняется до handler'а — interceptor в api-gateway
-// (KAC-127 Phase 4); handler сам Check не зовёт.
+// Per-resource FGA Check выполняется до handler'а — interceptor в api-gateway;
+// handler сам Check не зовёт.
 type Handler struct {
 	lbv1.UnimplementedListenerServiceServer
 
@@ -34,7 +37,7 @@ type Handler struct {
 // Все adapters передаются через port-интерфейсы (`internal/clients/*`,
 // `internal/repo/kacho.Repository`). nil-зависимость logger допускается — Create/
 // Delete UseCase это переживают (см. helpers.loggerOrDiscard). FGA owner/parent-
-// link tuple-регистрация — через SEC-D outbox (FGARegisterOutbox в writer-tx).
+// link tuple-регистрация — через outbox (FGARegisterOutbox в writer-tx).
 func NewHandler(
 	repo RepoFactory,
 	opsRepo OperationsRepo,

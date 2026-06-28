@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package domain_test
 
 import (
@@ -83,7 +86,7 @@ func TestNewTargetGroup_Defaults(t *testing.T) {
 	if tg.Targets != nil {
 		t.Error("Targets default must be nil")
 	}
-	// Note: built TG cannot be Validate()'d as-is because HealthCheck is required
+	// Note: built TG cannot be Validate'd as-is because HealthCheck is required
 	// (no probe set) — caller of NewTargetGroup must attach a HC before Validate.
 }
 

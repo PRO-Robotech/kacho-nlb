@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package domain_test
 
 import (
@@ -14,11 +17,11 @@ func TestLbName_Validate(t *testing.T) {
 		value   domain.LbName
 		wantErr bool
 	}{
-		// happy paths: acceptance §3 NLB-004 boundary "abc" (3 chars) and 63 chars.
+		// happy paths: boundary "abc" (3 chars) and 63 chars.
 		{"min 3 chars OK", "abc", false},
 		{"hyphenated lowercase OK", "edge-public", false},
 		{"63 chars OK", domain.LbName("a" + strings.Repeat("b", 61) + "c"), false},
-		// negative: NLB-003 (regex), NLB-004 (length/empty).
+		// negative: (regex), (length/empty).
 		{"empty rejected", "", true},
 		{"2 chars rejected (regex min len 3)", "ab", true},
 		{"64 chars rejected", domain.LbName("a" + strings.Repeat("b", 62) + "c"), true},

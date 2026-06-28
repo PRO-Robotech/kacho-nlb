@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+
+# Copyright (c) PRO-Robotech
+# SPDX-License-Identifier: BUSL-1.1
+
 """
 tests/newman/scripts/gen.py — generator of Postman collections from declarative
 case-modules under tests/newman/cases/*.py (kacho-nlb).

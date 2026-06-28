@@ -1,4 +1,7 @@
-// validate_test.go — KAC-160; Mode enum + Config.Validate.
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
+// validate_test.go —; Mode enum + Config.Validate.
 package config
 
 import (
@@ -150,6 +153,64 @@ func TestValidate_ProductionForbidsBreakglass(t *testing.T) {
 	}
 }
 
+// TestValidate_Production_RequiresSecureServerTransport — production mode с
+// plaintext-listener'ом (server mTLS off + authn=none) обязан fail-close'иться
+// (security.md «AuthN+AuthZ ВЕЗДЕ»: plaintext в проде запрещён).
+func TestValidate_Production_RequiresSecureServerTransport(t *testing.T) {
+	cfg := minimalValidConfig()
+	cfg.ModeRaw = "production"
+	cfg.Authz.IAM.Addr = "iam.kacho.svc:9091"
+	cfg.MTLS.IAMRegister.Enable = true // iam-edge ok — изолируем server-transport check
+	// server mTLS off + authn none → insecure listener.
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "insecure server transport") {
+		t.Fatalf("expected insecure-server-transport error in production, got %v", err)
+	}
+}
+
+// TestValidate_Production_RequiresMTLSOnIAMEdge — production требует mTLS на ребре
+// nlb→iam (per-RPC InternalIAMService.Check): insecure Check-edge запрещён.
+func TestValidate_Production_RequiresMTLSOnIAMEdge(t *testing.T) {
+	cfg := minimalValidConfig()
+	cfg.ModeRaw = "production"
+	cfg.Authz.IAM.Addr = "iam.kacho.svc:9091"
+	cfg.MTLS.Server.Enable = true // server transport ok — изолируем iam-edge check
+	// iam-register mTLS off → insecure Check edge.
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "iam-register") {
+		t.Fatalf("expected iam-edge mTLS error in production, got %v", err)
+	}
+}
+
+// TestValidate_Production_SecureTransport_OK — production с server mTLS + iam-edge
+// mTLS проходит валидацию (позитивная ветка fail-closed транспорта).
+func TestValidate_Production_SecureTransport_OK(t *testing.T) {
+	cfg := minimalValidConfig()
+	cfg.ModeRaw = "production"
+	cfg.Authz.IAM.Addr = "iam.kacho.svc:9091"
+	cfg.MTLS.Server.Enable = true
+	cfg.MTLS.IAMRegister.Enable = true
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("production + secure transport: unexpected err: %v", err)
+	}
+}
+
+// TestValidate_Production_AuthnTLSSatisfiesServerTransport — one-way TLS+JWT
+// (authn.type=tls) удовлетворяет требованию защищённого server-транспорта (mTLS
+// на listener'е не обязателен, если есть TLS+JWT user→edge).
+func TestValidate_Production_AuthnTLSSatisfiesServerTransport(t *testing.T) {
+	cfg := minimalValidConfig()
+	cfg.ModeRaw = "production"
+	cfg.Authz.IAM.Addr = "iam.kacho.svc:9091"
+	cfg.MTLS.IAMRegister.Enable = true
+	cfg.Authn.Type = "tls"
+	cfg.Authn.TLS.KeyFile = "/etc/tls/key.pem"
+	cfg.Authn.TLS.CertFile = "/etc/tls/cert.pem"
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("production + authn.tls + iam mTLS: unexpected err: %v", err)
+	}
+}
+
 func TestValidate_AuthnTLSRequiresKeyAndCert(t *testing.T) {
 	cfg := minimalValidConfig()
 	cfg.Authn.Type = "tls"
@@ -160,7 +221,7 @@ func TestValidate_AuthnTLSRequiresKeyAndCert(t *testing.T) {
 	}
 }
 
-// TestValidate_JobsTargetDrainIntervalZero — KAC-159: interval=0s rejected.
+// TestValidate_JobsTargetDrainIntervalZero — interval=0s rejected.
 func TestValidate_JobsTargetDrainIntervalZero(t *testing.T) {
 	cfg := minimalValidConfig()
 	cfg.Jobs.TargetDrain.Interval = 0
@@ -180,7 +241,7 @@ func TestValidate_JobsTargetDrainIntervalNegative(t *testing.T) {
 	}
 }
 
-// TestValidate_InternalLifecycleMaxStreamsZero — KAC-157: max-streams=0 rejected
+// TestValidate_InternalLifecycleMaxStreamsZero — max-streams=0 rejected
 // (нулевой лимит = kacho-iam не сможет подключиться).
 func TestValidate_InternalLifecycleMaxStreamsZero(t *testing.T) {
 	cfg := minimalValidConfig()

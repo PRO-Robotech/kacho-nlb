@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package domain
 
 import (
@@ -8,15 +11,15 @@ import (
 	"go.uber.org/multierr"
 )
 
-// Target — 4-way oneof identity (design §2.5):
+// Target — 4-way oneof identity:
 //
 //	(1) InstanceID  — in-cloud via kacho-compute (worker resolves primary NIC IP);
 //	(2) NicID       — in-cloud via kacho-vpc.NetworkInterface;
 //	(3) IPRef       — in-cloud raw IP внутри Subnet (sync IP ∈ CIDR check в worker);
 //	(4) ExternalIP  — out-of-cloud raw IP (sync bogon-check в Validate ниже).
 //
-// Ровно одна из четырёх идентичностей должна быть задана (acceptance TGR-009/010).
-// Storage-side enforce — partial UNIQUE NULLS NOT DISTINCT (acceptance TGT-002/003).
+// Ровно одна из четырёх идентичностей должна быть задана (010).
+// Storage-side enforce — partial UNIQUE NULLS NOT DISTINCT (003).
 type Target struct {
 	InstanceID option.ValueOf[InstanceID]
 	NicID      option.ValueOf[NicID]
@@ -32,12 +35,12 @@ type TargetIPRef struct {
 	Address  IPAddress
 }
 
-// TargetExternalIP — variant (4): IP вне кластера. Acceptance TGT-001 / TGR-011:
+// TargetExternalIP — variant (4): IP вне кластера. Acceptance /:
 // допустим публичный IPv4/IPv6; bogon-классы (loopback / link-local / multicast /
 // unspecified / broadcast) — запрещены и отлавливаются в Validate.
 //
-// Private CIDR (RFC1918 10/8, 172.16/12, 192.168/16) — РАЗРЕШЕНЫ (acceptance §6
-// design §2.5 — это валидный сценарий «target в чужой VPC по private peering»).
+// Private CIDR (RFC1918 10/8, 172.16/12, 192.168/16) — РАЗРЕШЕНЫ (
+// это валидный сценарий «target в чужой VPC по private peering»).
 type TargetExternalIP struct {
 	Address IPAddress
 	ZoneID  option.ValueOf[ZoneID]
@@ -60,7 +63,7 @@ func (t Target) Validate() error {
 	return multierr.Combine(identErr, weightErr, variantErr)
 }
 
-// validateIdentityOneOf — exactly-one-of проверка. Acceptance TGR-009 verbatim:
+// validateIdentityOneOf — exactly-one-of проверка. Acceptance с фиксированным текстом:
 // `"target must specify exactly one of: instance_id, nic_id, ip_ref, external_ip"`.
 func (t Target) validateIdentityOneOf() error {
 	count := 0
@@ -99,7 +102,7 @@ func (r TargetIPRef) Validate() error {
 }
 
 // Validate проверяет TargetExternalIP — address формат + bogon-deny.
-// Bogon-categories (acceptance TGR-011): loopback / link-local / multicast /
+// Bogon-categories: loopback / link-local / multicast /
 // unspecified / broadcast (255.255.255.255). Private RFC1918 — РАЗРЕШЕНЫ.
 func (e TargetExternalIP) Validate() error {
 	if err := e.Address.Validate(); err != nil {
@@ -124,7 +127,7 @@ func (e TargetExternalIP) Validate() error {
 // classifyBogon — возвращает описательный reason и true, если address —
 // bogon-категория, недопустимая для target.external_ip. Не классифицирует как
 // bogon приватные RFC1918 CIDR (10/8, 172.16/12, 192.168/16) — это валидный
-// случай «target доступен через private peering» (design §2.5 / acceptance §6).
+// случай «target доступен через private peering».
 //
 // IPv4-mapped IPv6 рассматриваем как соответствующий IPv4 (Unmap).
 func classifyBogon(addr netip.Addr) (reason string, isBogon bool) {

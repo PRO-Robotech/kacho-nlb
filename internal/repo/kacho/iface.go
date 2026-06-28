@@ -1,9 +1,12 @@
-// Package kacho — корневой Repository интерфейс kacho-nlb (CQRS per evgeniy §6.G).
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
+// Package kacho — корневой Repository интерфейс kacho-nlb (CQRS).
 //
 // Разделение Reader/Writer по TX-снапшоту:
 //   - RepositoryReader открывает read-TX (в будущем — на slave-реплику).
 //   - RepositoryWriter открывает write-TX на master; держит outbox-эмит в той же TX.
-//   - UseCase сам управляет TX: Writer().Commit() / Abort() (defer-style).
+//   - UseCase сам управляет TX: Writer.Commit / Abort (defer-style).
 //
 // Реализации:
 //   - internal/repo/kacho/pg/ — pgx5 + pgxpool на master/slave.
@@ -21,13 +24,13 @@ type Pagination struct {
 	PageSize  int64
 }
 
-// Repository — фабрика TX-aware Reader/Writer. Skill evgeniy §6 G.1.
+// Repository — фабрика TX-aware Reader/Writer..
 //
 // Reader(ctx) открывает read-only TX на slave-pool'е (если настроен) либо на
-// master (fallback). Caller обязан вызвать Close().
+// master (fallback). Caller обязан вызвать Close.
 //
-// Writer(ctx) открывает RW TX на master. Caller обязан вызвать либо Commit(),
-// либо Abort() (Abort идемпотентен — безопасно через defer сразу после открытия).
+// Writer(ctx) открывает RW TX на master. Caller обязан вызвать либо Commit,
+// либо Abort (Abort идемпотентен — безопасно через defer сразу после открытия).
 type Repository interface {
 	Reader(ctx context.Context) (RepositoryReader, error)
 	Writer(ctx context.Context) (RepositoryWriter, error)
@@ -45,9 +48,9 @@ type RepositoryReader interface {
 	Close() error
 }
 
-// RepositoryWriter — write-TX. Writer видит свои writes (G.2 — writer extends
+// RepositoryWriter — write-TX. Writer видит свои writes (writer extends
 // reader). Outbox-emit живёт здесь же — DML + outbox atomicity гарантируется
-// одной pgx.Tx (skill evgeniy §6 G.5).
+// одной pgx.Tx.
 type RepositoryWriter interface {
 	LoadBalancers() LoadBalancerWriterIface
 	Listeners() ListenerWriterIface
@@ -56,11 +59,11 @@ type RepositoryWriter interface {
 	// Outbox — emit события в `nlb_outbox` в той же tx-области writer'а.
 	Outbox() OutboxEmitter
 	// FGARegisterOutbox — emit FGA-register-intent в `fga_register_outbox` в
-	// той же tx-области writer'а (SEC-D transactional-outbox; epic §3.1).
+	// той же tx-области writer'а (transactional-outbox).
 	FGARegisterOutbox() FGARegisterEmitter
 	// Commit финализирует tx. После Commit вызов Abort — no-op.
 	Commit() error
-	// Abort откатывает tx. Идемпотентен — безопасно через `defer w.Abort()`
+	// Abort откатывает tx. Идемпотентен — безопасно через `defer w.Abort`
 	// сразу после открытия writer'а.
 	Abort()
 }

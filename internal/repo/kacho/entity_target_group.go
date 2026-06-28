@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package kacho
 
 import (
@@ -7,7 +10,7 @@ import (
 )
 
 // TargetGroupRecord — repo-entity TargetGroup. domain.TargetGroup + DB-managed
-// CreatedAt/UpdatedAt. Поле Targets ([]TargetRecord) заполняется при Get/List
+// CreatedAt/UpdatedAt. Поле Targets (TargetRecord) заполняется при Get/List
 // через JOIN на child-таблицу `targets` (см. pg/target_group_repo.go).
 type TargetGroupRecord struct {
 	domain.TargetGroup
@@ -20,8 +23,8 @@ type TargetGroupFilter struct {
 	ProjectID string
 	Name      string
 	Filter    string
-	// AllowedIDs — per-object FGA allow-set (RBAC sub-phase D §11; iam ListObjects).
-	// nil → bypass; len==0 → пусто (no-leak); len>0 → `WHERE id = ANY` ДО LIMIT (D-46).
+	// AllowedIDs — per-object FGA allow-set (RBAC; iam ListObjects).
+	// nil → bypass; len==0 → пусто (no-leak); len>0 → `WHERE id = ANY` ДО LIMIT.
 	AllowedIDs []string
 }
 
@@ -30,7 +33,7 @@ type TargetGroupFilter struct {
 // (NULL когда Status='ACTIVE'; NOT NULL когда 'DRAINING').
 //
 // Status и DrainStartedAt живут в repo-leaf (а не в domain.Target), потому что
-// это lifecycle-поля управляемые worker'ом (Phase A drain mark / Phase B delete);
+// это lifecycle-поля управляемые worker'ом (фаза A drain mark / фаза B delete);
 // domain.Target — что просит tenant на AddTargets (identity + weight).
 type TargetRecord struct {
 	domain.Target

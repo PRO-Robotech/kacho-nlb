@@ -1,11 +1,14 @@
-// backstop_integration_test.go — sub-phase 1.4 S3 (kacho-nlb backstop, D-9):
-// reconciler + metrics + fail-closed boot-gate over the existing SEC-D
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
+// backstop_integration_test.go — (kacho-nlb backstop):
+// reconciler + metrics + fail-closed boot-gate over the existing
 // register-outbox, WITHOUT changing co-commit atomicity (no migration).
 //
 //	1.4-30  reconciler re-drives a poisoned row back to claimable → delivered
 //	1.4-31  fail-closed boot-gate: require-iam + no drainer → Create refused
 //	1.4-32  long-outage no-poison: IAM down > MaxAttempts (transient) → not
-//	        poisoned → delivered exactly once on recovery (corelib D-5 classify) +
+//	        poisoned → delivered exactly once on recovery (corelib classify) +
 //	        metrics surface backlog while pending (1.4-23)
 //
 // testcontainers Postgres 16; real corelib reconciler/drainer/metrics + the nlb
@@ -150,14 +153,14 @@ func (c *downIAM) UnregisterResource(_ context.Context, _ *iampb.UnregisterResou
 }
 
 // Test_1_4_32_LongOutageNoPoison_ThenMetricsSurface — 1.4-32 + 1.4-23: IAM
-// Unavailable for MORE than MaxAttempts consecutive transient attempts (D-5) → the
+// Unavailable for MORE than MaxAttempts consecutive transient attempts  → the
 // intent is NOT poisoned (stays pending) → delivered exactly once on recovery; the
 // metrics Collector surfaces backlog while pending, poisoned stays 0.
 func Test_1_4_32_LongOutageNoPoison_ThenMetricsSurface(t *testing.T) {
 	tc := newTestCtx(t)
 	ctx := context.Background()
 
-	const maxAttempts = 4 // drainerCfg() uses MaxAttempts=4
+	const maxAttempts = 4 // drainerCfg uses MaxAttempts=4
 	iam := &downIAM{}
 	iam.down.Store(true)
 	stop := startDrainer(t, tc.Pool, iam)

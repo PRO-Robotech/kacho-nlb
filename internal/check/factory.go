@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package check
 
 import (
@@ -23,7 +26,7 @@ type Options struct {
 	// mode, см. config/validate.go).
 	Breakglass bool
 
-	// Logger — slog logger; nil → slog.Default().
+	// Logger — slog logger; nil → slog.Default.
 	Logger *slog.Logger
 
 	// CheckTimeout — таймаут на один Check (default 2s).
@@ -32,7 +35,7 @@ type Options struct {
 	// DenyRateLimitPerSec — per-Principal rate-limit на denied storm (default 100).
 	DenyRateLimitPerSec float64
 
-	// CacheTTL — TTL positive-кеша (default 5s, NFR KAC-108 ≤10s).
+	// CacheTTL — TTL positive-кеша (default 5s, ≤10s).
 	CacheTTL time.Duration
 
 	// CacheSize — LRU capacity Check-кеша. Сейчас kacho-corelib/authz.Cache не
@@ -50,7 +53,7 @@ type Options struct {
 var ErrIAMCheckNotConfigured = errors.New("check: IAM CheckClient not configured and Breakglass=false")
 
 // NewInterceptor — фабрика gRPC interceptor'а. Возвращает:
-//   - (*authz.Interceptor, *authz.Cache, nil) — успех; caller wireы Unary()/Stream()
+//   - (*authz.Interceptor, *authz.Cache, nil) — успех; caller wireы Unary/Stream
 //     в gRPC server chain'ы и держит cache для ListenInvalidator'а;
 //   - (nil, nil, ErrIAMCheckNotConfigured) — peer не задан и breakglass=false.
 //

@@ -1,6 +1,9 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 // Package loadbalancer — gRPC handler + use-cases для NetworkLoadBalancerService.
 //
-// evgeniy §2.B: handler — тонкий transport (parse-request → call use-case →
+// handler — тонкий transport (parse-request → call use-case →
 // format-response), бизнес-логика живёт в use-case'ах (per-RPC файлы:
 // create.go / update.go / delete.go / start.go / stop.go / move.go /
 // attach_target_group.go / detach_target_group.go / get_target_states.go /
@@ -11,7 +14,7 @@
 // port-интерфейсы (ports.go), opsRepo для async LRO.
 //
 // Composition root — `cmd/kacho-loadbalancer/main.go`: pgxpool → kachopg.New →
-// peer-clients → NewHandler(...) → publicSrv.Register.
+// peer-clients → NewHandler → publicSrv.Register.
 package loadbalancer
 
 import (
@@ -19,8 +22,8 @@ import (
 	"log/slog"
 
 	"github.com/PRO-Robotech/kacho-corelib/operations"
-	lbv1 "github.com/PRO-Robotech/kacho-nlb/proto/gen/go/kacho/cloud/loadbalancer/v1"
 	operationpb "github.com/PRO-Robotech/kacho-corelib/proto/gen/go/kacho/cloud/operation"
+	lbv1 "github.com/PRO-Robotech/kacho-nlb/proto/gen/go/kacho/cloud/loadbalancer/v1"
 
 	"github.com/PRO-Robotech/kacho-nlb/internal/authzfilter"
 )
@@ -30,7 +33,7 @@ import (
 // Handler владеет per-RPC use-case'ами; sample конструктор `NewHandler`
 // собирает все use-case'ы из общего набора зависимостей (Repo / opsRepo /
 // peers / logger). Декомпозиция per-RPC файл — для тестируемости и
-// читаемости (evgeniy §2.B / §7).
+// читаемости.
 type Handler struct {
 	lbv1.UnimplementedNetworkLoadBalancerServiceServer
 
@@ -53,7 +56,7 @@ type Handler struct {
 //
 // peerProject / peerRegion могут быть nil (dev-mode без peer-сервисов) —
 // use-case'ы при отсутствующем peer'е fail-close с Unavailable / "<peer> not
-// configured". FGA owner-tuple-регистрация — через SEC-D transactional-outbox
+// configured". FGA owner-tuple-регистрация — через transactional-outbox
 // (register-drainer → IAM), не через peer-client здесь.
 func NewHandler(
 	repo Repo,

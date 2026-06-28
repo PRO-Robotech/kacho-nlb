@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package targetgroup
 
 import (
@@ -11,7 +14,7 @@ import (
 )
 
 // healthCheckFromPb — конвертер proto HealthCheck → domain HealthCheck. Proto
-// несёт только tcp_options и http_options (см. health_check.proto §4); HTTPS и
+// несёт только tcp_options и http_options (см. health_check.proto); HTTPS и
 // GRPC варианты в proto отсутствуют (известное ограничение, см.
 // internal/dto/type2pb/health_check.go).
 //
@@ -41,7 +44,7 @@ func healthCheckFromPb(pb *lbv1.HealthCheck) domain.HealthCheck {
 }
 
 // targetFromPb — конвертер proto Target → domain Target. 4-way identity oneof.
-// Validate() в domain отлавливает «0 либо 2+ identities заданы», так что здесь
+// Validate в domain отлавливает «0 либо 2+ identities заданы», так что здесь
 // просто mirror'им proto.
 func targetFromPb(pb *lbv1.Target) domain.Target {
 	if pb == nil {
@@ -68,7 +71,7 @@ func targetFromPb(pb *lbv1.Target) domain.Target {
 	return t
 }
 
-// targetsFromPb — конвертер repeated proto.Target → []domain.Target.
+// targetsFromPb — конвертер repeated proto.Target → domain.Target.
 func targetsFromPb(pbs []*lbv1.Target) []domain.Target {
 	if len(pbs) == 0 {
 		return nil

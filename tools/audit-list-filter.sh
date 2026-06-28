@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+
+# Copyright (c) PRO-Robotech
+# SPDX-License-Identifier: BUSL-1.1
+
 # audit-list-filter.sh — CI gate (RBAC sub-phase D §11 / issue #111) for kacho-nlb.
 #
 # Refuses to ship a public `List<Resource>` use-case that returns rows without

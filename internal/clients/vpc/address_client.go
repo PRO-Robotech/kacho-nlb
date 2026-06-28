@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package vpc
 
 import (
@@ -41,7 +44,7 @@ type Address struct {
 
 // AddressOwner — текущий referrer Address-ресурса.
 type AddressOwner struct {
-	Kind string // "nlb_listener" | "compute_instance" | ...
+	Kind string // "nlb_listener" | "compute_instance" |...
 	ID   string
 }
 
@@ -117,8 +120,7 @@ func (c *addressClient) Get(ctx context.Context, addressID string) (*Address, er
 
 	if resp.GetUsed() {
 		// Берём первый Reference как primary owner (NLB Listener attach
-		// модель: один Address — один owner; см. workspace CLAUDE.md
-		// §«Within-service refs — DB-уровень обязателен», pattern «one-owner-per-resource»).
+		// модель: один Address — один owner; pattern «one-owner-per-resource»).
 		if usedBy := resp.GetUsedBy(); len(usedBy) > 0 && usedBy[0].GetReferrer() != nil {
 			addr.UsedBy = &AddressOwner{
 				Kind: usedBy[0].GetReferrer().GetType(),

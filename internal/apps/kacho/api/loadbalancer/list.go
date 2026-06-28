@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package loadbalancer
 
 import (
@@ -13,7 +16,7 @@ import (
 // ListLoadBalancersUseCase — sync list с фильтром `project_id` (required) +
 // optional `name="<value>"` (от proto request.Filter, через общий
 // shared.ParseNameFilter — kacho-corelib/filter.Parse, whitelist {"name"}) +
-// cursor-based pagination (acceptance GWT-NLB-009 / GWT-NLB-010).
+// cursor-based pagination.
 type ListLoadBalancersUseCase struct {
 	repo  Repo
 	authz authzfilter.Filter
@@ -27,10 +30,10 @@ func NewListLoadBalancersUseCase(repo Repo, authz authzfilter.Filter) *ListLoadB
 
 // Execute — open reader, repo.List, DTO transfer per row.
 //
-// RBAC sub-phase D §11: per-object FGA filter. subject из ctx → iam ListObjects
+// RBAC: per-object FGA filter. subject из ctx → iam ListObjects
 // (relation viewer) → пересечение в SQL (filter.AllowedIDs), pagination ПОСЛЕ
-// фильтра (D-46). Пустой грант → пустой ответ (no-leak). iam недоступен →
-// Unavailable (fail-closed, D-47).
+// фильтра. Пустой грант → пустой ответ (no-leak). iam недоступен →
+// Unavailable (fail-closed).
 func (u *ListLoadBalancersUseCase) Execute(
 	ctx context.Context, req *lbv1.ListNetworkLoadBalancersRequest,
 ) (*lbv1.ListNetworkLoadBalancersResponse, error) {

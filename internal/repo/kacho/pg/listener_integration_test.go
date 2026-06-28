@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package pg_test
 
 import (
@@ -41,7 +44,7 @@ func TestListener_CRUD(t *testing.T) {
 	assert.Equal(t, l.ID, page[0].ID)
 }
 
-// TestListener_UniquePortProto — GWT-DB-006: UNIQUE (lb_id, port, protocol).
+// TestListener_UniquePortProto — UNIQUE (lb_id, port, protocol).
 func TestListener_UniquePortProto(t *testing.T) {
 	repo, cleanup := newRepo(t, setupTestDB(t))
 	defer cleanup()
@@ -65,7 +68,7 @@ func TestListener_UniquePortProto(t *testing.T) {
 	assert.True(t, errors.Is(err, kacho.ErrAlreadyExists), "got %v", err)
 }
 
-// TestListener_RegionVipUnique_RaceTest — GWT-LST-011: partial UNIQUE
+// TestListener_RegionVipUnique_RaceTest — partial UNIQUE
 // (region_id, allocated_address, port, protocol) WHERE status<>'DELETING'.
 // Race-сценарий: 2 goroutines пытаются insert'нуть один и тот же VIP/port.
 // Ровно одна успешна.

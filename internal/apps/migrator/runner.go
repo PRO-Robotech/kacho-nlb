@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 // runner.go — высокоуровневая обёртка над Dialect. Один экземпляр на жизнь
 // процесса; concurrent использование не предполагается (cobra гоняет одну
 // команду за раз).

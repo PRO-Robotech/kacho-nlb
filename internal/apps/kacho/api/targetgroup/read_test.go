@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package targetgroup
 
 import (
@@ -17,7 +20,7 @@ import (
 
 // ---- Get -------------------------------------------------------------------
 
-// GWT-TGR-015 — Get TG with 1 target → returns inline targets[] + HC.
+// Get TG with 1 target → returns inline targets + HC.
 func TestGet_ReturnsInlineTargetsAndHC(t *testing.T) {
 	repo := newFakeRepo()
 	tg := makeTG("prj-acme", "backend-web")
@@ -55,7 +58,7 @@ func TestGet_NotFound(t *testing.T) {
 
 // ---- List ------------------------------------------------------------------
 
-// GWT-TGR-016 — List filtered by project_id (+ optional name filter).
+// List filtered by project_id (+ optional name filter).
 func TestList_FilterByProject(t *testing.T) {
 	repo := newFakeRepo()
 	repo.seedTG(makeTG("prj-a", "tg-a1"))
@@ -87,7 +90,7 @@ func TestList_EmptyProjectID_InvalidArg(t *testing.T) {
 
 // ---- ListOperations --------------------------------------------------------
 
-// GWT-TGR-028 — ListOperations returns recorded ops for resource_id == tg_id.
+// ListOperations returns recorded ops for resource_id == tg_id.
 func TestListOperations_ReturnsOpsForTG(t *testing.T) {
 	opsRepo := newFakeOpsRepo()
 	// Seed two operations directly.

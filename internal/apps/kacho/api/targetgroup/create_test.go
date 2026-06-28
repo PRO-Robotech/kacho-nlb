@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package targetgroup
 
 import (
@@ -50,7 +53,7 @@ func mkUC(repo *fakeRepo, opsRepo *fakeOpsRepo) *CreateTargetGroupUseCase {
 	)
 }
 
-// GWT-TGR-001 — Create OK.
+// Create OK.
 func TestCreate_Happy(t *testing.T) {
 	repo := newFakeRepo()
 	opsRepo := newFakeOpsRepo()
@@ -71,7 +74,7 @@ func TestCreate_Happy(t *testing.T) {
 	assert.Equal(t, kachopg.OutboxActionCreated, events[0].Action)
 }
 
-// GWT-TGR-002 — empty targets allowed.
+// empty targets allowed.
 func TestCreate_EmptyTargetsAllowed(t *testing.T) {
 	repo := newFakeRepo()
 	opsRepo := newFakeOpsRepo()
@@ -84,7 +87,7 @@ func TestCreate_EmptyTargetsAllowed(t *testing.T) {
 	require.Nil(t, final.Error)
 }
 
-// GWT-TGR-003 — multiple HC types set → InvalidArgument.
+// multiple HC types set → InvalidArgument.
 func TestCreate_HealthCheck_MultipleSet_InvalidArg(t *testing.T) {
 	repo := newFakeRepo()
 	uc := mkUC(repo, newFakeOpsRepo())
@@ -99,7 +102,7 @@ func TestCreate_HealthCheck_MultipleSet_InvalidArg(t *testing.T) {
 	require.Contains(t, fieldViolationsText(err), "exactly one of: tcp, http, https, grpc")
 }
 
-// GWT-TGR-005 — interval out-of-bounds.
+// interval out-of-bounds.
 func TestCreate_HCInterval_OutOfBounds(t *testing.T) {
 	repo := newFakeRepo()
 	uc := mkUC(repo, newFakeOpsRepo())
@@ -109,7 +112,7 @@ func TestCreate_HCInterval_OutOfBounds(t *testing.T) {
 	require.Equal(t, codes.InvalidArgument, status.Code(err))
 }
 
-// GWT-TGR-006 — thresholds out-of-bounds.
+// thresholds out-of-bounds.
 func TestCreate_Thresholds_OutOfBounds(t *testing.T) {
 	repo := newFakeRepo()
 	uc := mkUC(repo, newFakeOpsRepo())
@@ -120,7 +123,7 @@ func TestCreate_Thresholds_OutOfBounds(t *testing.T) {
 	require.Contains(t, fieldViolationsText(err), "unhealthy_threshold must be in range [2, 10]")
 }
 
-// GWT-TGR-007 — deregistration_delay out-of-bounds.
+// deregistration_delay out-of-bounds.
 func TestCreate_DeregDelay_OutOfBounds(t *testing.T) {
 	repo := newFakeRepo()
 	uc := mkUC(repo, newFakeOpsRepo())
@@ -131,7 +134,7 @@ func TestCreate_DeregDelay_OutOfBounds(t *testing.T) {
 	require.Contains(t, fieldViolationsText(err), "deregistration_delay_seconds must be in range [0, 3600]")
 }
 
-// GWT-TGR-008 — slow_start out-of-bounds.
+// slow_start out-of-bounds.
 func TestCreate_SlowStart_OutOfBounds(t *testing.T) {
 	repo := newFakeRepo()
 	uc := mkUC(repo, newFakeOpsRepo())
@@ -142,7 +145,7 @@ func TestCreate_SlowStart_OutOfBounds(t *testing.T) {
 	require.Contains(t, fieldViolationsText(err), "slow_start_seconds must be in range [0, 900]")
 }
 
-// GWT-TGR-009 — target without identity.
+// target without identity.
 func TestCreate_Target_NoIdentity_InvalidArg(t *testing.T) {
 	repo := newFakeRepo()
 	uc := mkUC(repo, newFakeOpsRepo())
@@ -154,7 +157,7 @@ func TestCreate_Target_NoIdentity_InvalidArg(t *testing.T) {
 		"target must specify exactly one of: instance_id, nic_id, ip_ref, external_ip")
 }
 
-// GWT-TGR-011 — bogon external_ip variants.
+// bogon external_ip variants.
 func TestCreate_Target_BogonExternalIP(t *testing.T) {
 	bogons := []struct {
 		addr   string
@@ -182,7 +185,7 @@ func TestCreate_Target_BogonExternalIP(t *testing.T) {
 	}
 }
 
-// GWT-TGR-014 — duplicate name → AlreadyExists.
+// duplicate name → AlreadyExists.
 func TestCreate_DuplicateName_AlreadyExists(t *testing.T) {
 	repo := newFakeRepo()
 	repo.seedTG(makeTG("prj-acme", "backend-web"))
@@ -230,7 +233,7 @@ func TestCreate_PeerProject_NotFound(t *testing.T) {
 	require.Contains(t, final.Error.Message, "Project prj-x not found")
 }
 
-// SEC-D: Create writes a fga.register-intent (project-hierarchy + creator) into
+// Create writes a fga.register-intent (project-hierarchy + creator) into
 // the writer-tx outbox when the principal is an authenticated user.
 func TestCreate_EmitsFGARegisterIntent(t *testing.T) {
 	repo := newFakeRepo()
@@ -255,7 +258,7 @@ func TestCreate_EmitsFGARegisterIntent(t *testing.T) {
 	require.Equal(t, "user:alice", ev.Intent.Tuples[1].SubjectID)
 	require.Equal(t, domain.FGARelationAdmin, ev.Intent.Tuples[1].Relation)
 
-	// epic-rsab T3 (D4, T3-02 nlb-side): the Create register-intent carries the
+	// (nlb-side): the Create register-intent carries the
 	// tenant labels + parent-project so kacho-iam feeds resource_mirror for the
 	// γ selector matchLabels.
 	require.Equal(t, map[string]string{"tier": "web"}, ev.Intent.Labels, "labels in create intent")

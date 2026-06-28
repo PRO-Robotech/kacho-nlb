@@ -1,6 +1,9 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 // Package targetgroup — gRPC handler + use-cases для TargetGroupService.
 //
-// 9 RPCs (design §3.4, acceptance §5 + §6):
+// 9 RPCs:
 //   - Get / List / ListOperations    — sync read.
 //   - Create / Update / Delete / Move — async (Operation envelope).
 //   - AddTargets / RemoveTargets      — async (Operation envelope).
@@ -13,15 +16,15 @@
 //   - helpers.go — общие mapping-утилы (HC, target, outbox-payload).
 //
 // Composition root — `cmd/kacho-loadbalancer/main.go`: pgxpool → kachopg.New →
-// peer-clients → NewHandler(...) → publicSrv.Register.
+// peer-clients → NewHandler → publicSrv.Register.
 package targetgroup
 
 import (
 	"context"
 	"log/slog"
 
-	lbv1 "github.com/PRO-Robotech/kacho-nlb/proto/gen/go/kacho/cloud/loadbalancer/v1"
 	operationpb "github.com/PRO-Robotech/kacho-corelib/proto/gen/go/kacho/cloud/operation"
+	lbv1 "github.com/PRO-Robotech/kacho-nlb/proto/gen/go/kacho/cloud/loadbalancer/v1"
 
 	"github.com/PRO-Robotech/kacho-nlb/internal/authzfilter"
 )

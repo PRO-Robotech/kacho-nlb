@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package loadbalancer
 
 import (
@@ -10,16 +13,16 @@ import (
 	kachorepo "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho"
 )
 
-// GetTargetStatesUseCase — sync computed per-target health (design §4.6,
-// acceptance GWT-NLB-039..GWT-NLB-042). Deterministic ramp без реальных
-// healthcheck probes (control-plane-only фаза, acceptance §0.1):
+// GetTargetStatesUseCase — sync computed per-target health.
+// Deterministic ramp без реальных
+// healthcheck probes (control-plane-only фаза):
 //
-//	- TargetHealthInactive если LB.status == STOPPED
-//	- TargetHealthDraining если target.status == DRAINING
-//	- TargetHealthInitial  если age < HC.interval * HC.healthy_threshold
-//	- TargetHealthHealthy  иначе
+//   - TargetHealthInactive если LB.status == STOPPED
+//   - TargetHealthDraining если target.status == DRAINING
+//   - TargetHealthInitial  если age < HC.interval * HC.healthy_threshold
+//   - TargetHealthHealthy  иначе
 //
-// Возвращает TargetState[]: subnet_id / address / status / zone_shifted.
+// Возвращает TargetState: subnet_id / address / status / zone_shifted.
 type GetTargetStatesUseCase struct {
 	repo Repo
 	now  func() time.Time
@@ -39,9 +42,15 @@ func (u *GetTargetStatesUseCase) Execute(
 	if lbID == "" {
 		return nil, errInvalidArg("network_load_balancer_id", "required")
 	}
+	if err := validateLoadBalancerID(lbID); err != nil {
+		return nil, err
+	}
 	tgID := req.GetTargetGroupId()
 	if tgID == "" {
 		return nil, errInvalidArg("target_group_id", "required")
+	}
+	if err := validateTargetGroupRefID(tgID); err != nil {
+		return nil, err
 	}
 
 	rd, err := u.repo.Reader(ctx)
@@ -74,7 +83,7 @@ func (u *GetTargetStatesUseCase) Execute(
 	return resp, nil
 }
 
-// computeTargetState — deterministic ramp formula (design §4.6).
+// computeTargetState — deterministic ramp formula.
 func computeTargetState(
 	lbStatus domain.LBStatus,
 	hc domain.HealthCheck,
@@ -98,7 +107,7 @@ func computeTargetState(
 	return state
 }
 
-// isInInitialRamp — true пока age < interval * healthy_threshold (design §4.6).
+// isInInitialRamp — true пока age < interval * healthy_threshold.
 func isInInitialRamp(hc domain.HealthCheck, createdAt, now time.Time) bool {
 	interval := time.Duration(hc.Interval)
 	if interval <= 0 {
@@ -138,4 +147,3 @@ func addressOfTarget(t domain.Target) string {
 	}
 	return ""
 }
-

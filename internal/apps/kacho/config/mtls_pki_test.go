@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package config_test
 
 import (
@@ -17,7 +20,7 @@ import (
 )
 
 // writeTestPKI generates a self-signed CA-style cert + EC key (both serve as the
-// "internal CA" bundle and a leaf cert/key for the SEC-D mTLS config tests) and
+// "internal CA" bundle and a leaf cert/key for the mTLS config tests) and
 // writes them to temp PEM files, returning (caFile, certFile, keyFile). The
 // config tests only verify that TLSServerCreds/TLSClientCreds can load valid
 // material — a single self-signed cert that is its own CA suffices.

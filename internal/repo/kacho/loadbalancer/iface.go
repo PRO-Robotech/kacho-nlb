@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 // Package loadbalancer — doc-only stub-пакет (placeholder под service-слой).
 //
 // Port-интерфейсы CQRS-репо для NetworkLoadBalancer живут в leaf-пакете

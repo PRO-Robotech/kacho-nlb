@@ -1,18 +1,21 @@
-// Package dto — table-driven generic-based DTO трансферы (evgeniy §3.C).
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
+// Package dto — table-driven generic-based DTO трансферы.
 //
 // Структура:
 //   - dto/base.go (этот файл): generic Interface, RegTransfer / FindTransfer,
 //     Fn / Fn2Face helper, FromTo + DTO[F,T] pair + Transfer entry-point с
 //     type-set generic constraint.
-//   - dto/type2pb/*.go: реализации Interface[<src>, <pb>] + init()-регистрация.
+//   - dto/type2pb/*.go: реализации Interface[<src>, <pb>] + init-регистрация.
 //
 // Use-case в caller-site:
 //
 //	var dst *lbv1.NetworkLoadBalancer
-//	if err := dto.Transfer(dto.FromTo(rec, &dst)); err != nil { ... }
+//	if err := dto.Transfer(dto.FromTo(rec, &dst)); err != nil {... }
 //	return anypb.New(dst)
 //
-// Registry — process-level map[reflect.Type]any, заполняется через init() в
+// Registry — process-level map[reflect.Type]any, заполняется через init в
 // каждом transfer-файле. Type-set constraint Transferrable закрывает множество
 // допустимых пар compile-time — попытка вызвать Transfer на незарегистрированной
 // паре не компилируется (а не падает в runtime).
@@ -24,16 +27,16 @@ import (
 	"sync"
 	"time"
 
-	lbv1 "github.com/PRO-Robotech/kacho-nlb/proto/gen/go/kacho/cloud/loadbalancer/v1"
 	operationv1 "github.com/PRO-Robotech/kacho-corelib/proto/gen/go/kacho/cloud/operation"
 	kachorepo "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho"
+	lbv1 "github.com/PRO-Robotech/kacho-nlb/proto/gen/go/kacho/cloud/loadbalancer/v1"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
-// Interface — generic transfer-функтор F → T (evgeniy §3.C1).
+// Interface — generic transfer-функтор F → T.
 //
 // Реализация живёт в подпакете dto/type2pb/ и регистрируется в реестре через
-// RegTransfer в init().
+// RegTransfer в init.
 type Interface[F any, T any] interface {
 	Transfer(F) (T, error)
 }
@@ -45,7 +48,7 @@ type Fn[F any, T any] func(F) (T, error)
 // Transfer — реализация Interface для Fn.
 func (f Fn[F, T]) Transfer(src F) (T, error) { return f(src) }
 
-// Fn2Face оборачивает функцию в Interface — синтаксический helper для init():
+// Fn2Face оборачивает функцию в Interface — синтаксический helper для init:
 //
 //	dto.RegTransfer(dto.Fn2Face(networkLoadBalancer{}.toPb))
 func Fn2Face[F any, T any](fn func(F) (T, error)) Interface[F, T] { return Fn[F, T](fn) }
@@ -62,7 +65,7 @@ var (
 )
 
 // RegTransfer регистрирует трансфер F → T под ключом reflect.TypeFor[tag[F,T]].
-// Дубликат регистрации (та же пара (F,T)) — panic в init().
+// Дубликат регистрации (та же пара (F,T)) — panic в init.
 func RegTransfer[F any, T any](impl Interface[F, T]) {
 	key := reflect.TypeFor[tag[F, T]]()
 	regMu.Lock()
@@ -97,8 +100,8 @@ func findTransfer[F any, T any]() (Interface[F, T], bool) {
 
 // ---- DTO entry-point (Transfer + FromTo) -------------------------------------
 
-// DTO — pair-объект, который собирает FromTo(): хранит src + указатель на dst
-// и реализует Perform() через registry-lookup. Поле dst — pointer-to-T, чтобы
+// DTO — pair-объект, который собирает FromTo: хранит src + указатель на dst
+// и реализует Perform через registry-lookup. Поле dst — pointer-to-T, чтобы
 // caller получил результат через свой собственный nil-pointer.
 type DTO[F any, T any] struct {
 	src F
@@ -132,15 +135,15 @@ func FromTo[F any, T any](src F, dst *T) *DTO[F, T] {
 	return &DTO[F, T]{src: src, dst: dst}
 }
 
-// Transferrable — закрытый sum-type generic constraint для Transfer():
+// Transferrable — закрытый sum-type generic constraint для Transfer:
 // принимает только те *DTO[F,T] пары, которые ЯВНО зарегистрированы в
 // type-set ниже. Compile-time гарантия: попытка вызвать
 // `dto.Transfer(dto.FromTo(someUnregisteredSrc, &dst))` с парой (F,T), не
 // перечисленной в union — провалится в compile-time.
 //
-// Skill evgeniy §3 C.5: type-set generic-constraint над union допустимых пар.
+// type-set generic-constraint над union допустимых пар.
 // При добавлении нового ресурса в DTO-реестр требуется одновременно
-// (а) новой пары в union ниже, (б) нового init() с RegTransfer в
+// (а) новой пары в union ниже, (б) нового init с RegTransfer в
 // `internal/dto/type2pb/`. Без обоих — код не компилируется.
 type Transferrable interface {
 	Perform() error
@@ -153,7 +156,7 @@ type Transferrable interface {
 		*DTO[*operationv1.Operation, *operationv1.Operation]
 }
 
-// Transfer запускает Perform() на dto. Единственная публичная entry-point.
+// Transfer запускает Perform на dto. Единственная публичная entry-point.
 func Transfer[V Transferrable](dto V) error {
 	return dto.Perform()
 }

@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package targetgroup
 
 import (
@@ -19,30 +22,30 @@ import (
 	kachopg "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho/pg"
 )
 
-// AddTargetsUseCase — добавляет targets в TG (KAC-154, acceptance §6 GWT-TGT-001..010).
+// AddTargetsUseCase — добавляет targets в TG.
 //
 // Sync (handler-thread):
 //   - target_group_id required, len(targets) >= 1;
-//   - per-target domain.Target.Validate() (4-way oneof, weight bounds,
+//   - per-target domain.Target.Validate (4-way oneof, weight bounds,
 //     external_ip bogon-check).
 //
 // Async worker:
-//   - TG.Get + status guard (DELETING → FailedPrecondition; GWT-TGT-010);
+//   - TG.Get + status guard (DELETING → FailedPrecondition);
 //   - per-target peer-validate:
-//     - instance: compute.InstanceService.Get + region match (GWT-TGT-001/006);
-//     - nic: vpc.NetworkInterfaceService.Get + region match via subnet (GWT-TGT-007);
-//     - ip_ref: vpc.SubnetService.Get + region match + IP-in-CIDR (GWT-TGT-004/008);
-//     - external_ip: bogon-check уже в Validate (GWT-TGR-011), peer-validate нет;
+//   - instance: compute.InstanceService.Get + region match (006);
+//   - nic: vpc.NetworkInterfaceService.Get + region match via subnet;
+//   - ip_ref: vpc.SubnetService.Get + region match + IP-in-CIDR (008);
+//   - external_ip: bogon-check уже в Validate, peer-validate нет;
 //   - Writer-TX → AddTargets (ON CONFLICT DO NOTHING per partial UNIQUE) +
-//     outbox UPDATED только если >0 строк вставлено (GWT-TGT-002 idempotent
+//     outbox UPDATED только если >0 строк вставлено (idempotent
 //     no-op) → Commit.
 type AddTargetsUseCase struct {
-	repo            Repo
-	opsRepo         OpsRepo
-	instanceClient  InstanceClient
-	nicClient       NetworkInterfaceClient
-	subnetClient    SubnetClient
-	logger          *slog.Logger
+	repo           Repo
+	opsRepo        OpsRepo
+	instanceClient InstanceClient
+	nicClient      NetworkInterfaceClient
+	subnetClient   SubnetClient
+	logger         *slog.Logger
 }
 
 // NewAddTargetsUseCase конструктор.
@@ -69,6 +72,9 @@ func (u *AddTargetsUseCase) Execute(
 	if tgID == "" {
 		return nil, errInvalidArg("target_group_id", "required")
 	}
+	if err := validateTargetGroupID(tgID); err != nil {
+		return nil, err
+	}
 	if len(req.GetTargets()) == 0 {
 		return nil, status.Error(codes.InvalidArgument, "at least one target is required")
 	}
@@ -90,11 +96,11 @@ func (u *AddTargetsUseCase) Execute(
 		&lbv1.AddTargetsMetadata{TargetGroupId: tgID},
 	)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "build operation: %v", err)
+		return nil, mapDomainErr(err)
 	}
 	principal := operations.PrincipalFromContext(ctx)
 	if err := u.opsRepo.CreateWithPrincipal(ctx, op, principal); err != nil {
-		return nil, status.Errorf(codes.Internal, "operation persist: %v", err)
+		return nil, mapDomainErr(err)
 	}
 	operations.Run(ctx, u.opsRepo, op.ID, func(workerCtx context.Context) (*anypb.Any, error) {
 		return u.doAdd(workerCtx, tgID, targets)
@@ -140,11 +146,11 @@ func (u *AddTargetsUseCase) doAdd(ctx context.Context, tgID string, targets []do
 		if err := w.Outbox().Emit(ctx,
 			kachopg.OutboxResourceTargetGroup, tgID, string(tg.ProjectID),
 			kachopg.OutboxActionUpdated, map[string]any{
-				"id":              tgID,
-				"project_id":      string(tg.ProjectID),
-				"region_id":       string(tg.RegionID),
-				"trigger":         "add_targets",
-				"inserted_count":  inserted,
+				"id":             tgID,
+				"project_id":     string(tg.ProjectID),
+				"region_id":      string(tg.RegionID),
+				"trigger":        "add_targets",
+				"inserted_count": inserted,
 			},
 		); err != nil {
 			return nil, mapDomainErr(err)
@@ -168,7 +174,7 @@ func (u *AddTargetsUseCase) doAdd(ctx context.Context, tgID string, targets []do
 }
 
 // validateTargetPeer — per-target peer-validate. idx — индекс target'а в request
-// массиве (для verbatim error text `"target[N]..."`). Errors → gRPC InvalidArgument.
+// массиве (для с фиксированным текстом error text `"target[N]..."`). Errors → gRPC InvalidArgument.
 func (u *AddTargetsUseCase) validateTargetPeer(
 	ctx context.Context, tgRegion domain.RegionID, idx int, t *domain.Target,
 ) error {
@@ -180,7 +186,7 @@ func (u *AddTargetsUseCase) validateTargetPeer(
 	case t.IPRef != nil:
 		return u.validateIPRefTarget(ctx, tgRegion, idx, t)
 	case t.ExternalIP != nil:
-		// bogon-check уже в domain.Target.Validate(); peer-validate нет.
+		// bogon-check уже в domain.Target.Validate; peer-validate нет.
 		return nil
 	}
 	return nil
@@ -263,8 +269,8 @@ func (u *AddTargetsUseCase) validateIPRefTarget(
 	return nil
 }
 
-// mapPeerTargetErr — peer-error → InvalidArgument с verbatim per-target context.
-// NotFound от peer → "target[N].<field> '<id>' not found" (acceptance §6 TGT-014).
+// mapPeerTargetErr — peer-error → InvalidArgument с с фиксированным текстом per-target context.
+// NotFound от peer → "target[N].<field> '<id>' not found".
 // Unavailable → Unavailable. Прочие → InvalidArgument.
 func mapPeerTargetErr(idx int, field, id string, err error) error {
 	if err == nil {
@@ -333,7 +339,7 @@ func regionFromZone(zone string) string {
 	return zone
 }
 
-// isInstanceTarget / isNicTarget — small predicates для switch (option Maybe()
+// isInstanceTarget / isNicTarget — small predicates для switch (option Maybe
 // возвращает (val, ok); хотим только ok).
 func isInstanceTarget(t *domain.Target) bool {
 	_, ok := t.InstanceID.Maybe()

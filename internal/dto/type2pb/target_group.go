@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package type2pb
 
 import (
@@ -12,7 +15,7 @@ import (
 
 // targetGroup — трансфер kachorepo.TargetGroupRecord → *lbv1.TargetGroup.
 //
-// Inline-вставляет []Target через target{}.toPb (Targets — embedded child).
+// Inline-вставляет Target через target{}.toPb (Targets — embedded child).
 // HealthCheck — через healthCheckToPb helper (не registry-transfer; см.
 // health_check.go).
 type targetGroup struct{}

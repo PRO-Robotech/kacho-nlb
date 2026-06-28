@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package vpc
 
 import (
@@ -11,8 +14,8 @@ import (
 
 	"google.golang.org/protobuf/types/known/anypb"
 
-	"github.com/PRO-Robotech/kacho-corelib/retry"
 	operationpb "github.com/PRO-Robotech/kacho-corelib/proto/gen/go/kacho/cloud/operation"
+	"github.com/PRO-Robotech/kacho-corelib/retry"
 	vpcpb "github.com/PRO-Robotech/kacho-vpc/proto/gen/go/kacho/cloud/vpc/v1"
 
 	"github.com/PRO-Robotech/kacho-nlb/internal/domain"
@@ -97,7 +100,7 @@ type internalAddressClient struct {
 // OperationService.
 // internalConn — kacho-vpc internal listener (`:9091`); содержит
 // InternalAddressService (SetReference / ClearReference — не публикуются на
-// external endpoint, см. workspace CLAUDE.md «Запреты» #6).
+// external endpoint, Internal-only).
 func NewInternalAddressClient(publicConn, internalConn grpc.ClientConnInterface) InternalAddressClient {
 	if publicConn == nil || internalConn == nil {
 		return nil
@@ -159,7 +162,7 @@ func (c *internalAddressClient) AllocateExternalIP(
 	ip := addr.GetExternalIpv4Address().GetAddress()
 	// pool_id не expose'ится через AddressService.Create response (только через
 	// InternalAddressService.AllocateExternalIP) — для NLB-флоу это не критично:
-	// pool tracking — отдельный enhancement (Wave 8 metrics / observability).
+	// pool tracking — отдельный enhancement (metrics / observability).
 	return &AllocateResponse{
 		AddressID: addr.GetId(),
 		Value:     ip,

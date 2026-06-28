@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package vpc
 
 import (
@@ -19,7 +22,7 @@ import (
 // необходимыми consumer'ам NLB (Listener.subnet_id / Target.ip_ref validation).
 //
 // RegionID — нет на vpc.Subnet (Subnet привязан к ZoneId; Region резолвится
-// дополнительным geo.ZoneService.Get у NLB Wave 6); поле оставлено в
+// дополнительным geo.ZoneService.Get у NLB); поле оставлено в
 // projection как denormalised mirror (заполняется consumer'ом, не adapter'ом).
 type Subnet struct {
 	ID           string
@@ -47,7 +50,7 @@ type subnetClient struct {
 	cli vpcpb.SubnetServiceClient
 }
 
-// NewSubnetClient оборачивает grpc-conn в typed adapter. conn — `clients.Build(...)`.
+// NewSubnetClient оборачивает grpc-conn в typed adapter. conn — `clients.Build`.
 func NewSubnetClient(conn grpc.ClientConnInterface) SubnetClient {
 	if conn == nil {
 		return nil

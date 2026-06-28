@@ -1,8 +1,8 @@
 # Multi-stage build for kacho-nlb (api-server + migrator).
-# Single-repo build: внутренние зависимости (kacho-corelib, kacho-proto-stubs,
-# kacho-compute/geo/iam/vpc proto-пакеты) тянутся как versioned-модули из GitHub
+# Single-repo build: внутренние зависимости (kacho-corelib, kacho-compute, kacho-geo,
+# kacho-iam, kacho-vpc) тянутся как versioned-модули из GitHub
 # (go.mod без replace), build-context — этот репо.
-FROM --platform=$BUILDPLATFORM mirror.gcr.io/library/golang:1.25-alpine AS builder
+FROM --platform=$BUILDPLATFORM mirror.gcr.io/library/golang:1.26-alpine AS builder
 ARG TARGETOS
 ARG TARGETARCH
 WORKDIR /src

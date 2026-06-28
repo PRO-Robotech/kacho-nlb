@@ -1,3 +1,6 @@
+# Copyright (c) PRO-Robotech
+# SPDX-License-Identifier: BUSL-1.1
+
 name: continuous-fuzz
 
 # KAC-127 Phase 12 — Continuous fuzzing for Compute.
@@ -34,10 +37,6 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with: { path: kacho-nlb }
-      - uses: actions/checkout@v6
-        with: { repository: PRO-Robotech/kacho-corelib, ref: main, path: kacho-corelib }
-      - uses: actions/checkout@v6
-        with: { repository: PRO-Robotech/kacho-proto, ref: main, path: kacho-proto }
       - uses: actions/setup-go@v6
         with: { go-version-file: kacho-nlb/go.mod }
 

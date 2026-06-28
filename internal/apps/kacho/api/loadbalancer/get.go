@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package loadbalancer
 
 import (
@@ -6,11 +9,11 @@ import (
 	lbv1 "github.com/PRO-Robotech/kacho-nlb/proto/gen/go/kacho/cloud/loadbalancer/v1"
 )
 
-// GetLoadBalancerUseCase — sync read одного NetworkLoadBalancer (GWT-NLB-007).
+// GetLoadBalancerUseCase — sync read одного NetworkLoadBalancer.
 // Маппинг:
 //
 //	req.NetworkLoadBalancerId == "" → InvalidArgument "network_load_balancer_id required"
-//	repo ErrNotFound                → NotFound (verbatim YC text из mapPgErr)
+//	repo ErrNotFound                → NotFound (текст ошибки по конвенции Kachō из mapPgErr)
 //	repo internal                   → Internal (no leak)
 type GetLoadBalancerUseCase struct {
 	repo Repo
@@ -26,6 +29,9 @@ func (u *GetLoadBalancerUseCase) Execute(ctx context.Context, req *lbv1.GetNetwo
 	id := req.GetNetworkLoadBalancerId()
 	if id == "" {
 		return nil, errInvalidArg("network_load_balancer_id", "required")
+	}
+	if err := validateLoadBalancerID(id); err != nil {
+		return nil, err
 	}
 	rd, err := u.repo.Reader(ctx)
 	if err != nil {

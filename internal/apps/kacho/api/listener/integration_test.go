@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package listener_test
 
 import (
@@ -44,7 +47,7 @@ import (
 //     succeeds, second fails on SetReference CAS (mocked here as
 //     `fakeInternalAddrs` returns FailedPrecondition once exhausted).
 //
-// All tests gated by testing.Short() (testcontainers requires Docker).
+// All tests gated by testing.Short (testcontainers requires Docker).
 
 // gooseMu serialises the goose package-level globals (SetBaseFS / SetDialect /
 // Up) which are NOT goroutine-safe. Parallel integration tests each call

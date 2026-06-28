@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package main
 
 import (
@@ -9,10 +12,10 @@ import (
 	"github.com/PRO-Robotech/kacho-nlb/internal/apps/kacho/config"
 )
 
-// dialpeers_mtls_test.go — SEC-M: nlb→vpc + nlb→compute CLIENT mTLS dial wiring.
+// dialpeers_mtls_test.go — nlb→vpc + nlb→compute CLIENT mTLS dial wiring.
 //
 // Ground truth (mirrors the already-working nlb→iam mtls.iam-register edge and
-// vpc→compute / SEC-I edges): kacho-vpc & kacho-compute run mTLS servers
+// vpc→compute / edges): kacho-vpc & kacho-compute run mTLS servers
 // (RequireAndVerifyClientCert). A nlb dial reaching them in PLAINTEXT is reset
 // ("error reading server preface: EOF", code 14). Therefore each peer dial MUST
 // consume its OWN per-edge grpcclient.TLSClient creds (cfg.MTLS.VPC /
@@ -37,7 +40,7 @@ func edgeSpec(t *testing.T, specs []peerDialSpec, name string) peerDialSpec {
 	return peerDialSpec{}
 }
 
-// TestPeerDialSpecs_VPCComputeWiredToPerEdgeMTLS — SEC-M: the vpc-public,
+// TestPeerDialSpecs_VPCComputeWiredToPerEdgeMTLS — the vpc-public,
 // vpc-internal and compute dial-specs carry their per-edge mTLS config, so when
 // the edge is enabled the dial presents the kacho-nlb client-cert (NOT insecure).
 // RED until dialPeers exposes peerDialSpecs wiring cfg.MTLS.VPC / cfg.MTLS.Compute.
@@ -94,10 +97,10 @@ func TestPeerDialSpecs_IAMPerListenerMTLS(t *testing.T) {
 		"iam-internal (:9091 Check+Register) dial carries cfg.MTLS.IAMRegister")
 }
 
-// TestPeerDialSpecs_DisabledEdgesInsecure — SEC-M zero-regression: with every
+// TestPeerDialSpecs_DisabledEdgesInsecure — zero-regression: with every
 // edge default-off, no vpc/compute spec is mTLS-enabled (insecure dev dial). The
 // load-bearing property is Enable=false → dialOne builds insecure creds and the
-// cert paths are never read (viper seeds CAFiles to an empty []string default,
+// cert paths are never read (viper seeds CAFiles to an empty string default,
 // which is functionally equivalent to nil for an off edge).
 func TestPeerDialSpecs_DisabledEdgesInsecure(t *testing.T) {
 	t.Setenv("KACHO_NLB_REPOSITORY__POSTGRES__URL", "postgres://u:p@h/kacho_nlb")

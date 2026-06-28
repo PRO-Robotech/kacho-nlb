@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 // Scenario: smoke
 //
 // Purpose: post-deploy sanity. Confirms the api-gateway -> kacho-nlb path is

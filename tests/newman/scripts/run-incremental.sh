@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+
+# Copyright (c) PRO-Robotech
+# SPDX-License-Identifier: BUSL-1.1
+
 # tests/newman/scripts/run-incremental.sh — quota-safe per-folder newman runner.
 #
 # Iterates each case-folder (Postman folder) inside every collection,

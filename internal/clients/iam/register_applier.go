@@ -1,10 +1,13 @@
-// register_applier.go — SEC-D register-drainer applier over kacho-iam
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
+// register_applier.go — register-drainer applier over kacho-iam
 // InternalIAMService.RegisterResource / UnregisterResource.
 //
-// This is the kacho-nlb half of the fga_register_outbox drainer (epic §3.1
-// Вариант A). It replaces the former direct best-effort FGA write
-// (`internal/fgawrite` + iam.HierarchyWriter.WriteCreatorTuple after Commit,
-// GitHub Issue N5). The worker now persists a FGARegisterIntent in the
+// This is the kacho-nlb half of the fga_register_outbox drainer (Вариант A).
+// It replaces the former direct best-effort FGA write (`internal/fgawrite` +
+// iam.HierarchyWriter.WriteCreatorTuple after Commit). The worker now persists
+// a FGARegisterIntent in the
 // resource writer-tx; this applier drains each row and applies its tuple set
 // through kacho-iam by mTLS, mapping the gRPC reply onto the drainer's
 // three-way classification:
@@ -14,12 +17,12 @@
 //	drainer.ErrPermanent      → drainer poisons the row (attempt_count = Max)
 //	anything else             → drainer retries with exp backoff (transient)
 //
-// RegisterResource / UnregisterResource are idempotent by SEC-A contract
+// RegisterResource / UnregisterResource are idempotent by contract
 // (repeat owner-tuple → OK, NOT AlreadyExists; delete missing → OK), so the
-// happy path returns nil even on replay (SEC-D-12). codes.Unavailable /
+// happy path returns nil even on replay. codes.Unavailable /
 // DeadlineExceeded are transient → the intent stays durable and is retried
-// after IAM recovers (SEC-D-11, fail-closed §6.7). codes.InvalidArgument is a
-// malformed-tuple poison (SEC-D-14). The set of tuples in one intent is applied
+// after IAM recovers (fail-closed). codes.InvalidArgument is a
+// malformed-tuple poison. The set of tuples in one intent is applied
 // as a unit; a transient failure on any tuple retries the whole row (at-least-
 // once + IAM idempotency = exactly-once effect).
 package iam
@@ -43,7 +46,7 @@ import (
 )
 
 // RegisterResourceClient — narrow port the register-applier needs from the
-// kacho-iam Internal FGA-proxy (SEC-A). Implemented by the generated
+// kacho-iam Internal FGA-proxy. Implemented by the generated
 // InternalIAMServiceClient; a fake in tests records calls and scripts replies.
 //
 // Defined here (consumer side) so use-case / drainer code depends on the port,
@@ -55,8 +58,8 @@ type RegisterResourceClient interface {
 }
 
 // NewRegisterResourceClient wraps a grpc conn (to the kacho-iam INTERNAL
-// listener :9091 — RegisterResource/UnregisterResource are Internal-only,
-// CLAUDE.md «Запреты» #6) into the RegisterResourceClient port. nil conn → nil.
+// listener :9091 — RegisterResource/UnregisterResource are Internal-only)
+// into the RegisterResourceClient port. nil conn → nil.
 func NewRegisterResourceClient(conn grpc.ClientConnInterface) RegisterResourceClient {
 	if conn == nil {
 		return nil
@@ -67,7 +70,7 @@ func NewRegisterResourceClient(conn grpc.ClientConnInterface) RegisterResourceCl
 // DecodeFGARegisterIntent is the drainer.Decoder[domain.FGARegisterIntent] for
 // `kacho_nlb.fga_register_outbox`.payload. Malformed JSON, an empty tuple set,
 // or an incomplete tuple wraps drainer.ErrPermanent → the drainer poisons the
-// row instead of retrying forever (SEC-D-14 shape).
+// row instead of retrying forever.
 func DecodeFGARegisterIntent(payload []byte) (domain.FGARegisterIntent, error) {
 	var i domain.FGARegisterIntent
 	if err := json.Unmarshal(payload, &i); err != nil {
@@ -104,11 +107,11 @@ func NewRegisterApplier(cli RegisterResourceClient) drainer.Applier[domain.FGARe
 			return fmt.Errorf("%w: iam register client not configured", domain.ErrUnavailable)
 		}
 		// PropagateOutgoing so the iam-side principal/identity extractor sees the
-		// real caller context (KAC-178 §1 pattern). Service→service identity for
-		// the fgaproxy least-priv gate comes from the mTLS client-cert (SEC-B/C).
+		// real caller context. Service→service identity for
+		// the fgaproxy least-priv gate comes from the mTLS client-cert.
 		ctx = auth.PropagateOutgoing(ctx)
 
-		// epic-rsab T3 (D4): forward the owner labels + parent-scope + monotonic
+		// forward the owner labels + parent-scope + monotonic
 		// source_version so kacho-iam populates its output-only resource_mirror
 		// (label+parent sync feeding the γ selector). Fields are additive/optional —
 		// empty values mirror gracefully; zero source_version → nil (IAM '-infinity').
@@ -136,7 +139,7 @@ func NewRegisterApplier(cli RegisterResourceClient) drainer.Applier[domain.FGARe
 				// Symmetry: Unregister removes the mirror row by object; mirror fields
 				// are carried for message-shape symmetry but IAM uses only object +
 				// source_version (tombstone-version: a stale tombstone won't wipe a
-				// fresher row — β-hardening parity with compute).
+				// fresher row — hardening parity with compute).
 				_, err := cli.UnregisterResource(ctx, &iampb.UnregisterResourceRequest{
 					SubjectId:       t.SubjectID,
 					Relation:        t.Relation,
@@ -171,13 +174,13 @@ func sourceVersionPB(t time.Time) *timestamppb.Timestamp {
 // classifyRegisterErr maps the kacho-iam RegisterResource/UnregisterResource
 // gRPC reply onto the drainer's three-way classification.
 //
-//	nil                              → nil (applied; or idempotent OK per SEC-A)
-//	codes.AlreadyExists              → ErrAlreadyApplied (defensive; SEC-A returns
+//	nil                              → nil (applied; or idempotent OK)
+//	codes.AlreadyExists              → ErrAlreadyApplied (defensive; returns
 //	                                   OK on repeat, but a stricter IAM build that
 //	                                   surfaces AlreadyExists is still a success)
 //	codes.InvalidArgument            → ErrPermanent (malformed tuple — retry futile)
 //	codes.Unavailable / Deadline     → raw (transient — drainer retries; intent
-//	                                   durable; fail-closed §6.7, SEC-D-11/21)
+//	                                   durable; fail-closed)
 //	codes.PermissionDenied           → raw (transient: least-priv SA-relation may
 //	                                   be seeded shortly after first boot; retry)
 //	otherwise                        → raw (transient)

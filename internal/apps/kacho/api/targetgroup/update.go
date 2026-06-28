@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package targetgroup
 
 import (
@@ -18,12 +21,12 @@ import (
 )
 
 // UpdateTargetGroupUseCase — UpdateMask discipline + async update
-// (acceptance GWT-TGR-018..GWT-TGR-020).
+// .
 //
 // Mutable: name / description / labels / health_check / deregistration_delay_seconds /
 // slow_start_seconds. Immutable: project_id / region_id (mask → InvalidArgument).
 // Targets — отдельная семантика через AddTargets/RemoveTargets; mask=["targets"]
-// → InvalidArgument verbatim (GWT-TGR-020).
+// → InvalidArgument с фиксированным текстом.
 type UpdateTargetGroupUseCase struct {
 	repo    Repo
 	opsRepo OpsRepo
@@ -48,7 +51,7 @@ var knownUpdateFieldsTG = map[string]bool{
 	"slow_start_seconds":           true,
 }
 
-// immutableUpdateFieldsTG — hard-immutable, verbatim error text.
+// immutableUpdateFieldsTG — hard-immutable, с фиксированным текстом error text.
 var immutableUpdateFieldsTG = map[string]string{
 	"project_id": "project_id is immutable; use TargetGroupService.Move",
 	"region_id":  "region_id is immutable after TargetGroup.Create",
@@ -62,9 +65,12 @@ func (u *UpdateTargetGroupUseCase) Execute(
 	if id == "" {
 		return nil, errInvalidArg("target_group_id", "required")
 	}
+	if err := validateTargetGroupID(id); err != nil {
+		return nil, err
+	}
 	mask := req.GetUpdateMask().GetPaths()
 	for _, p := range mask {
-		// GWT-TGR-020: targets via mask запрещён — отдельный verbatim text.
+		// targets via mask запрещён — отдельный фиксированный текст.
 		if p == "targets" {
 			return nil, status.Error(codes.InvalidArgument,
 				"targets must be modified via AddTargets / RemoveTargets")
@@ -100,14 +106,14 @@ func (u *UpdateTargetGroupUseCase) Execute(
 		&lbv1.UpdateTargetGroupMetadata{TargetGroupId: id},
 	)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "build operation: %v", err)
+		return nil, mapDomainErr(err)
 	}
 	principal := operations.PrincipalFromContext(ctx)
 	if err := u.opsRepo.CreateWithPrincipal(ctx, op, principal); err != nil {
-		return nil, status.Errorf(codes.Internal, "operation persist: %v", err)
+		return nil, mapDomainErr(err)
 	}
 
-	// epic-rsab T3 (D4, parity with compute-β-04): re-emit the FGA-register intent
+	// (parity with compute): re-emit the FGA-register intent
 	// (carrying the new labels) ONLY when labels change — labels in mask, or empty
 	// mask (full PATCH always reapplies labels). A non-labels Update is a mirror
 	// no-op (skip the intent to avoid a useless RegisterResource round-trip).
@@ -133,7 +139,7 @@ func labelsInMaskTG(mask []string) bool {
 }
 
 // doUpdate — worker: Writer-TX → Update + outbox UPDATED (+ FGA-register intent
-// when labels changed, T3 D4) → Commit. The mirror-feed intent is written in the
+// when labels changed) → Commit. The mirror-feed intent is written in the
 // SAME writer-tx as the resource UPDATE (no dual-write); the emitter stamps a
 // monotonic source_version so IAM applies the mirror last-source-state-wins.
 func (u *UpdateTargetGroupUseCase) doUpdate(ctx context.Context, tg domain.TargetGroup, emitMirror bool) (*anypb.Any, error) {
@@ -167,7 +173,7 @@ func (u *UpdateTargetGroupUseCase) doUpdate(ctx context.Context, tg domain.Targe
 
 // applyUpdateMaskTG — наложить mask на текущий TG. Empty mask → full PATCH:
 // mutable полностью перезаписываются из req; immutable silent-ignored
-// (verbatim YC; explicit immutable field в mask уже отлавливается выше).
+// (по конвенции Kachō; explicit immutable field в mask уже отлавливается выше).
 func applyUpdateMaskTG(
 	cur domain.TargetGroup, req *lbv1.UpdateTargetGroupRequest, mask []string,
 ) domain.TargetGroup {

@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package targetgroup
 
 import (
@@ -17,21 +20,21 @@ import (
 	kachopg "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho/pg"
 )
 
-// MoveTargetGroupUseCase — cross-project move (acceptance GWT-TGR-025..027).
+// MoveTargetGroupUseCase — cross-project move.
 //
 // Sync prechecks:
 //   - same-project ("destination project is the same as source") → InvalidArgument;
-//   - HasAttachedLB > 0 → FailedPrecondition verbatim
+//   - HasAttachedLB > 0 → FailedPrecondition с фиксированным текстом
 //     `"TargetGroup is attached to N load balancer(s); detach before moving"`;
 //   - destination project exists (peer ProjectClient.Get) — InvalidArgument если NotFound.
 //
 // Worker:
 //   - Writer-TX → MoveProject (UPDATE project_id) + outbox MOVED + outbox
 //     UPDATED + FGA-register(dst project) + FGA-unregister(src project) → Commit
-//     (SEC-D Вариант A: project-rewrite in the SAME tx as MoveProject).
+//     (Вариант A: project-rewrite in the SAME tx as MoveProject).
 //
-// GWT-TGR-027 (scope editor на dst project) — реализуется api-gateway authz-
-// interceptor'ом (KAC-127 Phase 4); use-case остаётся unaware.
+// (scope editor на dst project) — реализуется api-gateway authz-
+// interceptor'ом; use-case остаётся unaware.
 type MoveTargetGroupUseCase struct {
 	repo          Repo
 	opsRepo       OpsRepo
@@ -60,6 +63,9 @@ func (u *MoveTargetGroupUseCase) Execute(
 	id := req.GetTargetGroupId()
 	if id == "" {
 		return nil, errInvalidArg("target_group_id", "required")
+	}
+	if err := validateTargetGroupID(id); err != nil {
+		return nil, err
 	}
 	dst := req.GetDestinationProjectId()
 	if dst == "" {
@@ -112,11 +118,11 @@ func (u *MoveTargetGroupUseCase) Execute(
 		},
 	)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "build operation: %v", err)
+		return nil, mapDomainErr(err)
 	}
 	principal := operations.PrincipalFromContext(ctx)
 	if err := u.opsRepo.CreateWithPrincipal(ctx, op, principal); err != nil {
-		return nil, status.Errorf(codes.Internal, "operation persist: %v", err)
+		return nil, mapDomainErr(err)
 	}
 	srcProject := string(cur.ProjectID)
 	operations.Run(ctx, u.opsRepo, op.ID, func(workerCtx context.Context) (*anypb.Any, error) {
@@ -154,7 +160,7 @@ func (u *MoveTargetGroupUseCase) doMove(ctx context.Context, id, srcProject, dst
 	); err != nil {
 		return nil, mapDomainErr(err)
 	}
-	// SEC-D: project-rewrite as register(dst) + unregister(src) in the SAME tx.
+	// project-rewrite as register(dst) + unregister(src) in the SAME tx.
 	if err := w.FGARegisterOutbox().Emit(ctx, domain.FGAEventRegister,
 		tgUnregisterIntent(id, dstProject)); err != nil {
 		return nil, mapDomainErr(err)

@@ -1,4 +1,7 @@
-// load_test.go — KAC-160; парсинг YAML, defaults, ENV-override, validation
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
+// load_test.go —; парсинг YAML, defaults, ENV-override, validation
 // (RED-first: эти тесты были написаны до реализации load/validate; см.
 // `internal/apps/kacho/config/{load,validate,defaults}.go`).
 package config
@@ -162,14 +165,14 @@ func TestLoad_MissingRequired_Postgres(t *testing.T) {
 	}
 }
 
-// TestLoad_PasswordFromEnv_SubstitutesPlaceholder — KAC-172 regression.
+// TestLoad_PasswordFromEnv_SubstitutesPlaceholder — regression.
 //
 // Helm рендерит `postgres.url` с shell-style placeholder
 // `$(KACHO_NLB_DB_PASSWORD)` (password — Secret, не в ConfigMap). Viper НЕ
 // expand'ит `$(VAR)` синтаксис — без подстановки migrator передаёт literal
 // строку в pgx → connection fail → init-container CrashLoopBackOff.
 //
-// Load() обязана: если `password-from-env: <NAME>` задан и URL содержит
+// Load обязана: если `password-from-env: <NAME>` задан и URL содержит
 // `$(<NAME>)`-placeholder — substitution из env при Load.
 func TestLoad_PasswordFromEnv_SubstitutesPlaceholder(t *testing.T) {
 	t.Setenv("KACHO_NLB_DB_PASSWORD", "secret-pw-123")

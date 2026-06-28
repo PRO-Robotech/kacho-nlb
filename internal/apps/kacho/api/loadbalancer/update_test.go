@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package loadbalancer
 
 import (
@@ -32,7 +35,7 @@ func TestUpdate_HappyPath_PatchName(t *testing.T) {
 	require.Equal(t, "edge-v2", string(repo.lbs[lbID].Name))
 }
 
-// epic-rsab T3 (D4, T3-02 nlb-side): Update(labels) re-emits the FGA-register
+// (nlb-side): Update(labels) re-emits the FGA-register
 // mirror-feed intent (carrying the new labels + parent) so kacho-iam keeps its
 // resource_mirror current under label-change reconcile.
 func TestUpdate_LabelsMask_EmitsMirrorIntent(t *testing.T) {
@@ -55,7 +58,7 @@ func TestUpdate_LabelsMask_EmitsMirrorIntent(t *testing.T) {
 	require.Equal(t, "prj-a", repo.fga[0].Intent.ParentProjectID)
 }
 
-// epic-rsab T3 (D4, compute-β-04 parity): a non-labels Update is a mirror no-op.
+// (compute parity): a non-labels Update is a mirror no-op.
 func TestUpdate_NonLabelsMask_NoMirrorIntent(t *testing.T) {
 	t.Parallel()
 	repo := newFakeRepo()

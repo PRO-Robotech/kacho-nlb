@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package targetgroup
 
 import (
@@ -13,7 +16,7 @@ import (
 // ListTargetGroupsUseCase — sync list filter by project_id (required) + optional
 // `name="<value>"` filter (через общий shared.ParseNameFilter —
 // kacho-corelib/filter.Parse, whitelist {"name"}) + cursor-based pagination
-// (acceptance GWT-TGR-016 / GWT-TGR-017).
+// .
 type ListTargetGroupsUseCase struct {
 	repo  Repo
 	authz authzfilter.Filter
@@ -26,7 +29,7 @@ func NewListTargetGroupsUseCase(repo Repo, authz authzfilter.Filter) *ListTarget
 
 // Execute — open reader → repo.List → DTO transfer per row.
 //
-// RBAC sub-phase D §11: per-object FGA filter (см. loadbalancer/list.go).
+// RBAC: per-object FGA filter (см. loadbalancer/list.go).
 func (u *ListTargetGroupsUseCase) Execute(
 	ctx context.Context, req *lbv1.ListTargetGroupsRequest,
 ) (*lbv1.ListTargetGroupsResponse, error) {

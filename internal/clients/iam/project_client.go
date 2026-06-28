@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package iam
 
 import (
@@ -34,7 +37,7 @@ type ProjectClient interface {
 	// Get возвращает Project metadata. Семантика ошибок:
 	//   - kacho-iam NotFound          → domain.ErrNotFound
 	//   - PermissionDenied            → domain.ErrFailedPrecondition (мапится
-	//     в "Project ... not found"; tenant не должен видеть разницу между
+	//     в "Project... not found"; tenant не должен видеть разницу между
 	//     "не существует" и "нет доступа" — leak'ы про authz tenant'у запрещены).
 	//   - Unavailable/DeadlineExceeded → domain.ErrUnavailable
 	//   - InvalidArgument             → domain.ErrInvalidArg
@@ -49,7 +52,7 @@ type projectClient struct {
 }
 
 // NewProjectClient оборачивает grpc-conn в typed adapter.
-// conn — обычно `clients.Build(...)` из builder.go (corlib ClientConn, реализует
+// conn — обычно `clients.Build` из builder.go (corlib ClientConn, реализует
 // grpc.ClientConnInterface). Для unit-тестов — bufconn-style `*grpc.ClientConn`.
 func NewProjectClient(conn grpc.ClientConnInterface) ProjectClient {
 	if conn == nil {
@@ -73,9 +76,9 @@ func (c *projectClient) Get(ctx context.Context, projectID string) (*Project, er
 		return nil, fmt.Errorf("%w: project_id is empty", domain.ErrInvalidArg)
 	}
 
-	// KAC-178 §2: propagate Principal в outgoing MD, чтобы iam-side ProjectService.Get
+	// propagate Principal в outgoing MD, чтобы iam-side ProjectService.Get
 	// passes its per-RPC authz Check (viewer@project) для реального user'а, а не
-	// SystemPrincipal()=user:bootstrap fallback'а.
+	// SystemPrincipal=user:bootstrap fallback'а.
 	ctx = auth.PropagateOutgoing(ctx)
 
 	var resp *iampb.Project
@@ -107,7 +110,7 @@ func mapProjectErr(projectID string, err error) error {
 		return fmt.Errorf("%w: Project %s not found", domain.ErrNotFound, projectID)
 	case codes.PermissionDenied:
 		// Не лик'аем разницу: tenant видит "не существует" и для NotFound,
-		// и для denied (см. workspace CLAUDE.md §«Инфра-чувствительные данные»).
+		// и для denied (existence-hiding: не раскрываем инфра-чувствительные данные).
 		// Используется FailedPrecondition (а не NotFound) чтобы handler-слой
 		// сервиса различал internal-precondition от honest-NotFound резолва.
 		return fmt.Errorf("%w: Project %s not found", domain.ErrFailedPrecondition, projectID)

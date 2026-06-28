@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package pg
 
 import (
@@ -77,7 +80,7 @@ type pageCursor struct {
 }
 
 // encodePageToken — base64-encoded "RFC3339Nano\x00id". Skill workspace CLAUDE.md
-// — opaque cursor: не показываем внутренности клиенту.
+// opaque cursor: не показываем внутренности клиенту.
 func encodePageToken(t time.Time, id string) string {
 	if t.IsZero() && id == "" {
 		return ""
@@ -87,7 +90,7 @@ func encodePageToken(t time.Time, id string) string {
 }
 
 // decodePageToken — обратное преобразование. Malformed token →
-// invalidArg("page_token", ...) (ErrInvalidArg → gRPC InvalidArgument).
+// invalidArg("page_token",...) (ErrInvalidArg → gRPC InvalidArgument).
 func decodePageToken(token string) (pageCursor, error) {
 	if token == "" {
 		return pageCursor{}, nil

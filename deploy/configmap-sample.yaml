@@ -1,3 +1,6 @@
+# Copyright (c) PRO-Robotech
+# SPDX-License-Identifier: BUSL-1.1
+
 # kacho-nlb — пример полного config.yaml (KAC-160 / design §6.9).
 #
 # Все ключи опциональны: defaults — в `internal/apps/kacho/config/defaults.go`

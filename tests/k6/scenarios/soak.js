@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 // Scenario: soak
 //
 // Purpose: detect slow leaks (memory, pgxpool, file descriptors, prepared-

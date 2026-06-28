@@ -1,3 +1,6 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
 package check_test
 
 import (
@@ -31,6 +34,15 @@ func principalCtx(typ, id string) context.Context {
 		DisplayName: "test",
 	})
 }
+
+// fakeServerStream — минимальный grpc.ServerStream с заданным ctx, для прогона
+// stream-RPC (Subscribe) через authz.Interceptor.Stream.
+type fakeServerStream struct {
+	grpc.ServerStream
+	ctx context.Context
+}
+
+func (s *fakeServerStream) Context() context.Context { return s.ctx }
 
 type checkCall struct {
 	subject  string
@@ -66,7 +78,7 @@ func newTestInterceptor(
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// GWT-AZD-001 — NLB.Create без editor on project → PermissionDenied
+// NLB.Create без editor on project → PermissionDenied
 // ────────────────────────────────────────────────────────────────────────────
 
 func TestAZD001_NLBCreate_NoEditor_Denied(t *testing.T) {
@@ -96,7 +108,7 @@ func TestAZD001_NLBCreate_NoEditor_Denied(t *testing.T) {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// GWT-AZD-002 — NLB.Get viewer OK
+// NLB.Get viewer OK
 // ────────────────────────────────────────────────────────────────────────────
 
 func TestAZD002_NLBGet_VGet_OK(t *testing.T) {
@@ -119,7 +131,7 @@ func TestAZD002_NLBGet_VGet_OK(t *testing.T) {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// GWT-AZD-003 — stranger subject → PermissionDenied
+// stranger subject → PermissionDenied
 // ────────────────────────────────────────────────────────────────────────────
 
 func TestAZD003_NLBGet_Stranger_Denied(t *testing.T) {
@@ -142,7 +154,7 @@ func TestAZD003_NLBGet_Stranger_Denied(t *testing.T) {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// GWT-AZD-004 — NLB.Start: viewer rejected, editor OK
+// NLB.Start: viewer rejected, editor OK
 // ────────────────────────────────────────────────────────────────────────────
 
 func TestAZD004_NLBStart_VUpdate_Denied(t *testing.T) {
@@ -177,7 +189,7 @@ func TestAZD004_NLBStop_VUpdate_OK(t *testing.T) {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// GWT-AZD-005 — NLB.Delete: editor OK, viewer rejected
+// NLB.Delete: editor OK, viewer rejected
 // ────────────────────────────────────────────────────────────────────────────
 
 func TestAZD005_NLBDelete_VDelete_OK_ViewerRejected(t *testing.T) {
@@ -209,7 +221,7 @@ func TestAZD005_NLBDelete_VDelete_OK_ViewerRejected(t *testing.T) {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// GWT-AZD-006 — NLB.Move src-check OK (per-RPC); dst-check — handler-level.
+// NLB.Move src-check OK (per-RPC); dst-check — handler-level.
 //
 // Interceptor выполняет ОДНОЙ Check — на ресурсе (FGA cascade покрывает
 // editor on src project). Проверка destination_project_id — handler'ом.
@@ -235,8 +247,8 @@ func TestAZD006_NLBMove_PerRPCCheck_OnResourceOnly(t *testing.T) {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// GWT-AZD-007 — NLB.AttachTargetGroup: per-RPC Check на LB (editor); TG-check
-// — handler'ом (interceptor выполняет один Check).
+// NLB.AttachTargetGroup: per-RPC Check на LB (editor); TG-check
+// handler'ом (interceptor выполняет один Check).
 // ────────────────────────────────────────────────────────────────────────────
 
 func TestAZD007_NLBAttachTargetGroup_PerRPCCheck_OnLBOnly(t *testing.T) {
@@ -259,7 +271,7 @@ func TestAZD007_NLBAttachTargetGroup_PerRPCCheck_OnLBOnly(t *testing.T) {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// GWT-AZD-008 — TG.AddTargets: editor on TG required, viewer rejected.
+// TG.AddTargets: editor on TG required, viewer rejected.
 // ────────────────────────────────────────────────────────────────────────────
 
 func TestAZD008_TGAddTargets_VUpdate_Denied(t *testing.T) {
@@ -279,7 +291,7 @@ func TestAZD008_TGAddTargets_VUpdate_Denied(t *testing.T) {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// GWT-AZD-009 — Listener.Create: editor on parent LB required.
+// Listener.Create: editor on parent LB required.
 // ────────────────────────────────────────────────────────────────────────────
 
 func TestAZD009_ListenerCreate_OnParentLB(t *testing.T) {
@@ -300,7 +312,7 @@ func TestAZD009_ListenerCreate_OnParentLB(t *testing.T) {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// GWT-AZD-010 — OperationService.Get: Public (exempt), handler runs.
+// OperationService.Get: Public (exempt), handler runs.
 // ────────────────────────────────────────────────────────────────────────────
 
 func TestAZD010_OperationGet_Public(t *testing.T) {
@@ -322,8 +334,8 @@ func TestAZD010_OperationGet_Public(t *testing.T) {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// GWT-AZD-011 — OperationService.Cancel: Public (exempt); creator-only check
-// — handler-level (`operation.created_by` в БД), не authz-interceptor.
+// OperationService.Cancel: Public (exempt); creator-only check
+// handler-level (`operation.created_by` в БД), не authz-interceptor.
 // ────────────────────────────────────────────────────────────────────────────
 
 func TestAZD011_OperationCancel_Public_HandlerOwnsCreatorCheck(t *testing.T) {
@@ -343,7 +355,7 @@ func TestAZD011_OperationCancel_Public_HandlerOwnsCreatorCheck(t *testing.T) {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// GWT-AZD-012 — FGA unavailable → fail-closed PermissionDenied.
+// FGA unavailable → fail-closed PermissionDenied.
 // ────────────────────────────────────────────────────────────────────────────
 
 func TestAZD012_FGAUnavailable_FailClosed(t *testing.T) {
@@ -362,7 +374,7 @@ func TestAZD012_FGAUnavailable_FailClosed(t *testing.T) {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// GWT-AZD-013 — Breakglass dev-only (interceptor allows; production cfg
+// Breakglass dev-only (interceptor allows; production cfg
 // rejects breakglass=true, covered separately в config/validate_test.go).
 // ────────────────────────────────────────────────────────────────────────────
 
@@ -384,7 +396,7 @@ func TestAZD013_Breakglass_AllowsAuthenticated(t *testing.T) {
 
 func TestAZD013_Breakglass_DeniesAnonymous(t *testing.T) {
 	// Breakglass НЕ должен пускать anonymous'а — иначе CRIT-6/7 повторно
-	// (KAC-122 root cause). Anonymous = пустой principal_id.
+	// (root cause). Anonymous = пустой principal_id.
 	intr := authz.NewInterceptor(authz.InterceptorOptions{
 		ServiceName: "kacho-nlb-test",
 		Map:         check.PermissionMap(),
@@ -402,7 +414,7 @@ func TestAZD013_Breakglass_DeniesAnonymous(t *testing.T) {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// GWT-AZD-014 — RPC не в PermissionMap → fail-closed.
+// RPC не в PermissionMap → fail-closed.
 // ────────────────────────────────────────────────────────────────────────────
 
 func TestAZD014_UnmappedRPC_FailClosed(t *testing.T) {
@@ -422,10 +434,10 @@ func TestAZD014_UnmappedRPC_FailClosed(t *testing.T) {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// GWT-AZD-015 — D-11 sync creator-tuple fail → operation aborts. Это
+// sync creator-tuple fail → operation aborts. Это
 // **handler-level** (worker abort tx до commit); здесь, в interceptor-suite,
 // проверяем что adapter транзитом передаёт WriteCreatorTuple errors (это
-// функционально для D-11 — handler ловит и rollback'ит).
+// функционально для — handler ловит и rollback'ит).
 //
 // Sanity: interceptor НЕ перехватывает creator-tuple write — это другой
 // gRPC-call (`InternalIAMService.WriteCreatorTuple` через hierarchy-client),
@@ -456,7 +468,7 @@ func TestAZD015_D11CreatorTupleWrite_NotInterceptorScope(t *testing.T) {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// GWT-AZD-016 — Cache invalidation ≤10s. Здесь — direct unit-тест
+// Cache invalidation ≤10s. Здесь — direct unit-тест
 // `Cache.InvalidateBySubject`. ListenInvalidator end-to-end — integration-тест.
 // ────────────────────────────────────────────────────────────────────────────
 
@@ -474,7 +486,7 @@ func TestAZD016_CacheInvalidation_BySubject(t *testing.T) {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// GWT-AZD-017 — Custom role resolves to editor through 3-relation cascade
+// Custom role resolves to editor through 3-relation cascade
 // (FGA expands `loadbalancer.networkLoadBalancers.start` → tuple `editor`).
 // Здесь — interceptor proof: relation=editor accepted даже если permission
 // строка узкая (Custom role).
@@ -498,9 +510,9 @@ func TestAZD017_CustomRole_ResolvesToVUpdate(t *testing.T) {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// GWT-AZD-018 — Custom role with unknown permission → InvalidArgument.
+// Custom role with unknown permission → InvalidArgument.
 // Это валидация iam.Role.Create (kacho-iam-side); здесь — sanity test через
-// Catalog().
+// Catalog.
 // ────────────────────────────────────────────────────────────────────────────
 
 func TestAZD018_UnknownPermission_NotInCatalog(t *testing.T) {
@@ -509,14 +521,14 @@ func TestAZD018_UnknownPermission_NotInCatalog(t *testing.T) {
 		require.NotEqualf(t, "loadbalancer.foo.bar", p,
 			"hypothetical garbage permission must NOT be in catalog")
 	}
-	// iam.Role.Create rejects permission strings absent в Catalog() — это
+	// iam.Role.Create rejects permission strings absent в Catalog — это
 	// проверяется в kacho-iam unit-тестах; здесь sanity что Catalog не содержит
 	// мусора.
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// GWT-AZD-019 — Permission catalog completeness (30) — также в drift_test.
-// Дублируем здесь как explicit AZD-019 проверка.
+// Permission catalog completeness (30) — также в drift_test.
+// Дублируем здесь как explicit проверка.
 // ────────────────────────────────────────────────────────────────────────────
 
 func TestAZD019_CatalogCount_30(t *testing.T) {
@@ -529,7 +541,7 @@ func TestAZD019_CatalogCount_30(t *testing.T) {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// GWT-AZD-020 — Predefined system role seeds — проверяется в kacho-iam
+// Predefined system role seeds — проверяется в kacho-iam
 // migration tests. Здесь — sanity: Catalog содержит виды permissions, которые
 // system-роли должны покрывать.
 // ────────────────────────────────────────────────────────────────────────────
@@ -541,15 +553,15 @@ func TestAZD020_AdminRoleCoversAllPermissions(t *testing.T) {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// GWT-AZD-021 — Owner relation: creator gets owner on created LB. Это
-// D-11 sync write (handler-level). Здесь sanity: relation `owner` валидно
+// Owner relation: creator gets owner on created LB. Это
+// sync write (handler-level). Здесь sanity: relation `owner` валидно
 // в наших object types (interceptor не использует owner на per-RPC, но
 // catalog-level permissions могут на него рассчитывать).
 // ────────────────────────────────────────────────────────────────────────────
 
 func TestAZD021_OwnerRelation_Valid(t *testing.T) {
 	intr, _, _ := newTestInterceptor(t, func(_ context.Context, _, rel, _ string) (bool, error) {
-		// Owner check — handler-level (D-11 sync write); interceptor per-RPC Get
+		// Owner check — handler-level (sync write); interceptor per-RPC Get
 		// гейтит object-self `v_get` (Design B verb-bearing). Этот test sanity-
 		// проверяет fall-through allow-path.
 		require.Equal(t, "v_get", rel)
@@ -565,9 +577,9 @@ func TestAZD021_OwnerRelation_Valid(t *testing.T) {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// GWT-AZD-022 — Lifecycle DELETED tuple cleanup → DecisionNoPath. Здесь —
+// Lifecycle DELETED tuple cleanup → DecisionNoPath. Здесь —
 // прямая проверка: peer-client возвращает authz.ErrNoPath → interceptor
-// → DecisionNoPath → handler runs → DB вернёт NOT_FOUND (KAC-133).
+// → DecisionNoPath → handler runs → DB вернёт NOT_FOUND.
 // ────────────────────────────────────────────────────────────────────────────
 
 func TestAZD022_NoPath_PassthroughToHandler(t *testing.T) {
@@ -592,7 +604,7 @@ func TestAZD022_NoPath_PassthroughToHandler(t *testing.T) {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// GWT-AZD-023 — Cache hit ratio ≥95%. Здесь — direct unit: повторный Check
+// Cache hit ratio ≥95%. Здесь — direct unit: повторный Check
 // на ту же тройку — cache hit, peer не вызывается.
 // ────────────────────────────────────────────────────────────────────────────
 
@@ -616,7 +628,7 @@ func TestAZD023_CacheHit_PositiveSecondCheck(t *testing.T) {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// GWT-AZD-024 — Cache hit latency. Sub-millisecond cache hit (single-process
+// Cache hit latency. Sub-millisecond cache hit (single-process
 // map lookup). Меряем delta между холодным Check и cache hit.
 // ────────────────────────────────────────────────────────────────────────────
 
@@ -650,40 +662,62 @@ func TestAZD024_CacheHit_FastPath(t *testing.T) {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// GWT-AZD-025 — InternalResourceLifecycleService.Subscribe живёт только на
-// internal listener'е и потому НЕ замаплен в PermissionMap. Любой RPC, не
-// найденный в map (даже с "Internal" в имени), интерсептор закрывает
-// fail-closed: PermissionDenied, при этом ни handler, ни Check не вызываются.
-// Имя метода не даёт привилегий — права берутся исключительно из permission_map.
+// InternalResourceLifecycleService.Subscribe на internal :9091
+// проходит РЕАЛЬНЫЙ per-RPC Check (system_viewer @ cluster:cluster_kacho_root).
+//
+// Security-инвариант (security.md «authN+authZ на ОБОИХ listener'ах»): internal-
+// листенер гоняет тот же authzIntr. Subscribe стримит resource_id/project_id ВСЕХ
+// проектов; без записи в PermissionMap он fail-closed'ился бы как unmapped (ломая
+// легитимного kacho-iam consumer'а) ИЛИ — при name-based methodIsInternal-skip —
+// стримил бы всё без Check. Поэтому он явно замаплен на cluster-floor system_viewer:
+// non-privileged principal → PermissionDenied, internal-reader SA (как seed'ится в
+// kacho-iam SystemViewerFloor) → allowed.
 // ────────────────────────────────────────────────────────────────────────────
 
-func TestAZD025_UnmappedInternalRPC_FailClosed(t *testing.T) {
-	m := check.PermissionMap()
+func TestAZD025_InternalSubscribe_SystemViewerFloor(t *testing.T) {
 	const fm = "/kacho.cloud.loadbalancer.v1.InternalResourceLifecycleService/Subscribe"
-	_, ok := m[fm]
-	require.False(t, ok, "Internal* RPC must NOT be в PermissionMap (lives on internal listener only)")
 
-	// Незамапленный RPC закрывается fail-closed: handler не исполняется, Check
-	// не вызывается, наружу уходит PermissionDenied.
-	intr, n, _ := newTestInterceptor(t, func(_ context.Context, _, _, _ string) (bool, error) {
-		t.Fatal("unmapped RPC: Check must not be invoked")
-		return false, nil
+	m := check.PermissionMap()
+	entry, ok := m[fm]
+	require.True(t, ok, "Subscribe must be mapped — internal :9091 runs the same per-RPC Check as public")
+	require.False(t, entry.Public, "Subscribe must NOT be Public — it streams resource_id/project_id of ALL projects")
+	require.Equal(t, "system_viewer", entry.Relation, "Subscribe must be gated by the cluster-floor read relation")
+
+	// Non-privileged principal (Check → false): stream rejected, и Check РЕАЛЬНО
+	// вызван с (system_viewer, cluster:cluster_kacho_root) — не skip, не blind-deny.
+	t.Run("non_privileged_denied", func(t *testing.T) {
+		intr, n, calls := newTestInterceptor(t, func(_ context.Context, _, rel, obj string) (bool, error) {
+			require.Equal(t, "system_viewer", rel)
+			require.Equal(t, "cluster:cluster_kacho_root", obj)
+			return false, nil
+		})
+		ss := &fakeServerStream{ctx: principalCtx("service_account", "sva_intruder")}
+		err := intr.Stream()(nil, ss, &grpc.StreamServerInfo{FullMethod: fm},
+			func(any, grpc.ServerStream) error { t.Fatal("handler must not run on deny"); return nil })
+		st, _ := status.FromError(err)
+		require.Equal(t, codes.PermissionDenied, st.Code())
+		require.Equal(t, 1, *n, "a real Check must run (not skipped via methodIsInternal)")
+		require.Len(t, *calls, 1)
 	})
-	called := false
-	_, err := intr.Unary()(
-		principalCtx("system", "bootstrap"),
-		struct{}{},
-		&grpc.UnaryServerInfo{FullMethod: fm},
-		func(context.Context, any) (any, error) { called = true; return "ok", nil },
-	)
-	st, _ := status.FromError(err)
-	require.Equal(t, codes.PermissionDenied, st.Code())
-	require.False(t, called, "handler must not run for unmapped RPC")
-	require.Equal(t, 0, *n, "Check must not run for unmapped RPC")
+
+	// Privileged internal-reader (system_viewer@cluster) → stream allowed.
+	t.Run("system_viewer_allowed", func(t *testing.T) {
+		intr, _, _ := newTestInterceptor(t, func(_ context.Context, _, rel, obj string) (bool, error) {
+			require.Equal(t, "system_viewer", rel)
+			require.Equal(t, "cluster:cluster_kacho_root", obj)
+			return true, nil
+		})
+		ss := &fakeServerStream{ctx: principalCtx("service_account", "sva_kacho_iam")}
+		handled := false
+		err := intr.Stream()(nil, ss, &grpc.StreamServerInfo{FullMethod: fm},
+			func(any, grpc.ServerStream) error { handled = true; return nil })
+		require.NoError(t, err)
+		require.True(t, handled)
+	})
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// GWT-AZD-026 — Operations: per-resource ListOperations — viewer на ресурсе.
+// Operations: per-resource ListOperations — viewer на ресурсе.
 // (Cross-resource ops listing — handler-level scope-filter.)
 // ────────────────────────────────────────────────────────────────────────────
 
@@ -703,7 +737,7 @@ func TestAZD026_NLBListOperations_VListOnResource(t *testing.T) {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// GWT-AZD-027 — Anonymous → UNAUTHENTICATED. Это — auth-interceptor scope
+// Anonymous → UNAUTHENTICATED. Это — auth-interceptor scope
 // (uplane, не authz). Здесь sanity: если principal не извлекается из ctx
 // (нет auth), authz fail-closed'нет с PermissionDenied (не Unauthenticated —
 // transformation делает auth-interceptor выше по chain'у).
@@ -730,7 +764,7 @@ func TestAZD027_EmptyPrincipal_AuthzDenies(t *testing.T) {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// GWT-AZD-028 — Service account subject. FGA-tuple resolves via SA-id.
+// Service account subject. FGA-tuple resolves via SA-id.
 // ────────────────────────────────────────────────────────────────────────────
 
 func TestAZD028_ServiceAccount_Subject(t *testing.T) {
@@ -751,7 +785,7 @@ func TestAZD028_ServiceAccount_Subject(t *testing.T) {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// GWT-AZD-029 — Group membership cascade. FGA сама резолвит group#member;
+// Group membership cascade. FGA сама резолвит group#member;
 // interceptor видит только конкретный user-subject (resolved auth-layer'ом).
 // ────────────────────────────────────────────────────────────────────────────
 
@@ -771,7 +805,7 @@ func TestAZD029_GroupMembership_TransitiveResolve(t *testing.T) {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// GWT-AZD-030 — Concurrent revoke + Check race. Eventual consistency
+// Concurrent revoke + Check race. Eventual consistency
 // гарантия ≤10s. Здесь — direct test: после InvalidateBySubject следующий
 // Check звонит peer (cache miss), а peer-decision определяет результат.
 // ────────────────────────────────────────────────────────────────────────────

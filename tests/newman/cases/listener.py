@@ -1,3 +1,6 @@
+# Copyright (c) PRO-Robotech
+# SPDX-License-Identifier: BUSL-1.1
+
 """ListenerService cases (LST-*).
 
 Acceptance: docs/specs/sub-phase-4.0-nlb-acceptance.md §4 (GWT-LST-001..026).

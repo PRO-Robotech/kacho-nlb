@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+
+# Copyright (c) PRO-Robotech
+# SPDX-License-Identifier: BUSL-1.1
+
 # render-guard.sh — offline Helm render assertions for the kacho-nlb deploy chart.
 #
 # Pure `helm template` / `helm lint` rendering — никогда не контактирует с
