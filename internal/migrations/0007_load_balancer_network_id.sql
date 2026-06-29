@@ -18,9 +18,13 @@ ALTER TABLE kacho_nlb.load_balancers
     ADD COLUMN network_id text NOT NULL DEFAULT '';
 
 -- Cross-field CHECK: (type = 'INTERNAL') ⟺ (network_id непустой).
+-- NOT VALID — constraint добавляется к уже наполненной таблице: legacy-LB,
+-- созданные до появления network_id (INTERNAL c network_id=''), не валидируются
+-- ретроспективно (grandfather), но энфорс применяется ко всем новым/изменяемым
+-- строкам. Sync-валидация use-case остаётся первичным гейтом нового контракта.
 ALTER TABLE kacho_nlb.load_balancers
     ADD CONSTRAINT load_balancers_network_id_scheme_check
-    CHECK ((type = 'INTERNAL') = (network_id <> ''));
+    CHECK ((type = 'INTERNAL') = (network_id <> '')) NOT VALID;
 
 -- +goose StatementEnd
 

@@ -31,11 +31,15 @@ ALTER TABLE kacho_nlb.listeners
     ADD COLUMN default_tg_fk text
         GENERATED ALWAYS AS (NULLIF(default_target_group_id, '')) STORED;
 
+-- NOT VALID — FK добавляется к уже наполненной таблице: существующие listener-строки
+-- не валидируются ретроспективно (grandfather legacy на populated-DB), но энфорс
+-- (existence + attachment + ON DELETE RESTRICT) применяется ко всем новым/изменяемым
+-- строкам. На fresh-DB эффект эквивалентен обычному FK.
 ALTER TABLE kacho_nlb.listeners
     ADD CONSTRAINT listeners_default_tg_attached_fk
         FOREIGN KEY (load_balancer_id, default_tg_fk)
         REFERENCES kacho_nlb.attached_target_groups (load_balancer_id, target_group_id)
-        ON DELETE RESTRICT;
+        ON DELETE RESTRICT NOT VALID;
 
 -- +goose StatementEnd
 
