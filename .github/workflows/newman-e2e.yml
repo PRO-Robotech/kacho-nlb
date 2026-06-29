@@ -118,20 +118,39 @@ jobs:
           sudo tar -xzf /tmp/grpcurl.tar.gz -C /usr/local/bin grpcurl
           grpcurl --version
 
-      # Build every kacho-* :dev image. vpc/iam/compute/api-gateway build with
-      # context = the workspace root (Dockerfile COPY kacho-corelib / kacho-<svc>).
-      # kacho-nlb is single-repo build context — внутренние зависимости тянутся
-      # как versioned-модули из GitHub.
+      # Build every kacho-* :dev image. Сервисы в monorepo-дереве разъезжаются
+      # по build-режиму: single-repo (Dockerfile `COPY . .` + `go mod download`
+      # тянет зависимости с public proxy → context = свой checkout) vs legacy
+      # multi-sibling (Dockerfile `COPY ../kacho-corelib …` → context =
+      # workspace root). Режим определяем по самому Dockerfile, чтобы петля была
+      # устойчива к независимой миграции каждого репо. kacho-nlb — repo под
+      # тестом, собирается из своего PR-checkout (single-repo `COPY . .`).
+      #
+      # Сервисы, чей multi-sibling Dockerfile всё ещё `COPY kacho-proto`, собрать
+      # из исходников больше нельзя — kacho-proto выведен из эксплуатации (proto
+      # вынесен per-service / в kacho-corelib). До миграции их Dockerfile'ов на
+      # single-repo тянем опубликованный main-образ (как для kacho-geo).
       - name: build service images
         working-directory: ${{ github.workspace }}
         run: |
           set -euo pipefail
-          for svc in vpc iam compute api-gateway; do
-            echo "=== build kacho-$svc:dev ==="
-            docker build -f "kacho-$svc/Dockerfile" -t "kacho-$svc:dev" .
+          declare -A PUBLISHED=(
+            [iam]="docker.io/prorobotech/kacho-iam:main-b4c1b7e1"
+          )
+          for svc in vpc iam compute api-gateway nlb; do
+            df="kacho-$svc/Dockerfile"
+            if grep -qE '^[[:space:]]*COPY[[:space:]]+\.[[:space:]]+\.' "$df"; then
+              echo "=== build kacho-$svc:dev (single-repo, context=kacho-$svc) ==="
+              docker build -f "$df" -t "kacho-$svc:dev" "kacho-$svc"
+            elif grep -qE 'COPY[[:space:]]+\.?\.?/?kacho-proto' "$df"; then
+              echo "=== pull kacho-$svc:dev from ${PUBLISHED[$svc]} (multi-sibling Dockerfile needs retired kacho-proto) ==="
+              docker pull "${PUBLISHED[$svc]}"
+              docker tag "${PUBLISHED[$svc]}" "kacho-$svc:dev"
+            else
+              echo "=== build kacho-$svc:dev (multi-sibling, context=workspace root) ==="
+              docker build -f "$df" -t "kacho-$svc:dev" .
+            fi
           done
-          echo "=== build kacho-nlb:dev ==="
-          docker build -t kacho-nlb:dev kacho-nlb
           if [ -f kacho-ui/Dockerfile ]; then
             echo "=== build kacho-ui:dev ==="
             docker build -t kacho-ui:dev kacho-ui

@@ -105,6 +105,38 @@ fi
 # При выключенном edge serverName geo НЕ рендерится (gated, как у compute).
 assert_absent "$OUT_GEO_OFF" 'servername: "kacho-geo.kacho.svc.cluster.local"' "geo serverName отсутствует при edges.geo=false"
 
+# ─── 5. каждый rendered-объект несёт apiVersion ───────────────────────────────
+# Лицензионный хедер (`# SPDX-License-Identifier: …`) перед условным объектом
+# склеивается с первой строкой манифеста, если открывающий `{{- if X -}}`
+# right-trim'ит перевод строки: `# SPDX…BUSL-1.1apiVersion: v1` — тогда
+# `apiVersion` оказывается частью комментария, а документ приходит с `kind:` без
+# `apiVersion:`. `helm template` это пропускает, но `helm install` падает с
+# «unable to build kubernetes objects … apiVersion not set». Рендерим со ВСЕМИ
+# условными объектами и проверяем инвариант «есть kind → есть apiVersion».
+echo "[каждый объект несет apiVersion — header/whitespace-trim glue guard]"
+OUT_ALL="$(render \
+  --set serviceAccount.create=true \
+  --set rbac.create=true \
+  --set autoscaling.enabled=true \
+  --set networkPolicy.enable=true \
+  --set serviceMonitor.enable=true)"
+BAD_DOCS="$(printf '%s\n' "$OUT_ALL" | awk '
+  BEGIN { src="(unknown)"; hasKind=0; hasApi=0 }
+  /^---[[:space:]]*$/ {
+    if (hasKind && !hasApi) print "    " src;
+    src="(unknown)"; hasKind=0; hasApi=0; next
+  }
+  /^# Source:/ { src=$0 }
+  /^kind:/ { hasKind=1 }
+  /^apiVersion:/ { hasApi=1 }
+  END { if (hasKind && !hasApi) print "    " src }
+')"
+if [[ -z "$BAD_DOCS" ]]; then
+  pass "все rendered-объекты несут apiVersion"
+else
+  fail "документ(ы) с kind: без apiVersion (header/trim glue):"$'\n'"$BAD_DOCS"
+fi
+
 echo
 if [[ "$FAIL" -ne 0 ]]; then
   echo "render-guard: FAILED"
