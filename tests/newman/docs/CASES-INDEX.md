@@ -408,7 +408,39 @@ These ids come from gen.py helper blocks and pass validation via the
 
 ---
 
-## 8. Module catalogue summary
+## 8. Cross-resource e2e (XRES-*) — sub-phase 6.0 S4 (6.0-34 … 6.0-37)
+
+End-to-end tenant journeys orchestrating the per-resource RPCs (UC-1/UC-2/UC-5)
+plus the by-design dangling cross-service-target survival. Source:
+`docs/specs/sub-phase-6.0-nlb-functional-acceptance.md` §S4. Module:
+`cross-resource.py`. Cross-domain fixture-dependent steps assert the
+nlb-guaranteed contract strictly and gate peer-linkage assertions on the resource
+actually being created (suite stays green on a bare lane, fully exercises the
+chain on the seeded umbrella stack).
+
+### UC-1 — EXTERNAL NLB from nothing to traffic-ready (6.0-34)
+- `XRES-E2E-EXTERNAL-FULL-FLOW` — CRUD,STATE/P0 — LB→listener(auto v4 VIP)→TG→addTargets→attach→default_tg→GetTargetStates; LB INACTIVE→ACTIVE on attach
+- `XRES-E2E-EXTERNAL-IPV6-VIP` — CRUD/P1 — EXTERNAL listener with auto IPv6 VIP (per-family dispatch; v6-pool tolerant)
+- `XRES-E2E-DEFAULT-TG-UNATTACHED-FP` — NEG,STATE/P1 — listener default_target_group_id → un-attached TG → FAILED_PRECONDITION (composite FK)
+- `XRES-E2E-V4-LISTENER-V6-ADDRESS-INVALID` — NEG,VAL/P1 — IPV4 listener + BYO IPv6 Address → InvalidArgument (family mismatch)
+
+### UC-2 — INTERNAL NLB (private VIP from subnet) (6.0-35)
+- `XRES-E2E-INTERNAL-FULL-FLOW` — CRUD,STATE/P0 — INTERNAL LB(networkId, CLIENT_IP_ONLY, crossZone=false)→listener(subnet, internal VIP)→TG→attach→GetTargetStates
+- `XRES-E2E-INTERNAL-NO-NETWORK-INVALID` — NEG,VAL/P0 — INTERNAL without network_id → InvalidArgument
+- `XRES-E2E-EXTERNAL-WITH-NETWORK-INVALID` — NEG,VAL/P1 — EXTERNAL carrying network_id → InvalidArgument (INTERNAL-only)
+- `XRES-E2E-INTERNAL-SG-FOREIGN-REJECTED` — NEG,VAL/P2 — INTERNAL with a foreign/absent security group → rejected (sync precheck)
+
+### UC-5 — bottom-up teardown with correct address lifecycle (6.0-36)
+- `XRES-E2E-TEARDOWN-BOTTOM-UP` — CRUD,STATE/P0 — clear default → remove target → detach → delete listener (FreeIP) → delete LB → delete TG; final 404s
+- `XRES-E2E-DELETE-LB-NOT-EMPTY-FP` — NEG,STATE/P0 — Delete LB that still owns a listener → FAILED_PRECONDITION "load balancer is not empty"
+
+### Dangling cross-service target survives on read (6.0-37, by-design)
+- `XRES-DANGLING-INSTANCE-READ-GRACEFUL` — STATE,CRUD/P0 — TargetGroup.Get / GetTargetStates survive a target referencing a (possibly-deleted) Instance without panic; RemoveTargets drains peer-independently
+- `XRES-DANGLING-GTS-UNKNOWN-TG-NOTFOUND` — NEG/P1 — GetTargetStates for an absent target_group_id → NOT_FOUND (dangling-target tolerance ≠ tolerating a missing TG)
+
+---
+
+## 9. Module catalogue summary
 
 | Module | Domain prefix | Pattern count | Approx cases |
 |---|---|---|---|
@@ -419,5 +451,6 @@ These ids come from gen.py helper blocks and pass validation via the
 | `operation.py` | `OP-*` | 6 | 6 |
 | `authz-deny.py` | `AZD-*` | ~42 | 42-50 |
 | `list-filter.py` | `LF-*` | 4 | 4 |
+| `cross-resource.py` | `XRES-*` | 12 | 12 |
 
 Total ≥320 unique catalogued cases (production-readiness target per acceptance §12.1).
