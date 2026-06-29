@@ -44,6 +44,7 @@ func (networkLoadBalancer) toPb(rec kachorepo.LoadBalancerRecord) (*lbv1.Network
 		Status:             statusPb,
 		Type:               typePb,
 		SessionAffinity:    affinityPb,
+		CrossZoneEnabled:   rec.CrossZoneEnabled,
 		DeletionProtection: rec.DeletionProtection,
 	}, nil
 }
@@ -80,21 +81,14 @@ func lbTypeToPb(t domain.LBType) (lbv1.NetworkLoadBalancer_Type, error) {
 	return lbv1.NetworkLoadBalancer_TYPE_UNSPECIFIED, fmt.Errorf("unknown LBType: %q", t)
 }
 
-// lbAffinityToPb — domain SessionAffinity → proto enum.
-//
-// Proto имеет только CLIENT_IP_PORT_PROTO (5-tuple). Domain имеет FIVE_TUPLE
-// (его маппим в proto CLIENT_IP_PORT_PROTO) и CLIENT_IP_ONLY (custom kacho-NLB
-// расширение — пока не зафиксировано в proto, мапим как UNSPECIFIED с warning).
-//
-// При появлении CLIENT_IP_ONLY в proto — расширить switch.
+// lbAffinityToPb — domain SessionAffinity → proto enum. Значения proto и DB-домена
+// совпадают 1:1 (FIVE_TUPLE / CLIENT_IP_ONLY).
 func lbAffinityToPb(a domain.SessionAffinity) (lbv1.NetworkLoadBalancer_SessionAffinity, error) {
 	switch a {
 	case domain.SessionAffinity5Tuple:
-		return lbv1.NetworkLoadBalancer_CLIENT_IP_PORT_PROTO, nil
+		return lbv1.NetworkLoadBalancer_FIVE_TUPLE, nil
 	case domain.SessionAffinityClientIPOnly:
-		// proto enum не имеет CLIENT_IP_ONLY (реserved для будущего).
-		// Возвращаем UNSPECIFIED; downstream увидит unknown_session_affinity.
-		return lbv1.NetworkLoadBalancer_SESSION_AFFINITY_UNSPECIFIED, nil
+		return lbv1.NetworkLoadBalancer_CLIENT_IP_ONLY, nil
 	}
 	return lbv1.NetworkLoadBalancer_SESSION_AFFINITY_UNSPECIFIED, fmt.Errorf("unknown SessionAffinity: %q", a)
 }

@@ -215,6 +215,74 @@ func TestInternalAddressClient_AllocateInternalIP_HappyPath(t *testing.T) {
 	assert.Empty(t, resp.PoolID, "internal IP не имеет pool_id")
 }
 
+func TestInternalAddressClient_AllocateExternalIPv6_HappyPath(t *testing.T) {
+	allocResp := &vpcpb.Address{
+		Id:        "e9b-ip6-1",
+		ProjectId: "prj-1",
+		Address: &vpcpb.Address_ExternalIpv6Address{
+			ExternalIpv6Address: &vpcpb.ExternalIpv6Address{
+				Address: "2001:db8::5",
+				ZoneId:  "ru-central1-a",
+			},
+		},
+	}
+	addrSvc := &fakeAddressForAlloc{createResp: allocResp}
+	intAddrSvc := &fakeInternalAddressService{}
+	conn := startFakeVPC(t, nil, nil, addrSvc, intAddrSvc, &fakeOperationService{})
+
+	c := NewInternalAddressClient(conn, conn)
+	resp, err := c.AllocateExternalIPv6(ctxBackground(), AllocateExternalIPRequest{
+		ProjectID: "prj-1",
+		Name:      "v6-vip",
+		ZoneID:    "ru-central1-a",
+		Owner:     AddressOwner{Kind: "nlb_listener", ID: "lst-1"},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "e9b-ip6-1", resp.AddressID)
+	assert.Equal(t, "2001:db8::5", resp.Value)
+	require.NotNil(t, addrSvc.lastCreate.GetExternalIpv6AddressSpec(), "must build external_ipv6 spec, not v4")
+	require.Len(t, intAddrSvc.setCalls, 1)
+	assert.Equal(t, "e9b-ip6-1", intAddrSvc.setCalls[0].AddressId)
+}
+
+func TestInternalAddressClient_AllocateExternalIPv6_EmptyZoneRejected(t *testing.T) {
+	c := NewInternalAddressClient(
+		startFakeVPC(t, nil, nil, &fakeAddressForAlloc{}, &fakeInternalAddressService{}, &fakeOperationService{}),
+		startFakeVPC(t, nil, nil, &fakeAddressForAlloc{}, &fakeInternalAddressService{}, &fakeOperationService{}),
+	)
+	_, err := c.AllocateExternalIPv6(ctxBackground(), AllocateExternalIPRequest{
+		ProjectID: "p", Owner: AddressOwner{Kind: "k", ID: "i"},
+	})
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, domain.ErrInvalidArg), "empty zone must be rejected (parity with AllocateExternalIP)")
+}
+
+func TestInternalAddressClient_AllocateInternalIPv6_HappyPath(t *testing.T) {
+	allocResp := &vpcpb.Address{
+		Id: "e9b-ip6-2",
+		Address: &vpcpb.Address_InternalIpv6Address{
+			InternalIpv6Address: &vpcpb.InternalIpv6Address{
+				Address: "fd00::9",
+				Scope:   &vpcpb.InternalIpv6Address_SubnetId{SubnetId: "e9b-sub6"},
+			},
+		},
+	}
+	addrSvc := &fakeAddressForAlloc{createResp: allocResp}
+	intAddrSvc := &fakeInternalAddressService{}
+	conn := startFakeVPC(t, nil, nil, addrSvc, intAddrSvc, &fakeOperationService{})
+
+	c := NewInternalAddressClient(conn, conn)
+	resp, err := c.AllocateInternalIPv6(ctxBackground(), AllocateInternalIPRequest{
+		ProjectID: "prj-1", Name: "n", SubnetID: "e9b-sub6",
+		Owner: AddressOwner{Kind: "nlb_listener", ID: "lst-1"},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "e9b-ip6-2", resp.AddressID)
+	assert.Equal(t, "fd00::9", resp.Value)
+	require.NotNil(t, addrSvc.lastCreate.GetInternalIpv6AddressSpec(), "must build internal_ipv6 spec, not v4")
+	assert.Equal(t, "e9b-sub6", addrSvc.lastCreate.GetInternalIpv6AddressSpec().GetSubnetId())
+}
+
 func TestInternalAddressClient_AllocateInternalIP_EmptySubnetRejected(t *testing.T) {
 	c := NewInternalAddressClient(
 		startFakeVPC(t, nil, nil, &fakeAddressForAlloc{}, &fakeInternalAddressService{}, &fakeOperationService{}),

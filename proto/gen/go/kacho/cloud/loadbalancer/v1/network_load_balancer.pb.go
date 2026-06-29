@@ -194,20 +194,25 @@ func (NetworkLoadBalancer_Type) EnumDescriptor() ([]byte, []int) {
 type NetworkLoadBalancer_SessionAffinity int32
 
 const (
+	// Treated as the FIVE_TUPLE default when persisted.
 	NetworkLoadBalancer_SESSION_AFFINITY_UNSPECIFIED NetworkLoadBalancer_SessionAffinity = 0
 	// 5-tuple affinity (src ip+port, dst ip+port, proto).
-	NetworkLoadBalancer_CLIENT_IP_PORT_PROTO NetworkLoadBalancer_SessionAffinity = 1
+	NetworkLoadBalancer_FIVE_TUPLE NetworkLoadBalancer_SessionAffinity = 1
+	// Client-IP-only affinity (src ip).
+	NetworkLoadBalancer_CLIENT_IP_ONLY NetworkLoadBalancer_SessionAffinity = 2
 )
 
 // Enum value maps for NetworkLoadBalancer_SessionAffinity.
 var (
 	NetworkLoadBalancer_SessionAffinity_name = map[int32]string{
 		0: "SESSION_AFFINITY_UNSPECIFIED",
-		1: "CLIENT_IP_PORT_PROTO",
+		1: "FIVE_TUPLE",
+		2: "CLIENT_IP_ONLY",
 	}
 	NetworkLoadBalancer_SessionAffinity_value = map[string]int32{
 		"SESSION_AFFINITY_UNSPECIFIED": 0,
-		"CLIENT_IP_PORT_PROTO":         1,
+		"FIVE_TUPLE":                   1,
+		"CLIENT_IP_ONLY":               2,
 	}
 )
 
@@ -320,8 +325,12 @@ type NetworkLoadBalancer struct {
 	DeletionProtection   bool                   `protobuf:"varint,14,opt,name=deletion_protection,json=deletionProtection,proto3" json:"deletion_protection,omitempty"`
 	AllowZonalShift      bool                   `protobuf:"varint,15,opt,name=allow_zonal_shift,json=allowZonalShift,proto3" json:"allow_zonal_shift,omitempty"`
 	DisableZoneStatuses  []*DisableZoneStatus   `protobuf:"bytes,18,rep,name=disable_zone_statuses,json=disableZoneStatuses,proto3" json:"disable_zone_statuses,omitempty"`
-	unknownFields        protoimpl.UnknownFields
-	sizeCache            protoimpl.SizeCache
+	// Control-plane intent to spread traffic across targets in all zones of the
+	// region. Distribution programming is data-plane (out of control-plane
+	// scope). DB default true.
+	CrossZoneEnabled bool `protobuf:"varint,19,opt,name=cross_zone_enabled,json=crossZoneEnabled,proto3" json:"cross_zone_enabled,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *NetworkLoadBalancer) Reset() {
@@ -451,6 +460,13 @@ func (x *NetworkLoadBalancer) GetDisableZoneStatuses() []*DisableZoneStatus {
 		return x.DisableZoneStatuses
 	}
 	return nil
+}
+
+func (x *NetworkLoadBalancer) GetCrossZoneEnabled() bool {
+	if x != nil {
+		return x.CrossZoneEnabled
+	}
+	return false
 }
 
 // AttachedTargetGroup — yc-shim-compat snapshot of a single
@@ -640,7 +656,8 @@ var File_kacho_cloud_loadbalancer_v1_network_load_balancer_proto protoreflect.Fi
 
 const file_kacho_cloud_loadbalancer_v1_network_load_balancer_proto_rawDesc = "" +
 	"\n" +
-	"7kacho/cloud/loadbalancer/v1/network_load_balancer.proto\x12\x1bkacho.cloud.loadbalancer.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a.kacho/cloud/loadbalancer/v1/health_check.proto\x1a\x1ckacho/cloud/validation.proto\"\xcc\t\n" +
+	"7kacho/cloud/loadbalancer/v1/network_load_balancer.proto\x12\x1bkacho.cloud.loadbalancer.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a.kacho/cloud/loadbalancer/v1/health_check.proto\x1a\x1ckacho/cloud/validation.proto\"\x84\n" +
+	"\n" +
 	"\x13NetworkLoadBalancer\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1d\n" +
 	"\n" +
@@ -658,7 +675,8 @@ const file_kacho_cloud_loadbalancer_v1_network_load_balancer_proto_rawDesc = "" 
 	"\x16attached_target_groups\x18\r \x03(\v20.kacho.cloud.loadbalancer.v1.AttachedTargetGroupB\x02\x18\x01R\x14attachedTargetGroups\x12/\n" +
 	"\x13deletion_protection\x18\x0e \x01(\bR\x12deletionProtection\x12*\n" +
 	"\x11allow_zonal_shift\x18\x0f \x01(\bR\x0fallowZonalShift\x12b\n" +
-	"\x15disable_zone_statuses\x18\x12 \x03(\v2..kacho.cloud.loadbalancer.v1.DisableZoneStatusR\x13disableZoneStatuses\x1a9\n" +
+	"\x15disable_zone_statuses\x18\x12 \x03(\v2..kacho.cloud.loadbalancer.v1.DisableZoneStatusR\x13disableZoneStatuses\x12,\n" +
+	"\x12cross_zone_enabled\x18\x13 \x01(\bR\x10crossZoneEnabled\x1a9\n" +
 	"\vLabelsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x7f\n" +
@@ -675,10 +693,12 @@ const file_kacho_cloud_loadbalancer_v1_network_load_balancer_proto_rawDesc = "" 
 	"\x04Type\x12\x14\n" +
 	"\x10TYPE_UNSPECIFIED\x10\x00\x12\f\n" +
 	"\bEXTERNAL\x10\x01\x12\f\n" +
-	"\bINTERNAL\x10\x02\"M\n" +
+	"\bINTERNAL\x10\x02\"W\n" +
 	"\x0fSessionAffinity\x12 \n" +
-	"\x1cSESSION_AFFINITY_UNSPECIFIED\x10\x00\x12\x18\n" +
-	"\x14CLIENT_IP_PORT_PROTO\x10\x01J\x04\b\b\x10\tJ\x04\b\f\x10\rJ\x04\b\x10\x10\x11J\x04\b\x11\x10\x12J\x04\b\x1e\x10(R\tlisteners\"\xa1\x01\n" +
+	"\x1cSESSION_AFFINITY_UNSPECIFIED\x10\x00\x12\x0e\n" +
+	"\n" +
+	"FIVE_TUPLE\x10\x01\x12\x12\n" +
+	"\x0eCLIENT_IP_ONLY\x10\x02J\x04\b\b\x10\tJ\x04\b\f\x10\rJ\x04\b\x10\x10\x11J\x04\b\x11\x10\x12J\x04\b\x1e\x10(R\tlisteners\"\xa1\x01\n" +
 	"\x13AttachedTargetGroup\x124\n" +
 	"\x0ftarget_group_id\x18\x01 \x01(\tB\f\xe8\xc71\x01\x8a\xc81\x04<=50R\rtargetGroupId\x12T\n" +
 	"\rhealth_checks\x18\x02 \x03(\v2(.kacho.cloud.loadbalancer.v1.HealthCheckB\x05\x82\xc81\x011R\fhealthChecks\"\x97\x02\n" +

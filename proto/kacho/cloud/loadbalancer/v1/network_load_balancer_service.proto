@@ -250,6 +250,14 @@ message CreateNetworkLoadBalancerRequest {
 
   bool deletion_protection = 9;
   bool allow_zonal_shift = 10;
+
+  // session_affinity — UNSPECIFIED is accepted and persisted as the FIVE_TUPLE
+  // default; FIVE_TUPLE / CLIENT_IP_ONLY are persisted verbatim.
+  NetworkLoadBalancer.SessionAffinity session_affinity = 11;
+
+  // cross_zone_enabled — optional so an omitted field keeps the DB default
+  // (true); an explicit false is honoured.
+  optional bool cross_zone_enabled = 12;
 }
 
 message CreateNetworkLoadBalancerMetadata {
@@ -277,6 +285,11 @@ message UpdateNetworkLoadBalancerRequest {
 
   bool deletion_protection = 8;
   bool allow_zonal_shift = 9;
+
+  // session_affinity / cross_zone_enabled — mutable; applied when present in
+  // update_mask (or under an empty mask full-PATCH).
+  NetworkLoadBalancer.SessionAffinity session_affinity = 10;
+  bool cross_zone_enabled = 11;
 }
 
 message UpdateNetworkLoadBalancerMetadata {

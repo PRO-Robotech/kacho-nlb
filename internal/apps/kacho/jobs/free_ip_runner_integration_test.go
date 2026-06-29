@@ -57,6 +57,12 @@ func (f *fakeReleaser) AllocateExternalIP(context.Context, vpcclient.AllocateExt
 func (f *fakeReleaser) AllocateInternalIP(context.Context, vpcclient.AllocateInternalIPRequest) (*vpcclient.AllocateResponse, error) {
 	return &vpcclient.AllocateResponse{}, nil
 }
+func (f *fakeReleaser) AllocateExternalIPv6(context.Context, vpcclient.AllocateExternalIPRequest) (*vpcclient.AllocateResponse, error) {
+	return &vpcclient.AllocateResponse{}, nil
+}
+func (f *fakeReleaser) AllocateInternalIPv6(context.Context, vpcclient.AllocateInternalIPRequest) (*vpcclient.AllocateResponse, error) {
+	return &vpcclient.AllocateResponse{}, nil
+}
 func (f *fakeReleaser) SetReference(context.Context, string, vpcclient.AddressOwner) error {
 	return nil
 }

@@ -204,8 +204,14 @@ type CreateNetworkLoadBalancerRequest struct {
 	Type               NetworkLoadBalancer_Type `protobuf:"varint,6,opt,name=type,proto3,enum=kacho.cloud.loadbalancer.v1.NetworkLoadBalancer_Type" json:"type,omitempty"`
 	DeletionProtection bool                     `protobuf:"varint,9,opt,name=deletion_protection,json=deletionProtection,proto3" json:"deletion_protection,omitempty"`
 	AllowZonalShift    bool                     `protobuf:"varint,10,opt,name=allow_zonal_shift,json=allowZonalShift,proto3" json:"allow_zonal_shift,omitempty"`
-	unknownFields      protoimpl.UnknownFields
-	sizeCache          protoimpl.SizeCache
+	// session_affinity — UNSPECIFIED is accepted and persisted as the FIVE_TUPLE
+	// default; FIVE_TUPLE / CLIENT_IP_ONLY are persisted verbatim.
+	SessionAffinity NetworkLoadBalancer_SessionAffinity `protobuf:"varint,11,opt,name=session_affinity,json=sessionAffinity,proto3,enum=kacho.cloud.loadbalancer.v1.NetworkLoadBalancer_SessionAffinity" json:"session_affinity,omitempty"`
+	// cross_zone_enabled — optional so an omitted field keeps the DB default
+	// (true); an explicit false is honoured.
+	CrossZoneEnabled *bool `protobuf:"varint,12,opt,name=cross_zone_enabled,json=crossZoneEnabled,proto3,oneof" json:"cross_zone_enabled,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *CreateNetworkLoadBalancerRequest) Reset() {
@@ -294,6 +300,20 @@ func (x *CreateNetworkLoadBalancerRequest) GetAllowZonalShift() bool {
 	return false
 }
 
+func (x *CreateNetworkLoadBalancerRequest) GetSessionAffinity() NetworkLoadBalancer_SessionAffinity {
+	if x != nil {
+		return x.SessionAffinity
+	}
+	return NetworkLoadBalancer_SESSION_AFFINITY_UNSPECIFIED
+}
+
+func (x *CreateNetworkLoadBalancerRequest) GetCrossZoneEnabled() bool {
+	if x != nil && x.CrossZoneEnabled != nil {
+		return *x.CrossZoneEnabled
+	}
+	return false
+}
+
 type CreateNetworkLoadBalancerMetadata struct {
 	state                 protoimpl.MessageState `protogen:"open.v1"`
 	NetworkLoadBalancerId string                 `protobuf:"bytes,1,opt,name=network_load_balancer_id,json=networkLoadBalancerId,proto3" json:"network_load_balancer_id,omitempty"`
@@ -347,8 +367,12 @@ type UpdateNetworkLoadBalancerRequest struct {
 	Labels                map[string]string      `protobuf:"bytes,5,rep,name=labels,proto3" json:"labels,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	DeletionProtection    bool                   `protobuf:"varint,8,opt,name=deletion_protection,json=deletionProtection,proto3" json:"deletion_protection,omitempty"`
 	AllowZonalShift       bool                   `protobuf:"varint,9,opt,name=allow_zonal_shift,json=allowZonalShift,proto3" json:"allow_zonal_shift,omitempty"`
-	unknownFields         protoimpl.UnknownFields
-	sizeCache             protoimpl.SizeCache
+	// session_affinity / cross_zone_enabled — mutable; applied when present in
+	// update_mask (or under an empty mask full-PATCH).
+	SessionAffinity  NetworkLoadBalancer_SessionAffinity `protobuf:"varint,10,opt,name=session_affinity,json=sessionAffinity,proto3,enum=kacho.cloud.loadbalancer.v1.NetworkLoadBalancer_SessionAffinity" json:"session_affinity,omitempty"`
+	CrossZoneEnabled bool                                `protobuf:"varint,11,opt,name=cross_zone_enabled,json=crossZoneEnabled,proto3" json:"cross_zone_enabled,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *UpdateNetworkLoadBalancerRequest) Reset() {
@@ -426,6 +450,20 @@ func (x *UpdateNetworkLoadBalancerRequest) GetDeletionProtection() bool {
 func (x *UpdateNetworkLoadBalancerRequest) GetAllowZonalShift() bool {
 	if x != nil {
 		return x.AllowZonalShift
+	}
+	return false
+}
+
+func (x *UpdateNetworkLoadBalancerRequest) GetSessionAffinity() NetworkLoadBalancer_SessionAffinity {
+	if x != nil {
+		return x.SessionAffinity
+	}
+	return NetworkLoadBalancer_SESSION_AFFINITY_UNSPECIFIED
+}
+
+func (x *UpdateNetworkLoadBalancerRequest) GetCrossZoneEnabled() bool {
+	if x != nil {
+		return x.CrossZoneEnabled
 	}
 	return false
 }
@@ -1277,7 +1315,7 @@ const file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_rawDe
 	"\x8a\xc81\x06<=1000R\x06filter\"\xb2\x01\n" +
 	" ListNetworkLoadBalancersResponse\x12f\n" +
 	"\x16network_load_balancers\x18\x01 \x03(\v20.kacho.cloud.loadbalancer.v1.NetworkLoadBalancerR\x14networkLoadBalancers\x12&\n" +
-	"\x0fnext_page_token\x18\x02 \x01(\tR\rnextPageToken\"\x98\x05\n" +
+	"\x0fnext_page_token\x18\x02 \x01(\tR\rnextPageToken\"\xcf\x06\n" +
 	" CreateNetworkLoadBalancerRequest\x12+\n" +
 	"\n" +
 	"project_id\x18\x01 \x01(\tB\f\xe8\xc71\x01\x8a\xc81\x04<=50R\tprojectId\x125\n" +
@@ -1288,12 +1326,15 @@ const file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_rawDe
 	"\x04type\x18\x06 \x01(\x0e25.kacho.cloud.loadbalancer.v1.NetworkLoadBalancer.TypeB\x04\xe8\xc71\x01R\x04type\x12/\n" +
 	"\x13deletion_protection\x18\t \x01(\bR\x12deletionProtection\x12*\n" +
 	"\x11allow_zonal_shift\x18\n" +
-	" \x01(\bR\x0fallowZonalShift\x1a9\n" +
+	" \x01(\bR\x0fallowZonalShift\x12k\n" +
+	"\x10session_affinity\x18\v \x01(\x0e2@.kacho.cloud.loadbalancer.v1.NetworkLoadBalancer.SessionAffinityR\x0fsessionAffinity\x121\n" +
+	"\x12cross_zone_enabled\x18\f \x01(\bH\x00R\x10crossZoneEnabled\x88\x01\x01\x1a9\n" +
 	"\vLabelsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01J\x04\b\a\x10\bJ\x04\b\b\x10\tR\x0elistener_specsR\x16attached_target_groups\"\\\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01B\x15\n" +
+	"\x13_cross_zone_enabledJ\x04\b\a\x10\bJ\x04\b\b\x10\tR\x0elistener_specsR\x16attached_target_groups\"\\\n" +
 	"!CreateNetworkLoadBalancerMetadata\x127\n" +
-	"\x18network_load_balancer_id\x18\x01 \x01(\tR\x15networkLoadBalancerId\"\xf7\x04\n" +
+	"\x18network_load_balancer_id\x18\x01 \x01(\tR\x15networkLoadBalancerId\"\x92\x06\n" +
 	" UpdateNetworkLoadBalancerRequest\x12E\n" +
 	"\x18network_load_balancer_id\x18\x01 \x01(\tB\f\xe8\xc71\x01\x8a\xc81\x04<=50R\x15networkLoadBalancerId\x12;\n" +
 	"\vupdate_mask\x18\x02 \x01(\v2\x1a.google.protobuf.FieldMaskR\n" +
@@ -1302,7 +1343,10 @@ const file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_rawDe
 	"\vdescription\x18\x04 \x01(\tB\t\x8a\xc81\x05<=256R\vdescription\x12\x9e\x01\n" +
 	"\x06labels\x18\x05 \x03(\v2I.kacho.cloud.loadbalancer.v1.UpdateNetworkLoadBalancerRequest.LabelsEntryB;\xf2\xc71\v[-_0-9a-z]*\x82\xc81\x04<=64\x8a\xc81\x04<=63\xb2\xc81\x18\x12\x10[a-z][-_0-9a-z]*\x1a\x041-63R\x06labels\x12/\n" +
 	"\x13deletion_protection\x18\b \x01(\bR\x12deletionProtection\x12*\n" +
-	"\x11allow_zonal_shift\x18\t \x01(\bR\x0fallowZonalShift\x1a9\n" +
+	"\x11allow_zonal_shift\x18\t \x01(\bR\x0fallowZonalShift\x12k\n" +
+	"\x10session_affinity\x18\n" +
+	" \x01(\x0e2@.kacho.cloud.loadbalancer.v1.NetworkLoadBalancer.SessionAffinityR\x0fsessionAffinity\x12,\n" +
+	"\x12cross_zone_enabled\x18\v \x01(\bR\x10crossZoneEnabled\x1a9\n" +
 	"\vLabelsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01J\x04\b\x06\x10\aJ\x04\b\a\x10\bR\x0elistener_specsR\x16attached_target_groups\"\\\n" +
@@ -1431,49 +1475,52 @@ var file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_goTypes
 	nil,                                                  // 24: kacho.cloud.loadbalancer.v1.UpdateNetworkLoadBalancerRequest.LabelsEntry
 	(*NetworkLoadBalancer)(nil),                          // 25: kacho.cloud.loadbalancer.v1.NetworkLoadBalancer
 	(NetworkLoadBalancer_Type)(0),                        // 26: kacho.cloud.loadbalancer.v1.NetworkLoadBalancer.Type
-	(*fieldmaskpb.FieldMask)(nil),                        // 27: google.protobuf.FieldMask
-	(*AttachedTargetGroup)(nil),                          // 28: kacho.cloud.loadbalancer.v1.AttachedTargetGroup
-	(*operation.Operation)(nil),                          // 29: kacho.cloud.operation.Operation
-	(*TargetState)(nil),                                  // 30: kacho.cloud.loadbalancer.v1.TargetState
+	(NetworkLoadBalancer_SessionAffinity)(0),             // 27: kacho.cloud.loadbalancer.v1.NetworkLoadBalancer.SessionAffinity
+	(*fieldmaskpb.FieldMask)(nil),                        // 28: google.protobuf.FieldMask
+	(*AttachedTargetGroup)(nil),                          // 29: kacho.cloud.loadbalancer.v1.AttachedTargetGroup
+	(*operation.Operation)(nil),                          // 30: kacho.cloud.operation.Operation
+	(*TargetState)(nil),                                  // 31: kacho.cloud.loadbalancer.v1.TargetState
 }
 var file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_depIdxs = []int32{
 	25, // 0: kacho.cloud.loadbalancer.v1.ListNetworkLoadBalancersResponse.network_load_balancers:type_name -> kacho.cloud.loadbalancer.v1.NetworkLoadBalancer
 	23, // 1: kacho.cloud.loadbalancer.v1.CreateNetworkLoadBalancerRequest.labels:type_name -> kacho.cloud.loadbalancer.v1.CreateNetworkLoadBalancerRequest.LabelsEntry
 	26, // 2: kacho.cloud.loadbalancer.v1.CreateNetworkLoadBalancerRequest.type:type_name -> kacho.cloud.loadbalancer.v1.NetworkLoadBalancer.Type
-	27, // 3: kacho.cloud.loadbalancer.v1.UpdateNetworkLoadBalancerRequest.update_mask:type_name -> google.protobuf.FieldMask
-	24, // 4: kacho.cloud.loadbalancer.v1.UpdateNetworkLoadBalancerRequest.labels:type_name -> kacho.cloud.loadbalancer.v1.UpdateNetworkLoadBalancerRequest.LabelsEntry
-	28, // 5: kacho.cloud.loadbalancer.v1.AttachNetworkLoadBalancerTargetGroupRequest.attached_target_group:type_name -> kacho.cloud.loadbalancer.v1.AttachedTargetGroup
-	29, // 6: kacho.cloud.loadbalancer.v1.ListNetworkLoadBalancerOperationsResponse.operations:type_name -> kacho.cloud.operation.Operation
-	30, // 7: kacho.cloud.loadbalancer.v1.GetTargetStatesResponse.target_states:type_name -> kacho.cloud.loadbalancer.v1.TargetState
-	0,  // 8: kacho.cloud.loadbalancer.v1.NetworkLoadBalancerService.Get:input_type -> kacho.cloud.loadbalancer.v1.GetNetworkLoadBalancerRequest
-	1,  // 9: kacho.cloud.loadbalancer.v1.NetworkLoadBalancerService.List:input_type -> kacho.cloud.loadbalancer.v1.ListNetworkLoadBalancersRequest
-	3,  // 10: kacho.cloud.loadbalancer.v1.NetworkLoadBalancerService.Create:input_type -> kacho.cloud.loadbalancer.v1.CreateNetworkLoadBalancerRequest
-	5,  // 11: kacho.cloud.loadbalancer.v1.NetworkLoadBalancerService.Update:input_type -> kacho.cloud.loadbalancer.v1.UpdateNetworkLoadBalancerRequest
-	7,  // 12: kacho.cloud.loadbalancer.v1.NetworkLoadBalancerService.Delete:input_type -> kacho.cloud.loadbalancer.v1.DeleteNetworkLoadBalancerRequest
-	9,  // 13: kacho.cloud.loadbalancer.v1.NetworkLoadBalancerService.Start:input_type -> kacho.cloud.loadbalancer.v1.StartNetworkLoadBalancerRequest
-	11, // 14: kacho.cloud.loadbalancer.v1.NetworkLoadBalancerService.Stop:input_type -> kacho.cloud.loadbalancer.v1.StopNetworkLoadBalancerRequest
-	13, // 15: kacho.cloud.loadbalancer.v1.NetworkLoadBalancerService.Move:input_type -> kacho.cloud.loadbalancer.v1.MoveNetworkLoadBalancerRequest
-	15, // 16: kacho.cloud.loadbalancer.v1.NetworkLoadBalancerService.AttachTargetGroup:input_type -> kacho.cloud.loadbalancer.v1.AttachNetworkLoadBalancerTargetGroupRequest
-	17, // 17: kacho.cloud.loadbalancer.v1.NetworkLoadBalancerService.DetachTargetGroup:input_type -> kacho.cloud.loadbalancer.v1.DetachNetworkLoadBalancerTargetGroupRequest
-	21, // 18: kacho.cloud.loadbalancer.v1.NetworkLoadBalancerService.GetTargetStates:input_type -> kacho.cloud.loadbalancer.v1.GetTargetStatesRequest
-	19, // 19: kacho.cloud.loadbalancer.v1.NetworkLoadBalancerService.ListOperations:input_type -> kacho.cloud.loadbalancer.v1.ListNetworkLoadBalancerOperationsRequest
-	25, // 20: kacho.cloud.loadbalancer.v1.NetworkLoadBalancerService.Get:output_type -> kacho.cloud.loadbalancer.v1.NetworkLoadBalancer
-	2,  // 21: kacho.cloud.loadbalancer.v1.NetworkLoadBalancerService.List:output_type -> kacho.cloud.loadbalancer.v1.ListNetworkLoadBalancersResponse
-	29, // 22: kacho.cloud.loadbalancer.v1.NetworkLoadBalancerService.Create:output_type -> kacho.cloud.operation.Operation
-	29, // 23: kacho.cloud.loadbalancer.v1.NetworkLoadBalancerService.Update:output_type -> kacho.cloud.operation.Operation
-	29, // 24: kacho.cloud.loadbalancer.v1.NetworkLoadBalancerService.Delete:output_type -> kacho.cloud.operation.Operation
-	29, // 25: kacho.cloud.loadbalancer.v1.NetworkLoadBalancerService.Start:output_type -> kacho.cloud.operation.Operation
-	29, // 26: kacho.cloud.loadbalancer.v1.NetworkLoadBalancerService.Stop:output_type -> kacho.cloud.operation.Operation
-	29, // 27: kacho.cloud.loadbalancer.v1.NetworkLoadBalancerService.Move:output_type -> kacho.cloud.operation.Operation
-	29, // 28: kacho.cloud.loadbalancer.v1.NetworkLoadBalancerService.AttachTargetGroup:output_type -> kacho.cloud.operation.Operation
-	29, // 29: kacho.cloud.loadbalancer.v1.NetworkLoadBalancerService.DetachTargetGroup:output_type -> kacho.cloud.operation.Operation
-	22, // 30: kacho.cloud.loadbalancer.v1.NetworkLoadBalancerService.GetTargetStates:output_type -> kacho.cloud.loadbalancer.v1.GetTargetStatesResponse
-	20, // 31: kacho.cloud.loadbalancer.v1.NetworkLoadBalancerService.ListOperations:output_type -> kacho.cloud.loadbalancer.v1.ListNetworkLoadBalancerOperationsResponse
-	20, // [20:32] is the sub-list for method output_type
-	8,  // [8:20] is the sub-list for method input_type
-	8,  // [8:8] is the sub-list for extension type_name
-	8,  // [8:8] is the sub-list for extension extendee
-	0,  // [0:8] is the sub-list for field type_name
+	27, // 3: kacho.cloud.loadbalancer.v1.CreateNetworkLoadBalancerRequest.session_affinity:type_name -> kacho.cloud.loadbalancer.v1.NetworkLoadBalancer.SessionAffinity
+	28, // 4: kacho.cloud.loadbalancer.v1.UpdateNetworkLoadBalancerRequest.update_mask:type_name -> google.protobuf.FieldMask
+	24, // 5: kacho.cloud.loadbalancer.v1.UpdateNetworkLoadBalancerRequest.labels:type_name -> kacho.cloud.loadbalancer.v1.UpdateNetworkLoadBalancerRequest.LabelsEntry
+	27, // 6: kacho.cloud.loadbalancer.v1.UpdateNetworkLoadBalancerRequest.session_affinity:type_name -> kacho.cloud.loadbalancer.v1.NetworkLoadBalancer.SessionAffinity
+	29, // 7: kacho.cloud.loadbalancer.v1.AttachNetworkLoadBalancerTargetGroupRequest.attached_target_group:type_name -> kacho.cloud.loadbalancer.v1.AttachedTargetGroup
+	30, // 8: kacho.cloud.loadbalancer.v1.ListNetworkLoadBalancerOperationsResponse.operations:type_name -> kacho.cloud.operation.Operation
+	31, // 9: kacho.cloud.loadbalancer.v1.GetTargetStatesResponse.target_states:type_name -> kacho.cloud.loadbalancer.v1.TargetState
+	0,  // 10: kacho.cloud.loadbalancer.v1.NetworkLoadBalancerService.Get:input_type -> kacho.cloud.loadbalancer.v1.GetNetworkLoadBalancerRequest
+	1,  // 11: kacho.cloud.loadbalancer.v1.NetworkLoadBalancerService.List:input_type -> kacho.cloud.loadbalancer.v1.ListNetworkLoadBalancersRequest
+	3,  // 12: kacho.cloud.loadbalancer.v1.NetworkLoadBalancerService.Create:input_type -> kacho.cloud.loadbalancer.v1.CreateNetworkLoadBalancerRequest
+	5,  // 13: kacho.cloud.loadbalancer.v1.NetworkLoadBalancerService.Update:input_type -> kacho.cloud.loadbalancer.v1.UpdateNetworkLoadBalancerRequest
+	7,  // 14: kacho.cloud.loadbalancer.v1.NetworkLoadBalancerService.Delete:input_type -> kacho.cloud.loadbalancer.v1.DeleteNetworkLoadBalancerRequest
+	9,  // 15: kacho.cloud.loadbalancer.v1.NetworkLoadBalancerService.Start:input_type -> kacho.cloud.loadbalancer.v1.StartNetworkLoadBalancerRequest
+	11, // 16: kacho.cloud.loadbalancer.v1.NetworkLoadBalancerService.Stop:input_type -> kacho.cloud.loadbalancer.v1.StopNetworkLoadBalancerRequest
+	13, // 17: kacho.cloud.loadbalancer.v1.NetworkLoadBalancerService.Move:input_type -> kacho.cloud.loadbalancer.v1.MoveNetworkLoadBalancerRequest
+	15, // 18: kacho.cloud.loadbalancer.v1.NetworkLoadBalancerService.AttachTargetGroup:input_type -> kacho.cloud.loadbalancer.v1.AttachNetworkLoadBalancerTargetGroupRequest
+	17, // 19: kacho.cloud.loadbalancer.v1.NetworkLoadBalancerService.DetachTargetGroup:input_type -> kacho.cloud.loadbalancer.v1.DetachNetworkLoadBalancerTargetGroupRequest
+	21, // 20: kacho.cloud.loadbalancer.v1.NetworkLoadBalancerService.GetTargetStates:input_type -> kacho.cloud.loadbalancer.v1.GetTargetStatesRequest
+	19, // 21: kacho.cloud.loadbalancer.v1.NetworkLoadBalancerService.ListOperations:input_type -> kacho.cloud.loadbalancer.v1.ListNetworkLoadBalancerOperationsRequest
+	25, // 22: kacho.cloud.loadbalancer.v1.NetworkLoadBalancerService.Get:output_type -> kacho.cloud.loadbalancer.v1.NetworkLoadBalancer
+	2,  // 23: kacho.cloud.loadbalancer.v1.NetworkLoadBalancerService.List:output_type -> kacho.cloud.loadbalancer.v1.ListNetworkLoadBalancersResponse
+	30, // 24: kacho.cloud.loadbalancer.v1.NetworkLoadBalancerService.Create:output_type -> kacho.cloud.operation.Operation
+	30, // 25: kacho.cloud.loadbalancer.v1.NetworkLoadBalancerService.Update:output_type -> kacho.cloud.operation.Operation
+	30, // 26: kacho.cloud.loadbalancer.v1.NetworkLoadBalancerService.Delete:output_type -> kacho.cloud.operation.Operation
+	30, // 27: kacho.cloud.loadbalancer.v1.NetworkLoadBalancerService.Start:output_type -> kacho.cloud.operation.Operation
+	30, // 28: kacho.cloud.loadbalancer.v1.NetworkLoadBalancerService.Stop:output_type -> kacho.cloud.operation.Operation
+	30, // 29: kacho.cloud.loadbalancer.v1.NetworkLoadBalancerService.Move:output_type -> kacho.cloud.operation.Operation
+	30, // 30: kacho.cloud.loadbalancer.v1.NetworkLoadBalancerService.AttachTargetGroup:output_type -> kacho.cloud.operation.Operation
+	30, // 31: kacho.cloud.loadbalancer.v1.NetworkLoadBalancerService.DetachTargetGroup:output_type -> kacho.cloud.operation.Operation
+	22, // 32: kacho.cloud.loadbalancer.v1.NetworkLoadBalancerService.GetTargetStates:output_type -> kacho.cloud.loadbalancer.v1.GetTargetStatesResponse
+	20, // 33: kacho.cloud.loadbalancer.v1.NetworkLoadBalancerService.ListOperations:output_type -> kacho.cloud.loadbalancer.v1.ListNetworkLoadBalancerOperationsResponse
+	22, // [22:34] is the sub-list for method output_type
+	10, // [10:22] is the sub-list for method input_type
+	10, // [10:10] is the sub-list for extension type_name
+	10, // [10:10] is the sub-list for extension extendee
+	0,  // [0:10] is the sub-list for field type_name
 }
 
 func init() { file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_init() }
@@ -1482,6 +1529,7 @@ func file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_init()
 		return
 	}
 	file_kacho_cloud_loadbalancer_v1_network_load_balancer_proto_init()
+	file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_msgTypes[3].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{

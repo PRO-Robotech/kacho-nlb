@@ -51,9 +51,12 @@ message NetworkLoadBalancer {
   }
 
   enum SessionAffinity {
+    // Treated as the FIVE_TUPLE default when persisted.
     SESSION_AFFINITY_UNSPECIFIED = 0;
     // 5-tuple affinity (src ip+port, dst ip+port, proto).
-    CLIENT_IP_PORT_PROTO = 1;
+    FIVE_TUPLE = 1;
+    // Client-IP-only affinity (src ip).
+    CLIENT_IP_ONLY = 2;
   }
 
   string id = 1;
@@ -83,6 +86,11 @@ message NetworkLoadBalancer {
   bool allow_zonal_shift = 15;
 
   repeated DisableZoneStatus disable_zone_statuses = 18;
+
+  // Control-plane intent to spread traffic across targets in all zones of the
+  // region. Distribution programming is data-plane (out of control-plane
+  // scope). DB default true.
+  bool cross_zone_enabled = 19;
 }
 
 // AttachedTargetGroup — yc-shim-compat snapshot of a single

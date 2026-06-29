@@ -791,5 +791,140 @@ func TestCreateListener_BYOOrigin_SetsVipOriginByo(t *testing.T) {
 		"BYO listener must persist vip_origin=byo")
 }
 
+// TestCreateListener_GWT_6_0_19a_AutoExternalIPv6_DispatchesV6RPC — IPV6 EXTERNAL
+// auto-alloc диспатчит на AllocateExternalIPv6 (реальный v6-VIP), НЕ на v4-RPC.
+// Устраняет прежний баг: auto-ветка молча выдавала v4-VIP при ip_version=IPV6.
+func TestCreateListener_GWT_6_0_19a_AutoExternalIPv6_DispatchesV6RPC(t *testing.T) {
+	t.Parallel()
+	suite := newCreateSuite(t, domain.LBTypeExternal)
+	suite.internalAddrs.nextAllocV6ID = "e9bV6EXTALLOC00001"
+	suite.internalAddrs.nextAllocV6Value = "2001:db8:1::10"
+
+	op, err := suite.uc.Run(context.Background(), &lbv1.CreateListenerRequest{
+		LoadBalancerId: string(suite.lb.ID),
+		Name:           "http-v6",
+		Protocol:       lbv1.Listener_TCP,
+		Port:           80,
+		TargetPort:     8080,
+		IpVersion:      lbv1.IpVersion_IPV6,
+		AddressSpec:    autoSpec(""),
+	})
+	require.NoError(t, err)
+	done := awaitOpDone(t, suite.ops, op.ID, time.Second)
+	require.Nil(t, done.Error, "Operation must succeed; got error=%v", done.Error)
+
+	require.Len(t, suite.internalAddrs.allocExternalV6Calls, 1, "IPV6 external auto must dispatch to AllocateExternalIPv6")
+	require.Empty(t, suite.internalAddrs.allocExternalCalls, "must NOT fall back to v4 AllocateExternalIP")
+
+	listeners := suite.allListeners()
+	require.Len(t, listeners, 1)
+	got := listeners[0]
+	require.Equal(t, "2001:db8:1::10", string(got.AllocatedAddress), "VIP must be the IPv6 value, not a v4 default")
+	require.Equal(t, domain.IPVersionV6, got.IPVersion)
+	require.Equal(t, domain.VipOriginAuto, got.VipOrigin)
+}
+
+// TestCreateListener_GWT_6_0_19b_AutoInternalIPv6_DispatchesV6RPC — IPV6 INTERNAL
+// auto-alloc диспатчит на AllocateInternalIPv6(subnet_id) (v6 ∈ subnet v6-CIDR).
+func TestCreateListener_GWT_6_0_19b_AutoInternalIPv6_DispatchesV6RPC(t *testing.T) {
+	t.Parallel()
+	suite := newCreateSuite(t, domain.LBTypeInternal)
+	suite.internalAddrs.nextAllocV6ID = "e9bV6INTALLOC00001"
+	suite.internalAddrs.nextAllocV6Value = "fd00::5"
+
+	op, err := suite.uc.Run(context.Background(), &lbv1.CreateListenerRequest{
+		LoadBalancerId: string(suite.lb.ID),
+		Name:           "internal-v6",
+		Protocol:       lbv1.Listener_TCP,
+		Port:           80,
+		TargetPort:     8080,
+		IpVersion:      lbv1.IpVersion_IPV6,
+		AddressSpec:    autoSpec("e9bSUBNET6OWNER001"),
+	})
+	require.NoError(t, err)
+	done := awaitOpDone(t, suite.ops, op.ID, time.Second)
+	require.Nil(t, done.Error, "Operation must succeed; got error=%v", done.Error)
+
+	require.Len(t, suite.internalAddrs.allocInternalV6Calls, 1, "IPV6 internal auto must dispatch to AllocateInternalIPv6")
+	require.Equal(t, "e9bSUBNET6OWNER001", suite.internalAddrs.allocInternalV6Calls[0].SubnetID)
+	require.Empty(t, suite.internalAddrs.allocInternalCalls, "must NOT fall back to v4 AllocateInternalIP")
+
+	listeners := suite.allListeners()
+	require.Len(t, listeners, 1)
+	require.Equal(t, "fd00::5", string(listeners[0].AllocatedAddress))
+	require.Equal(t, domain.IPVersionV6, listeners[0].IPVersion)
+}
+
+// TestCreateListener_GWT_6_0_18_AutoIPv4_StaysV4RPC — regression-anchor: IPV4
+// auto-alloc продолжает диспатчить на v4-RPC (external+internal), не на v6.
+func TestCreateListener_GWT_6_0_18_AutoIPv4_StaysV4RPC(t *testing.T) {
+	t.Parallel()
+	// EXTERNAL v4.
+	ext := newCreateSuite(t, domain.LBTypeExternal)
+	opE, err := ext.uc.Run(context.Background(), &lbv1.CreateListenerRequest{
+		LoadBalancerId: string(ext.lb.ID),
+		Name:           "v4-ext", Protocol: lbv1.Listener_TCP, Port: 80, TargetPort: 8080,
+		IpVersion:   lbv1.IpVersion_IPV4,
+		AddressSpec: autoSpec(""),
+	})
+	require.NoError(t, err)
+	require.Nil(t, awaitOpDone(t, ext.ops, opE.ID, time.Second).Error)
+	require.Len(t, ext.internalAddrs.allocExternalCalls, 1)
+	require.Empty(t, ext.internalAddrs.allocExternalV6Calls, "IPV4 must NOT call v6 RPC")
+
+	// INTERNAL v4.
+	in := newCreateSuite(t, domain.LBTypeInternal)
+	opI, err := in.uc.Run(context.Background(), &lbv1.CreateListenerRequest{
+		LoadBalancerId: string(in.lb.ID),
+		Name:           "v4-int", Protocol: lbv1.Listener_TCP, Port: 80, TargetPort: 8080,
+		IpVersion:   lbv1.IpVersion_IPV4,
+		AddressSpec: autoSpec("e9bSUBNETV4OWNER01"),
+	})
+	require.NoError(t, err)
+	require.Nil(t, awaitOpDone(t, in.ops, opI.ID, time.Second).Error)
+	require.Len(t, in.internalAddrs.allocInternalCalls, 1)
+	require.Empty(t, in.internalAddrs.allocInternalV6Calls, "IPV4 must NOT call v6 RPC")
+}
+
+// TestCreateListener_GWT_6_0_20_BYO_IPv6_HappyPath — BYO IPv6 Address: family
+// совпадает (IPV6), без alloc, SetReference CAS, vip_origin=byo, VIP = v6.
+func TestCreateListener_GWT_6_0_20_BYO_IPv6_HappyPath(t *testing.T) {
+	t.Parallel()
+	suite := newCreateSuite(t, domain.LBTypeExternal)
+	const addrID = "e9bV6BYOADDR000001"
+	suite.addresses.seed(&vpcclient.Address{
+		ID:        addrID,
+		ProjectID: string(suite.lb.ProjectID),
+		Name:      "tenant-v6-ip",
+		Value:     "2001:db8:bee::7",
+		Family:    vpcclient.AddressFamilyIPv6,
+		External:  true,
+	})
+
+	op, err := suite.uc.Run(context.Background(), &lbv1.CreateListenerRequest{
+		LoadBalancerId: string(suite.lb.ID),
+		Name:           "byo-v6",
+		Protocol:       lbv1.Listener_TCP,
+		Port:           443,
+		TargetPort:     8443,
+		IpVersion:      lbv1.IpVersion_IPV6,
+		AddressSpec:    byoSpec(addrID),
+	})
+	require.NoError(t, err)
+	done := awaitOpDone(t, suite.ops, op.ID, time.Second)
+	require.Nil(t, done.Error, "BYO IPv6 happy-path must succeed; got error=%v", done.Error)
+
+	require.Len(t, suite.internalAddrs.setRefCalls, 1)
+	require.Equal(t, addrID, suite.internalAddrs.setRefCalls[0].addressID)
+	require.Empty(t, suite.internalAddrs.allocExternalCalls, "BYO must NOT auto-alloc")
+	require.Empty(t, suite.internalAddrs.allocExternalV6Calls, "BYO must NOT auto-alloc")
+
+	listeners := suite.allListeners()
+	require.Len(t, listeners, 1)
+	require.Equal(t, "2001:db8:bee::7", string(listeners[0].AllocatedAddress))
+	require.Equal(t, domain.IPVersionV6, listeners[0].IPVersion)
+	require.Equal(t, domain.VipOriginBYO, listeners[0].VipOrigin)
+}
+
 // _ used so errors package linked even if no test uses it directly.
 var _ = errors.New

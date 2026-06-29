@@ -109,6 +109,27 @@ func TestAddressClient_Get_InternalIPv6(t *testing.T) {
 	assert.Equal(t, AddressFamilyIPv6, got.Family)
 }
 
+func TestAddressClient_Get_ExternalIPv6(t *testing.T) {
+	addr := &vpcpb.Address{
+		Id:        "e9b-ext6",
+		ProjectId: "prj-1",
+		Address: &vpcpb.Address_ExternalIpv6Address{
+			ExternalIpv6Address: &vpcpb.ExternalIpv6Address{
+				Address: "2001:db8::abcd",
+				ZoneId:  "ru-central1-a",
+			},
+		},
+	}
+	conn := startFakeVPC(t, nil, nil, &fakeAddressService{resp: addr}, nil, nil)
+	c := NewAddressClient(conn)
+
+	got, err := c.Get(ctxBackground(), "e9b-ext6")
+	require.NoError(t, err)
+	assert.Equal(t, "2001:db8::abcd", got.Value)
+	assert.Equal(t, AddressFamilyIPv6, got.Family)
+	assert.True(t, got.External, "external_ipv6 must surface External=true (BYO v6 external)")
+}
+
 func TestAddressClient_Get_NotFound(t *testing.T) {
 	conn := startFakeVPC(t, nil, nil, &fakeAddressService{err: status.Error(codes.NotFound, "no address")},
 		nil, nil)

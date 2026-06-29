@@ -445,8 +445,9 @@ type vipAllocResult struct {
 //     cross-project     → InvalidArgument фиксированный текст
 //     ip_version mismatch → InvalidArgument фиксированный текст
 //     used_by occupied  → FailedPrecondition фиксированный текст
-//   - EXTERNAL auto:    vpc.InternalAddressService.AllocateExternalIP.
-//   - INTERNAL auto:    vpc.InternalAddressService.AllocateInternalIP(subnet_id=...).
+//   - auto: dispatch по (scope × ip_version) на per-family vpc-RPC —
+//     EXTERNAL IPV4 → AllocateExternalIP; EXTERNAL IPV6 → AllocateExternalIPv6;
+//     INTERNAL IPV4 → AllocateInternalIP(subnet_id); INTERNAL IPV6 → AllocateInternalIPv6(subnet_id).
 func (u *CreateUseCase) acquireVIP(ctx context.Context, l domain.Listener, addrCtx addressContext) (vipAllocResult, error) {
 	owner := addressOwner(string(l.ID))
 
@@ -489,38 +490,39 @@ func (u *CreateUseCase) acquireVIP(ctx context.Context, l domain.Listener, addrC
 	if u.internalAddrs == nil {
 		return vipAllocResult{}, status.Error(codes.Unavailable, "vpc internal-address client not configured")
 	}
-	switch l.IPVersion {
-	case domain.IPVersionV4, domain.IPVersionV6:
-	default:
+	if l.IPVersion != domain.IPVersionV4 && l.IPVersion != domain.IPVersionV6 {
 		return vipAllocResult{}, fmt.Errorf("%w: ip_version %s not supported for auto-alloc",
 			domain.ErrInvalidArg, l.IPVersion)
 	}
-	if addrCtx.subnetID == "" {
-		// EXTERNAL → AllocateExternalIP. Передаём project_id для ownership
-		// созданного Address-ресурса; zone — пустая (берётся по LB.region default
-		// pool, cascade selector).
-		resp, err := u.internalAddrs.AllocateExternalIP(ctx, vpcclient.AllocateExternalIPRequest{
-			ProjectID: string(l.ProjectID),
-			Name:      domain.ListenerAutoAddressName(l.ID),
-			Owner:     owner,
+
+	// Dispatch по (scope × ip_version) на per-family vpc-RPC. EXTERNAL (subnet_id
+	// пуст) → External-pool; INTERNAL (subnet_id задан) → subnet-scoped. IPV6 → *IPv6
+	// (реальный v6-VIP), иначе v4. project_id передаётся для ownership созданного
+	// Address; zone — пустая для external (резолв по LB.region default pool, cascade).
+	name := domain.ListenerAutoAddressName(l.ID)
+	v6 := l.IPVersion == domain.IPVersionV6
+	var (
+		resp *vpcclient.AllocateResponse
+		err  error
+	)
+	switch {
+	case addrCtx.subnetID == "" && v6:
+		resp, err = u.internalAddrs.AllocateExternalIPv6(ctx, vpcclient.AllocateExternalIPRequest{
+			ProjectID: string(l.ProjectID), Name: name, Owner: owner,
 		})
-		if err != nil {
-			return vipAllocResult{}, err
-		}
-		return vipAllocResult{
-			addressID: resp.AddressID,
-			address:   resp.Value,
-			byo:       false,
-			owner:     owner,
-		}, nil
+	case addrCtx.subnetID == "":
+		resp, err = u.internalAddrs.AllocateExternalIP(ctx, vpcclient.AllocateExternalIPRequest{
+			ProjectID: string(l.ProjectID), Name: name, Owner: owner,
+		})
+	case v6:
+		resp, err = u.internalAddrs.AllocateInternalIPv6(ctx, vpcclient.AllocateInternalIPRequest{
+			ProjectID: string(l.ProjectID), Name: name, SubnetID: addrCtx.subnetID, Owner: owner,
+		})
+	default:
+		resp, err = u.internalAddrs.AllocateInternalIP(ctx, vpcclient.AllocateInternalIPRequest{
+			ProjectID: string(l.ProjectID), Name: name, SubnetID: addrCtx.subnetID, Owner: owner,
+		})
 	}
-	// INTERNAL → AllocateInternalIP scoped to subnet_id.
-	resp, err := u.internalAddrs.AllocateInternalIP(ctx, vpcclient.AllocateInternalIPRequest{
-		ProjectID: string(l.ProjectID),
-		Name:      domain.ListenerAutoAddressName(l.ID),
-		SubnetID:  addrCtx.subnetID,
-		Owner:     owner,
-	})
 	if err != nil {
 		return vipAllocResult{}, err
 	}

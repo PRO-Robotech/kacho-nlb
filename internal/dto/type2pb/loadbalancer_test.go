@@ -46,10 +46,47 @@ func TestNetworkLoadBalancer_Transfer(t *testing.T) {
 	assert.Equal(t, map[string]string{"env": "prod"}, pb.Labels)
 	assert.Equal(t, lbv1.NetworkLoadBalancer_EXTERNAL, pb.Type)
 	assert.Equal(t, lbv1.NetworkLoadBalancer_ACTIVE, pb.Status)
-	assert.Equal(t, lbv1.NetworkLoadBalancer_CLIENT_IP_PORT_PROTO, pb.SessionAffinity)
+	assert.Equal(t, lbv1.NetworkLoadBalancer_FIVE_TUPLE, pb.SessionAffinity)
 	assert.True(t, pb.DeletionProtection)
 	// Timestamp — truncate до секунд (по конвенции Kachō).
 	assert.Equal(t, created.Truncate(time.Second), pb.CreatedAt.AsTime())
+}
+
+// TestNetworkLoadBalancer_SessionAffinityMapping — domain SessionAffinity values
+// map to the matching proto enum (1:1 after the proto↔DB alignment).
+func TestNetworkLoadBalancer_SessionAffinityMapping(t *testing.T) {
+	tests := []struct {
+		domain domain.SessionAffinity
+		pb     lbv1.NetworkLoadBalancer_SessionAffinity
+	}{
+		{domain.SessionAffinity5Tuple, lbv1.NetworkLoadBalancer_FIVE_TUPLE},
+		{domain.SessionAffinityClientIPOnly, lbv1.NetworkLoadBalancer_CLIENT_IP_ONLY},
+	}
+	for _, tc := range tests {
+		t.Run(string(tc.domain), func(t *testing.T) {
+			got, err := lbAffinityToPb(tc.domain)
+			require.NoError(t, err)
+			assert.Equal(t, tc.pb, got)
+		})
+	}
+}
+
+// TestNetworkLoadBalancer_CrossZoneEnabledProjected — the public projection
+// carries cross_zone_enabled verbatim from the DB record (true and false).
+func TestNetworkLoadBalancer_CrossZoneEnabledProjected(t *testing.T) {
+	for _, want := range []bool{true, false} {
+		rec := kachorepo.LoadBalancerRecord{
+			LoadBalancer: domain.LoadBalancer{
+				ID: "nlb1", ProjectID: "p1", RegionID: "r1",
+				Type: domain.LBTypeExternal, Status: domain.LBStatusInactive,
+				SessionAffinity: domain.SessionAffinity5Tuple, CrossZoneEnabled: want,
+			},
+			CreatedAt: time.Now(),
+		}
+		var pb *lbv1.NetworkLoadBalancer
+		require.NoError(t, dto.Transfer(dto.FromTo(rec, &pb)))
+		assert.Equal(t, want, pb.GetCrossZoneEnabled())
+	}
 }
 
 func TestNetworkLoadBalancer_StatusMapping(t *testing.T) {

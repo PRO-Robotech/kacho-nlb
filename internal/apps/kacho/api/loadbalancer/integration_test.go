@@ -20,6 +20,7 @@ import (
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/fieldmaskpb"
 
 	coredb "github.com/PRO-Robotech/kacho-corelib/db"
@@ -484,6 +485,72 @@ func TestIntegration_Update_PathUpdatesPersisted(t *testing.T) {
 	got, err := rd.LoadBalancers().Get(context.Background(), lbID)
 	require.NoError(t, err)
 	require.Equal(t, domain.LbName("edge-new"), got.Name)
+}
+
+// TestIntegration_SessionAffinityAndCrossZone_RoundTrip — Create persists an
+// explicit session_affinity (CLIENT_IP_ONLY, accepted by the DB CHECK) and an
+// explicit cross_zone_enabled=false; an omitted cross_zone_enabled keeps the DB
+// default (true); Update flips both via update_mask.
+func TestIntegration_SessionAffinityAndCrossZone_RoundTrip(t *testing.T) {
+	t.Parallel()
+	pool, repo := setupDB(t)
+	opsRepo := newOpsRepo(t, pool)
+	h := makeHandler(t, repo, opsRepo)
+	ctx := context.Background()
+
+	// Create with explicit non-default values.
+	op, err := h.Create(ctx, &lbv1.CreateNetworkLoadBalancerRequest{
+		ProjectId: "prj-sa", RegionId: "ru-central1", Name: "edge-sa",
+		Type:             lbv1.NetworkLoadBalancer_EXTERNAL,
+		SessionAffinity:  lbv1.NetworkLoadBalancer_CLIENT_IP_ONLY,
+		CrossZoneEnabled: proto.Bool(false),
+	})
+	require.NoError(t, err)
+	final := pollOpDone(t, opsRepo, op.GetId())
+	require.Nilf(t, final.Error, "create error: %v", final.Error)
+
+	rd, err := repo.Reader(ctx)
+	require.NoError(t, err)
+	lbs, _, err := rd.LoadBalancers().List(ctx, kachorepo.LoadBalancerFilter{ProjectID: "prj-sa"}, kachorepo.Pagination{})
+	require.NoError(t, err)
+	_ = rd.Close()
+	require.Len(t, lbs, 1)
+	lbID := string(lbs[0].ID)
+	require.Equal(t, domain.SessionAffinityClientIPOnly, lbs[0].SessionAffinity)
+	require.False(t, lbs[0].CrossZoneEnabled)
+
+	// Create without cross_zone_enabled → DB default true.
+	op2, err := h.Create(ctx, &lbv1.CreateNetworkLoadBalancerRequest{
+		ProjectId: "prj-sa", RegionId: "ru-central1", Name: "edge-default",
+		Type: lbv1.NetworkLoadBalancer_EXTERNAL,
+	})
+	require.NoError(t, err)
+	require.Nil(t, pollOpDone(t, opsRepo, op2.GetId()).Error)
+	rd2, err := repo.Reader(ctx)
+	require.NoError(t, err)
+	defLBs, _, err := rd2.LoadBalancers().List(ctx, kachorepo.LoadBalancerFilter{ProjectID: "prj-sa", Name: "edge-default"}, kachorepo.Pagination{})
+	require.NoError(t, err)
+	_ = rd2.Close()
+	require.Len(t, defLBs, 1)
+	require.True(t, defLBs[0].CrossZoneEnabled, "omitted cross_zone_enabled keeps DB default true")
+	require.Equal(t, domain.SessionAffinity5Tuple, defLBs[0].SessionAffinity)
+
+	// Update flips both via mask.
+	opU, err := h.Update(ctx, &lbv1.UpdateNetworkLoadBalancerRequest{
+		NetworkLoadBalancerId: lbID,
+		SessionAffinity:       lbv1.NetworkLoadBalancer_FIVE_TUPLE,
+		CrossZoneEnabled:      true,
+		UpdateMask:            &fieldmaskpb.FieldMask{Paths: []string{"session_affinity", "cross_zone_enabled"}},
+	})
+	require.NoError(t, err)
+	require.Nil(t, pollOpDone(t, opsRepo, opU.GetId()).Error)
+	rd3, err := repo.Reader(ctx)
+	require.NoError(t, err)
+	got, err := rd3.LoadBalancers().Get(ctx, lbID)
+	require.NoError(t, err)
+	_ = rd3.Close()
+	require.Equal(t, domain.SessionAffinity5Tuple, got.SessionAffinity)
+	require.True(t, got.CrossZoneEnabled)
 }
 
 // ---- Compile guard ----

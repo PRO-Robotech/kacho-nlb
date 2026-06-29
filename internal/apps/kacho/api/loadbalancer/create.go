@@ -93,6 +93,18 @@ func (u *CreateLoadBalancerUseCase) Execute(
 	if req.GetDeletionProtection() {
 		lb.DeletionProtection = true
 	}
+	// session_affinity: UNSPECIFIED оставляет builder-default (FIVE_TUPLE);
+	// out-of-domain — sync fail-fast с каноничным field-сообщением (зеркало DB CHECK).
+	sa, err := lbSessionAffinityFromPb(req.GetSessionAffinity())
+	if err != nil {
+		return nil, mapDomainErr(err)
+	}
+	lb.SessionAffinity = sa
+	// cross_zone_enabled — optional: omitted сохраняет builder-default (true),
+	// явный false/true применяется.
+	if req.CrossZoneEnabled != nil {
+		lb.CrossZoneEnabled = req.GetCrossZoneEnabled()
+	}
 	if err := lb.Validate(); err != nil {
 		// Validate возвращает coreerrors.InvalidArgument (gRPC-shaped). mapDomainErr
 		// сохранит её as-is.
@@ -271,6 +283,30 @@ func lbTypeFromPb(t lbv1.NetworkLoadBalancer_Type) (domain.LBType, error) {
 		return domain.LBTypeInternal, nil
 	}
 	return "", errInvalidArg("type", "type must be one of: EXTERNAL, INTERNAL")
+}
+
+// domainSessionAffinity — proto enum → domain.SessionAffinity. UNSPECIFIED →
+// FIVE_TUPLE (DB DEFAULT); out-of-domain numeric value переносится своей
+// строкой, чтобы Validate отверг его каноничным field-сообщением (зеркало
+// DB CHECK IN ('FIVE_TUPLE','CLIENT_IP_ONLY')).
+func domainSessionAffinity(a lbv1.NetworkLoadBalancer_SessionAffinity) domain.SessionAffinity {
+	switch a {
+	case lbv1.NetworkLoadBalancer_SESSION_AFFINITY_UNSPECIFIED, lbv1.NetworkLoadBalancer_FIVE_TUPLE:
+		return domain.SessionAffinity5Tuple
+	case lbv1.NetworkLoadBalancer_CLIENT_IP_ONLY:
+		return domain.SessionAffinityClientIPOnly
+	}
+	return domain.SessionAffinity(a.String())
+}
+
+// lbSessionAffinityFromPb — fail-fast вариант domainSessionAffinity: возвращает
+// каноничную InvalidArgument-ошибку на значение вне домена.
+func lbSessionAffinityFromPb(a lbv1.NetworkLoadBalancer_SessionAffinity) (domain.SessionAffinity, error) {
+	sa := domainSessionAffinity(a)
+	if err := sa.Validate(); err != nil {
+		return "", err
+	}
+	return sa, nil
 }
 
 // peerErrToStatus — маппинг ошибок peer-client (project/region) в gRPC-status.

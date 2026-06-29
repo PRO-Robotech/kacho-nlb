@@ -116,6 +116,10 @@ func (c *addressClient) Get(ctx context.Context, addressID string) (*Address, er
 		addr.Value = resp.GetInternalIpv6Address().GetAddress()
 		addr.Family = AddressFamilyIPv6
 		addr.External = false
+	case resp.GetExternalIpv6Address() != nil:
+		addr.Value = resp.GetExternalIpv6Address().GetAddress()
+		addr.Family = AddressFamilyIPv6
+		addr.External = true
 	}
 
 	if resp.GetUsed() {

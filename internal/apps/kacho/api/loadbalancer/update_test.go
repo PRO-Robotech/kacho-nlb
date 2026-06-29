@@ -75,6 +75,42 @@ func TestUpdate_NonLabelsMask_NoMirrorIntent(t *testing.T) {
 	require.Empty(t, repo.fga, "non-labels Update emits no mirror intent")
 }
 
+// TestUpdate_SessionAffinityMask — session_affinity is mutable via update_mask.
+func TestUpdate_SessionAffinityMask(t *testing.T) {
+	t.Parallel()
+	repo := newFakeRepo()
+	lbID := seedLB(t, repo, "prj-a", "edge")
+	opsRepo := newFakeOpsRepo()
+	uc := NewUpdateLoadBalancerUseCase(repo, opsRepo, slog.Default())
+	op, err := uc.Execute(context.Background(), &lbv1.UpdateNetworkLoadBalancerRequest{
+		NetworkLoadBalancerId: lbID,
+		SessionAffinity:       lbv1.NetworkLoadBalancer_CLIENT_IP_ONLY,
+		UpdateMask:            &fieldmaskpb.FieldMask{Paths: []string{"session_affinity"}},
+	})
+	require.NoError(t, err)
+	require.Nil(t, awaitOpDone(t, opsRepo, op.ID).Error)
+	require.Equal(t, domain.SessionAffinityClientIPOnly, repo.lbs[lbID].SessionAffinity)
+}
+
+// TestUpdate_CrossZoneEnabledMask — cross_zone_enabled is mutable via update_mask
+// and is not in the immutable set.
+func TestUpdate_CrossZoneEnabledMask(t *testing.T) {
+	t.Parallel()
+	repo := newFakeRepo()
+	lbID := seedLB(t, repo, "prj-a", "edge")
+	repo.lbs[lbID].CrossZoneEnabled = true
+	opsRepo := newFakeOpsRepo()
+	uc := NewUpdateLoadBalancerUseCase(repo, opsRepo, slog.Default())
+	op, err := uc.Execute(context.Background(), &lbv1.UpdateNetworkLoadBalancerRequest{
+		NetworkLoadBalancerId: lbID,
+		CrossZoneEnabled:      false,
+		UpdateMask:            &fieldmaskpb.FieldMask{Paths: []string{"cross_zone_enabled"}},
+	})
+	require.NoError(t, err)
+	require.Nil(t, awaitOpDone(t, opsRepo, op.ID).Error)
+	require.False(t, repo.lbs[lbID].CrossZoneEnabled)
+}
+
 func TestUpdate_ImmutableType(t *testing.T) {
 	t.Parallel()
 	repo := newFakeRepo()

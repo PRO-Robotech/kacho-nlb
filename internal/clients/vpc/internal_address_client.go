@@ -66,6 +66,15 @@ type InternalAddressClient interface {
 	// atomic SetReference.
 	AllocateInternalIP(ctx context.Context, req AllocateInternalIPRequest) (*AllocateResponse, error)
 
+	// AllocateExternalIPv6 — как AllocateExternalIP, но аллоцирует внешний
+	// IPv6-VIP (external_ipv6 pool-IPAM). Контракт request/response и семантика
+	// ошибок идентичны AllocateExternalIP.
+	AllocateExternalIPv6(ctx context.Context, req AllocateExternalIPRequest) (*AllocateResponse, error)
+
+	// AllocateInternalIPv6 — как AllocateInternalIP, но аллоцирует внутренний
+	// IPv6-VIP из subnet.v6_cidr_blocks. Контракт идентичен AllocateInternalIP.
+	AllocateInternalIPv6(ctx context.Context, req AllocateInternalIPRequest) (*AllocateResponse, error)
+
 	// FreeIP освобождает Address (idempotent через AddressService.Delete →
 	// NotFound трактуется как успех). ClearReference вызывается автоматически
 	// kacho-vpc при Delete.
@@ -128,60 +137,49 @@ func NewInternalAddressClientFromStubs(
 func (c *internalAddressClient) AllocateExternalIP(
 	ctx context.Context, req AllocateExternalIPRequest,
 ) (*AllocateResponse, error) {
-	switch {
-	case req.ProjectID == "":
-		return nil, fmt.Errorf("%w: project_id is empty", domain.ErrInvalidArg)
-	case req.ZoneID == "":
-		return nil, fmt.Errorf("%w: zone_id is empty", domain.ErrInvalidArg)
-	case req.Owner.Kind == "" || req.Owner.ID == "":
-		return nil, fmt.Errorf("%w: owner is empty", domain.ErrInvalidArg)
+	if err := validateExternalReq(req); err != nil {
+		return nil, err
 	}
-
 	createReq := &vpcpb.CreateAddressRequest{
 		ProjectId: req.ProjectID,
 		Name:      req.Name,
 		AddressSpec: &vpcpb.CreateAddressRequest_ExternalIpv4AddressSpec{
-			ExternalIpv4AddressSpec: &vpcpb.ExternalIpv4AddressSpec{
-				ZoneId: req.ZoneID,
-			},
+			ExternalIpv4AddressSpec: &vpcpb.ExternalIpv4AddressSpec{ZoneId: req.ZoneID},
 		},
 	}
-	addr, err := c.createAddressAndWait(ctx, createReq)
-	if err != nil {
-		return nil, err
-	}
-	// SetReference сразу после Create — гарантирует, что свежий Address
-	// помечен used_by=<owner> до того, как Listener.Create commit'нется.
-	if err := c.SetReference(ctx, addr.GetId(), req.Owner); err != nil {
-		// Best-effort cleanup: tear down half-allocated address. Не маскируем
-		// исходную ошибку (она важнее для caller'а).
-		_ = c.FreeIP(ctx, addr.GetId(), req.Owner)
-		return nil, err
-	}
+	return c.allocFromCreate(ctx, createReq, req.Owner, func(a *vpcpb.Address) string {
+		return a.GetExternalIpv4Address().GetAddress()
+	})
+}
 
-	ip := addr.GetExternalIpv4Address().GetAddress()
-	// pool_id не expose'ится через AddressService.Create response (только через
-	// InternalAddressService.AllocateExternalIP) — для NLB-флоу это не критично:
-	// pool tracking — отдельный enhancement (metrics / observability).
-	return &AllocateResponse{
-		AddressID: addr.GetId(),
-		Value:     ip,
-	}, nil
+// AllocateExternalIPv6 — см. контракт InternalAddressClient.AllocateExternalIPv6.
+// Зеркало AllocateExternalIP для external_ipv6: AddressService.Create с
+// external-IPv6-spec (vpc аллоцирует v6-VIP из EXTERNAL_PUBLIC v6-pool в writer-TX).
+func (c *internalAddressClient) AllocateExternalIPv6(
+	ctx context.Context, req AllocateExternalIPRequest,
+) (*AllocateResponse, error) {
+	if err := validateExternalReq(req); err != nil {
+		return nil, err
+	}
+	createReq := &vpcpb.CreateAddressRequest{
+		ProjectId: req.ProjectID,
+		Name:      req.Name,
+		AddressSpec: &vpcpb.CreateAddressRequest_ExternalIpv6AddressSpec{
+			ExternalIpv6AddressSpec: &vpcpb.ExternalIpv6AddressSpec{ZoneId: req.ZoneID},
+		},
+	}
+	return c.allocFromCreate(ctx, createReq, req.Owner, func(a *vpcpb.Address) string {
+		return a.GetExternalIpv6Address().GetAddress()
+	})
 }
 
 // AllocateInternalIP — см. контракт InternalAddressClient.AllocateInternalIP.
 func (c *internalAddressClient) AllocateInternalIP(
 	ctx context.Context, req AllocateInternalIPRequest,
 ) (*AllocateResponse, error) {
-	switch {
-	case req.ProjectID == "":
-		return nil, fmt.Errorf("%w: project_id is empty", domain.ErrInvalidArg)
-	case req.SubnetID == "":
-		return nil, fmt.Errorf("%w: subnet_id is empty", domain.ErrInvalidArg)
-	case req.Owner.Kind == "" || req.Owner.ID == "":
-		return nil, fmt.Errorf("%w: owner is empty", domain.ErrInvalidArg)
+	if err := validateInternalReq(req); err != nil {
+		return nil, err
 	}
-
 	createReq := &vpcpb.CreateAddressRequest{
 		ProjectId: req.ProjectID,
 		Name:      req.Name,
@@ -191,20 +189,81 @@ func (c *internalAddressClient) AllocateInternalIP(
 			},
 		},
 	}
+	return c.allocFromCreate(ctx, createReq, req.Owner, func(a *vpcpb.Address) string {
+		return a.GetInternalIpv4Address().GetAddress()
+	})
+}
+
+// AllocateInternalIPv6 — см. контракт InternalAddressClient.AllocateInternalIPv6.
+// Зеркало AllocateInternalIP для internal_ipv6: адрес из subnet.v6_cidr_blocks.
+func (c *internalAddressClient) AllocateInternalIPv6(
+	ctx context.Context, req AllocateInternalIPRequest,
+) (*AllocateResponse, error) {
+	if err := validateInternalReq(req); err != nil {
+		return nil, err
+	}
+	createReq := &vpcpb.CreateAddressRequest{
+		ProjectId: req.ProjectID,
+		Name:      req.Name,
+		AddressSpec: &vpcpb.CreateAddressRequest_InternalIpv6AddressSpec{
+			InternalIpv6AddressSpec: &vpcpb.InternalIpv6AddressSpec{
+				Scope: &vpcpb.InternalIpv6AddressSpec_SubnetId{SubnetId: req.SubnetID},
+			},
+		},
+	}
+	return c.allocFromCreate(ctx, createReq, req.Owner, func(a *vpcpb.Address) string {
+		return a.GetInternalIpv6Address().GetAddress()
+	})
+}
+
+// allocFromCreate — общий хвост per-family auto-alloc: AddressService.Create
+// (vpc аллоцирует IP нужной family в writer-TX) + atomic SetReference сразу
+// после Create (used_by=<owner> до commit Listener.Create). readIP извлекает
+// family-specific resolved-адрес из ответа. pool_id не expose'ится через
+// Create-response (для NLB-флоу не критично — pool tracking отдельный enhancement).
+func (c *internalAddressClient) allocFromCreate(
+	ctx context.Context,
+	createReq *vpcpb.CreateAddressRequest,
+	owner AddressOwner,
+	readIP func(*vpcpb.Address) string,
+) (*AllocateResponse, error) {
 	addr, err := c.createAddressAndWait(ctx, createReq)
 	if err != nil {
 		return nil, err
 	}
-	if err := c.SetReference(ctx, addr.GetId(), req.Owner); err != nil {
-		_ = c.FreeIP(ctx, addr.GetId(), req.Owner)
+	if err := c.SetReference(ctx, addr.GetId(), owner); err != nil {
+		// Best-effort cleanup: tear down half-allocated address. Не маскируем
+		// исходную ошибку (она важнее для caller'а).
+		_ = c.FreeIP(ctx, addr.GetId(), owner)
 		return nil, err
 	}
+	return &AllocateResponse{AddressID: addr.GetId(), Value: readIP(addr)}, nil
+}
 
-	return &AllocateResponse{
-		AddressID: addr.GetId(),
-		Value:     addr.GetInternalIpv4Address().GetAddress(),
-		// pool_id пусто для internal (см. AllocateIPResponse proto comments).
-	}, nil
+// validateExternalReq — общая sync-валидация аргументов external-alloc (v4/v6).
+func validateExternalReq(req AllocateExternalIPRequest) error {
+	switch {
+	case req.ProjectID == "":
+		return fmt.Errorf("%w: project_id is empty", domain.ErrInvalidArg)
+	case req.ZoneID == "":
+		return fmt.Errorf("%w: zone_id is empty", domain.ErrInvalidArg)
+	case req.Owner.Kind == "" || req.Owner.ID == "":
+		return fmt.Errorf("%w: owner is empty", domain.ErrInvalidArg)
+	}
+	return nil
+}
+
+// validateInternalReq — общая sync-валидация аргументов internal-alloc (v4/v6).
+func validateInternalReq(req AllocateInternalIPRequest) error {
+	switch {
+	case req.ProjectID == "":
+		return fmt.Errorf("%w: project_id is empty", domain.ErrInvalidArg)
+	case req.SubnetID == "":
+		return fmt.Errorf("%w: subnet_id is empty", domain.ErrInvalidArg)
+	case req.Owner.Kind == "" || req.Owner.ID == "":
+		return fmt.Errorf("%w: owner is empty", domain.ErrInvalidArg)
+	}
+	return nil
 }
 
 // FreeIP — см. контракт InternalAddressClient.FreeIP.

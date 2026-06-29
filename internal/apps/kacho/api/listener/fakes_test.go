@@ -764,20 +764,24 @@ func (c *fakeAddressClient) Get(_ context.Context, id string) (*vpcclient.Addres
 
 // fakeInternalAddressClient — in-memory `vpcclient.InternalAddressClient`.
 type fakeInternalAddressClient struct {
-	mu                  sync.Mutex
-	allocExternalCalls  []vpcclient.AllocateExternalIPRequest
-	allocInternalCalls  []vpcclient.AllocateInternalIPRequest
-	freeCalls           []string
-	clearCalls          []string
-	setRefCalls         []setRefCall
-	allocExternalResult *vpcclient.AllocateResponse
-	allocInternalResult *vpcclient.AllocateResponse
-	allocErr            error
-	setRefErr           error
-	freeErr             error
-	clearErr            error
-	nextAllocID         string
-	nextAllocValue      string
+	mu                   sync.Mutex
+	allocExternalCalls   []vpcclient.AllocateExternalIPRequest
+	allocInternalCalls   []vpcclient.AllocateInternalIPRequest
+	allocExternalV6Calls []vpcclient.AllocateExternalIPRequest
+	allocInternalV6Calls []vpcclient.AllocateInternalIPRequest
+	freeCalls            []string
+	clearCalls           []string
+	setRefCalls          []setRefCall
+	allocExternalResult  *vpcclient.AllocateResponse
+	allocInternalResult  *vpcclient.AllocateResponse
+	allocErr             error
+	setRefErr            error
+	freeErr              error
+	clearErr             error
+	nextAllocID          string
+	nextAllocValue       string
+	nextAllocV6ID        string
+	nextAllocV6Value     string
 }
 type setRefCall struct {
 	addressID string
@@ -786,8 +790,10 @@ type setRefCall struct {
 
 func newFakeInternalAddressClient() *fakeInternalAddressClient {
 	return &fakeInternalAddressClient{
-		nextAllocID:    "e9bALLOCSTUB000001",
-		nextAllocValue: "203.0.113.42",
+		nextAllocID:      "e9bALLOCSTUB000001",
+		nextAllocValue:   "203.0.113.42",
+		nextAllocV6ID:    "e9bALLOCV6STUB0001",
+		nextAllocV6Value: "2001:db8::42",
 	}
 }
 func (c *fakeInternalAddressClient) AllocateExternalIP(_ context.Context, req vpcclient.AllocateExternalIPRequest) (*vpcclient.AllocateResponse, error) {
@@ -819,6 +825,30 @@ func (c *fakeInternalAddressClient) AllocateInternalIP(_ context.Context, req vp
 	return &vpcclient.AllocateResponse{
 		AddressID: c.nextAllocID,
 		Value:     c.nextAllocValue,
+	}, nil
+}
+func (c *fakeInternalAddressClient) AllocateExternalIPv6(_ context.Context, req vpcclient.AllocateExternalIPRequest) (*vpcclient.AllocateResponse, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.allocExternalV6Calls = append(c.allocExternalV6Calls, req)
+	if c.allocErr != nil {
+		return nil, c.allocErr
+	}
+	return &vpcclient.AllocateResponse{
+		AddressID: c.nextAllocV6ID,
+		Value:     c.nextAllocV6Value,
+	}, nil
+}
+func (c *fakeInternalAddressClient) AllocateInternalIPv6(_ context.Context, req vpcclient.AllocateInternalIPRequest) (*vpcclient.AllocateResponse, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.allocInternalV6Calls = append(c.allocInternalV6Calls, req)
+	if c.allocErr != nil {
+		return nil, c.allocErr
+	}
+	return &vpcclient.AllocateResponse{
+		AddressID: c.nextAllocV6ID,
+		Value:     c.nextAllocV6Value,
 	}, nil
 }
 func (c *fakeInternalAddressClient) FreeIP(_ context.Context, id string, _ vpcclient.AddressOwner) error {

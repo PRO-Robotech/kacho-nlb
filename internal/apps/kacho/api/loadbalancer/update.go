@@ -21,12 +21,11 @@ import (
 )
 
 // UpdateLoadBalancerUseCase — UpdateMask discipline + async update.
-// Mutable: name / description / labels / deletion_protection.
+// Mutable: name / description / labels / deletion_protection /
+// session_affinity / cross_zone_enabled.
 // Immutable: type / region_id / project_id (in mask → InvalidArgument).
 // allow_zonal_shift (proto field) — пока не хранится в domain (reserved для
 // будущего toggle); если попало в mask — silent-accept без эффекта.
-//
-// Acceptance:.
 type UpdateLoadBalancerUseCase struct {
 	repo    Repo
 	opsRepo operations.Repo
@@ -48,6 +47,8 @@ var knownUpdateFields = map[string]bool{
 	"description":         true,
 	"labels":              true,
 	"deletion_protection": true,
+	"session_affinity":    true,
+	"cross_zone_enabled":  true,
 	"allow_zonal_shift":   true, // silent-accept (no domain effect — reserved).
 }
 
@@ -210,6 +211,14 @@ func applyUpdateMask(
 	}
 	if apply("deletion_protection") {
 		out.DeletionProtection = req.GetDeletionProtection()
+	}
+	if apply("session_affinity") {
+		// out-of-domain → невалидная domain-строка, которую отвергает
+		// updated.Validate каноничным field-сообщением.
+		out.SessionAffinity = domainSessionAffinity(req.GetSessionAffinity())
+	}
+	if apply("cross_zone_enabled") {
+		out.CrossZoneEnabled = req.GetCrossZoneEnabled()
 	}
 	// allow_zonal_shift — silent-accept (no-op в domain).
 	return out

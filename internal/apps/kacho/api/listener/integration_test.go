@@ -141,6 +141,7 @@ type recordingInternalAddrs struct {
 	mu        sync.Mutex
 	nextID    int
 	allocs    int
+	allocsV6  int
 	frees     int
 	setRefs   int
 	clears    int
@@ -166,6 +167,30 @@ func (r *recordingInternalAddrs) AllocateExternalIP(_ context.Context, req vpccl
 }
 func (r *recordingInternalAddrs) AllocateInternalIP(_ context.Context, req vpcclient.AllocateInternalIPRequest) (*vpcclient.AllocateResponse, error) {
 	return r.AllocateExternalIP(context.Background(), vpcclient.AllocateExternalIPRequest{
+		ProjectID: req.ProjectID,
+		Name:      req.Name,
+		Owner:     req.Owner,
+	})
+}
+func (r *recordingInternalAddrs) AllocateExternalIPv6(_ context.Context, req vpcclient.AllocateExternalIPRequest) (*vpcclient.AllocateResponse, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.allocs++
+	r.allocsV6++
+	if r.allocErr != nil {
+		return nil, r.allocErr
+	}
+	if r.failAfter > 0 && r.allocs > r.failAfter {
+		return nil, errors.New("simulated alloc exhaustion")
+	}
+	r.nextID++
+	return &vpcclient.AllocateResponse{
+		AddressID: ids.NewID(ids.PrefixSubnet),
+		Value:     "2001:db8::" + strconv.Itoa(100+r.nextID),
+	}, nil
+}
+func (r *recordingInternalAddrs) AllocateInternalIPv6(ctx context.Context, req vpcclient.AllocateInternalIPRequest) (*vpcclient.AllocateResponse, error) {
+	return r.AllocateExternalIPv6(ctx, vpcclient.AllocateExternalIPRequest{
 		ProjectID: req.ProjectID,
 		Name:      req.Name,
 		Owner:     req.Owner,
@@ -261,6 +286,50 @@ func TestIntegration_Listener_Create_EndToEnd(t *testing.T) {
 	}
 	require.True(t, hasListenerCreated, "must have nlb_listener CREATED event")
 	require.True(t, hasLBUpdated, "must have nlb_load_balancer UPDATED event")
+}
+
+// TestIntegration_Listener_Create_IPv6_DispatchesV6RPC — real Postgres: IPV6
+// EXTERNAL auto-alloc routes to AllocateExternalIPv6, persists the v6 VIP, and
+// the row carries ip_version=IPV6 (no silent v4 fallback).
+func TestIntegration_Listener_Create_IPv6_DispatchesV6RPC(t *testing.T) {
+	t.Parallel()
+	ic := newIntegrationCtx(t)
+	lb := ic.seedLB(t, "prj01INTEGV6000001", "ru-central1", domain.LBTypeExternal, "lb-v6")
+	internalAddrs := &recordingInternalAddrs{}
+	createUC := listener.NewCreateUseCase(ic.repo, ic.opsRepo, nil, internalAddrs, nil, slog.Default())
+
+	op, err := createUC.Run(context.Background(), &lbv1.CreateListenerRequest{
+		LoadBalancerId: string(lb.ID),
+		Name:           "v6-listener",
+		Protocol:       lbv1.Listener_TCP,
+		Port:           443,
+		TargetPort:     8443,
+		IpVersion:      lbv1.IpVersion_IPV6,
+		AddressSpec:    autoSpecIntegration(""),
+	})
+	require.NoError(t, err)
+	awaitOpDoneIntegration(t, ic.opsRepo, op.ID, 5*time.Second)
+	gotOp, err := ic.opsRepo.Get(context.Background(), op.ID)
+	require.NoError(t, err)
+	require.True(t, gotOp.Done)
+	require.Nil(t, gotOp.Error)
+
+	internalAddrs.mu.Lock()
+	v6allocs := internalAddrs.allocsV6
+	internalAddrs.mu.Unlock()
+	require.Equal(t, 1, v6allocs, "IPV6 auto must dispatch to the v6 RPC exactly once")
+
+	rd, err := ic.repo.Reader(context.Background())
+	require.NoError(t, err)
+	defer func() { _ = rd.Close() }()
+	page, _, err := rd.Listeners().ListByLB(context.Background(), string(lb.ID), kachorepo.Pagination{})
+	require.NoError(t, err)
+	require.Len(t, page, 1)
+	got := page[0]
+	require.Equal(t, domain.IPVersionV6, got.IPVersion)
+	require.True(t, strings.HasPrefix(string(got.AllocatedAddress), "2001:db8::"),
+		"persisted VIP must be the IPv6 value, got %q", got.AllocatedAddress)
+	require.Equal(t, domain.ListenerStatusActive, got.Status)
 }
 
 // TestIntegration_Listener_Create_UniquePortRace — two parallel Create requests
