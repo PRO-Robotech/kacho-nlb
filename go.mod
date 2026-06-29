@@ -8,7 +8,7 @@ require (
 	github.com/PRO-Robotech/kacho-corelib v1.0.2
 	github.com/PRO-Robotech/kacho-geo v1.0.2
 	github.com/PRO-Robotech/kacho-iam v1.0.2
-	github.com/PRO-Robotech/kacho-vpc v1.0.2
+	github.com/PRO-Robotech/kacho-vpc v1.0.3
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.29.0
 	github.com/jackc/pgx/v5 v5.9.2
 	github.com/pressly/goose/v3 v3.27.1
