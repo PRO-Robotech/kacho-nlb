@@ -11,6 +11,7 @@ import (
 
 	"github.com/PRO-Robotech/kacho-nlb/internal/clients/geo"
 	"github.com/PRO-Robotech/kacho-nlb/internal/clients/iam"
+	vpcclient "github.com/PRO-Robotech/kacho-nlb/internal/clients/vpc"
 	"github.com/PRO-Robotech/kacho-nlb/internal/domain"
 	// dto/type2pb init-registrations — handler-слой строит proto через DTO-реестр.
 	_ "github.com/PRO-Robotech/kacho-nlb/internal/dto/type2pb"
@@ -308,6 +309,7 @@ func (q *fakeLBWriter) Update(ctx context.Context, lb *domain.LoadBalancer) (*ka
 	cur.DeletionProtection = lb.DeletionProtection
 	cur.SessionAffinity = lb.SessionAffinity
 	cur.CrossZoneEnabled = lb.CrossZoneEnabled
+	cur.SecurityGroupIDs = lb.SecurityGroupIDs
 	c := *cur
 	q.w.pendingLBs = append(q.w.pendingLBs, &c)
 	return &c, nil
@@ -612,6 +614,34 @@ func (f *fakeRegionClient) Get(ctx context.Context, regionID string) (*geo.Regio
 	return &geo.Region{ID: regionID, Name: "fake-region"}, nil
 }
 
+// fakeNetworkClient — двойник vpc.NetworkClient для sync-precheck network_id.
+// Дефолт — Network найден; getFunc подменяет под negative-сценарии (not-found /
+// vpc-Unavailable).
+type fakeNetworkClient struct {
+	getFunc func(ctx context.Context, networkID string) (*vpcclient.Network, error)
+}
+
+func (f *fakeNetworkClient) Get(ctx context.Context, networkID string) (*vpcclient.Network, error) {
+	if f.getFunc != nil {
+		return f.getFunc(ctx, networkID)
+	}
+	return &vpcclient.Network{ID: networkID, ProjectID: "prj-a", Name: "fake-net"}, nil
+}
+
+// fakeSecurityGroupClient — двойник vpc.SecurityGroupClient для sync-precheck
+// security_group_ids. Дефолт — SG найден и принадлежит сети "enp-1"; getFunc
+// подменяет под negative-сценарии (not-found / чужая сеть / vpc-Unavailable).
+type fakeSecurityGroupClient struct {
+	getFunc func(ctx context.Context, sgID string) (*vpcclient.SecurityGroup, error)
+}
+
+func (f *fakeSecurityGroupClient) Get(ctx context.Context, sgID string) (*vpcclient.SecurityGroup, error) {
+	if f.getFunc != nil {
+		return f.getFunc(ctx, sgID)
+	}
+	return &vpcclient.SecurityGroup{ID: sgID, ProjectID: "prj-a", NetworkID: "enp-1", Name: "fake-sg"}, nil
+}
+
 // fakeFGARegisterOutbox records FGARegisterOutbox.Emit into the writer's
 // pending buffer (flushed to fakeRepo.fga on Commit, dropped on Abort).
 type fakeFGARegisterOutbox struct{ w *fakeWriter }
@@ -629,4 +659,6 @@ var (
 	_ kachorepo.Repository = (*fakeRepo)(nil)
 	_ ProjectClient        = (*fakeProjectClient)(nil)
 	_ RegionClient         = (*fakeRegionClient)(nil)
+	_ NetworkClient        = (*fakeNetworkClient)(nil)
+	_ SecurityGroupClient  = (*fakeSecurityGroupClient)(nil)
 )

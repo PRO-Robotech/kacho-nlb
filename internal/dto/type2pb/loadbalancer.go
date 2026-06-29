@@ -41,6 +41,8 @@ func (networkLoadBalancer) toPb(rec kachorepo.LoadBalancerRecord) (*lbv1.Network
 		Description:        string(rec.Description),
 		Labels:             domain.LabelsToMap(rec.Labels),
 		RegionId:           string(rec.RegionID),
+		NetworkId:          string(rec.NetworkID),
+		SecurityGroupIds:   domain.SecurityGroupIDsToStrings(rec.SecurityGroupIDs),
 		Status:             statusPb,
 		Type:               typePb,
 		SessionAffinity:    affinityPb,

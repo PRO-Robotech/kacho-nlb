@@ -39,17 +39,19 @@ import (
 //     kacho-iam InternalIAMService.RegisterResource);
 //   - return Operation.Response = NetworkLoadBalancer.
 type CreateLoadBalancerUseCase struct {
-	repo          Repo
-	opsRepo       operations.Repo
-	projectClient ProjectClient
-	regionClient  RegionClient
-	logger        *slog.Logger
+	repo                Repo
+	opsRepo             operations.Repo
+	projectClient       ProjectClient
+	regionClient        RegionClient
+	networkClient       NetworkClient
+	securityGroupClient SecurityGroupClient
+	logger              *slog.Logger
 }
 
 // NewCreateLoadBalancerUseCase конструктор.
 func NewCreateLoadBalancerUseCase(
 	repo Repo, opsRepo operations.Repo,
-	pc ProjectClient, rc RegionClient,
+	pc ProjectClient, rc RegionClient, nc NetworkClient, sgc SecurityGroupClient,
 	logger *slog.Logger,
 ) *CreateLoadBalancerUseCase {
 	if logger == nil {
@@ -57,7 +59,7 @@ func NewCreateLoadBalancerUseCase(
 	}
 	return &CreateLoadBalancerUseCase{
 		repo: repo, opsRepo: opsRepo,
-		projectClient: pc, regionClient: rc,
+		projectClient: pc, regionClient: rc, networkClient: nc, securityGroupClient: sgc,
 		logger: logger,
 	}
 }
@@ -93,6 +95,15 @@ func (u *CreateLoadBalancerUseCase) Execute(
 	if req.GetDeletionProtection() {
 		lb.DeletionProtection = true
 	}
+	// network_id — VPC-сеть приватного VIP (INTERNAL). Cross-field инвариант
+	// INTERNAL⟺non-empty проверяет lb.Validate ниже; существование — sync-precheck
+	// через vpc.NetworkService.Get.
+	lb.NetworkID = domain.NetworkID(req.GetNetworkId())
+	// security_group_ids — набор vpc.SecurityGroup (control-plane intent). Set-
+	// семантика (dedup). Cross-field INTERNAL-only + cardinality проверяет
+	// lb.Validate; существование + same-network — sync-precheck через
+	// vpc.SecurityGroupService.Get.
+	lb.SecurityGroupIDs = domain.SecurityGroupIDsFromStrings(req.GetSecurityGroupIds())
 	// session_affinity: UNSPECIFIED оставляет builder-default (FIVE_TUPLE);
 	// out-of-domain — sync fail-fast с каноничным field-сообщением (зеркало DB CHECK).
 	sa, err := lbSessionAffinityFromPb(req.GetSessionAffinity())
@@ -109,6 +120,25 @@ func (u *CreateLoadBalancerUseCase) Execute(
 		// Validate возвращает coreerrors.InvalidArgument (gRPC-shaped). mapDomainErr
 		// сохранит её as-is.
 		return nil, mapDomainErr(err)
+	}
+
+	// Sync-precheck существования network_id (только INTERNAL — Validate выше
+	// гарантировал INTERNAL⟺non-empty). Cross-domain ref на kacho-vpc Network
+	// (request-path, fail-closed): not-found → InvalidArgument, peer недоступен →
+	// Unavailable. Gonko-зависимый dangling до writer-TX переживается graceful на
+	// чтении (TEXT-ref без FK).
+	if lb.Type == domain.LBTypeInternal && u.networkClient != nil {
+		if _, err := u.networkClient.Get(ctx, string(lb.NetworkID)); err != nil {
+			return nil, networkPeerErr(err, string(lb.NetworkID))
+		}
+	}
+
+	// Sync-precheck security_group_ids: каждый SG существует И принадлежит
+	// network_id LB (same-network). Domain.Validate выше уже гарантировал, что
+	// непустой набор бывает только у INTERNAL (где network_id задан). not-found/
+	// чужая сеть → InvalidArgument; vpc недоступен → Unavailable (fail-closed).
+	if err := validateSecurityGroups(ctx, u.securityGroupClient, string(lb.NetworkID), lb.SecurityGroupIDs); err != nil {
+		return nil, err
 	}
 
 	// Sync duplicate-name check. Race against concurrent insert
@@ -332,6 +362,20 @@ func peerErrToStatus(err error, kind, id string) error {
 		return status.Errorf(codes.Unavailable, "%s lookup unavailable", kind)
 	}
 	return status.Errorf(codes.Internal, "%s lookup failed", kind)
+}
+
+// networkPeerErr — sync-precheck network_id через vpc.NetworkService.Get. Клиент
+// оборачивает grpc-status в domain-sentinel: NotFound/InvalidArgument peer'а — это
+// bad-input на request-time → InvalidArgument "network <id> not found"; недоступность
+// → Unavailable (fail-closed для мутации); прочее → Internal (без leak'а).
+func networkPeerErr(err error, id string) error {
+	switch {
+	case errors.Is(err, domain.ErrNotFound), errors.Is(err, domain.ErrInvalidArg):
+		return status.Errorf(codes.InvalidArgument, "network %s not found", id)
+	case errors.Is(err, domain.ErrUnavailable):
+		return status.Errorf(codes.Unavailable, "network lookup unavailable")
+	}
+	return status.Errorf(codes.Internal, "network lookup failed")
 }
 
 // caser — Title-case 1-char для kind ("project" → "Project").

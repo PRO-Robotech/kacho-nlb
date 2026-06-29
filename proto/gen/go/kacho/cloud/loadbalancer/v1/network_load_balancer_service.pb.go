@@ -210,6 +210,14 @@ type CreateNetworkLoadBalancerRequest struct {
 	// cross_zone_enabled — optional so an omitted field keeps the DB default
 	// (true); an explicit false is honoured.
 	CrossZoneEnabled *bool `protobuf:"varint,12,opt,name=cross_zone_enabled,json=crossZoneEnabled,proto3,oneof" json:"cross_zone_enabled,omitempty"`
+	// network_id — required for INTERNAL scheme (private VIP inside this VPC
+	// network), rejected for EXTERNAL. Validated against vpc.NetworkService.Get.
+	NetworkId string `protobuf:"bytes,13,opt,name=network_id,json=networkId,proto3" json:"network_id,omitempty"`
+	// security_group_ids — set of vpc.SecurityGroup ids describing the allowed
+	// inbound to the VIP (control-plane intent). Only valid for INTERNAL; each id
+	// must exist and belong to network_id. Validated against
+	// vpc.SecurityGroupService.Get.
+	SecurityGroupIds []string `protobuf:"bytes,14,rep,name=security_group_ids,json=securityGroupIds,proto3" json:"security_group_ids,omitempty"`
 	unknownFields    protoimpl.UnknownFields
 	sizeCache        protoimpl.SizeCache
 }
@@ -314,6 +322,20 @@ func (x *CreateNetworkLoadBalancerRequest) GetCrossZoneEnabled() bool {
 	return false
 }
 
+func (x *CreateNetworkLoadBalancerRequest) GetNetworkId() string {
+	if x != nil {
+		return x.NetworkId
+	}
+	return ""
+}
+
+func (x *CreateNetworkLoadBalancerRequest) GetSecurityGroupIds() []string {
+	if x != nil {
+		return x.SecurityGroupIds
+	}
+	return nil
+}
+
 type CreateNetworkLoadBalancerMetadata struct {
 	state                 protoimpl.MessageState `protogen:"open.v1"`
 	NetworkLoadBalancerId string                 `protobuf:"bytes,1,opt,name=network_load_balancer_id,json=networkLoadBalancerId,proto3" json:"network_load_balancer_id,omitempty"`
@@ -371,6 +393,13 @@ type UpdateNetworkLoadBalancerRequest struct {
 	// update_mask (or under an empty mask full-PATCH).
 	SessionAffinity  NetworkLoadBalancer_SessionAffinity `protobuf:"varint,10,opt,name=session_affinity,json=sessionAffinity,proto3,enum=kacho.cloud.loadbalancer.v1.NetworkLoadBalancer_SessionAffinity" json:"session_affinity,omitempty"`
 	CrossZoneEnabled bool                                `protobuf:"varint,11,opt,name=cross_zone_enabled,json=crossZoneEnabled,proto3" json:"cross_zone_enabled,omitempty"`
+	// network_id — immutable after Create; present so a client can address it in
+	// update_mask (which is rejected with InvalidArgument). Never applied.
+	NetworkId string `protobuf:"bytes,12,opt,name=network_id,json=networkId,proto3" json:"network_id,omitempty"`
+	// security_group_ids — mutable; full-replace of the SG set when present in
+	// update_mask (or under an empty mask full-PATCH). Each id must exist and
+	// belong to the LB network_id. Validated against vpc.SecurityGroupService.Get.
+	SecurityGroupIds []string `protobuf:"bytes,13,rep,name=security_group_ids,json=securityGroupIds,proto3" json:"security_group_ids,omitempty"`
 	unknownFields    protoimpl.UnknownFields
 	sizeCache        protoimpl.SizeCache
 }
@@ -466,6 +495,20 @@ func (x *UpdateNetworkLoadBalancerRequest) GetCrossZoneEnabled() bool {
 		return x.CrossZoneEnabled
 	}
 	return false
+}
+
+func (x *UpdateNetworkLoadBalancerRequest) GetNetworkId() string {
+	if x != nil {
+		return x.NetworkId
+	}
+	return ""
+}
+
+func (x *UpdateNetworkLoadBalancerRequest) GetSecurityGroupIds() []string {
+	if x != nil {
+		return x.SecurityGroupIds
+	}
+	return nil
 }
 
 type UpdateNetworkLoadBalancerMetadata struct {
@@ -1315,7 +1358,7 @@ const file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_rawDe
 	"\x8a\xc81\x06<=1000R\x06filter\"\xb2\x01\n" +
 	" ListNetworkLoadBalancersResponse\x12f\n" +
 	"\x16network_load_balancers\x18\x01 \x03(\v20.kacho.cloud.loadbalancer.v1.NetworkLoadBalancerR\x14networkLoadBalancers\x12&\n" +
-	"\x0fnext_page_token\x18\x02 \x01(\tR\rnextPageToken\"\xcf\x06\n" +
+	"\x0fnext_page_token\x18\x02 \x01(\tR\rnextPageToken\"\xb0\a\n" +
 	" CreateNetworkLoadBalancerRequest\x12+\n" +
 	"\n" +
 	"project_id\x18\x01 \x01(\tB\f\xe8\xc71\x01\x8a\xc81\x04<=50R\tprojectId\x125\n" +
@@ -1328,13 +1371,16 @@ const file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_rawDe
 	"\x11allow_zonal_shift\x18\n" +
 	" \x01(\bR\x0fallowZonalShift\x12k\n" +
 	"\x10session_affinity\x18\v \x01(\x0e2@.kacho.cloud.loadbalancer.v1.NetworkLoadBalancer.SessionAffinityR\x0fsessionAffinity\x121\n" +
-	"\x12cross_zone_enabled\x18\f \x01(\bH\x00R\x10crossZoneEnabled\x88\x01\x01\x1a9\n" +
+	"\x12cross_zone_enabled\x18\f \x01(\bH\x00R\x10crossZoneEnabled\x88\x01\x01\x12'\n" +
+	"\n" +
+	"network_id\x18\r \x01(\tB\b\x8a\xc81\x04<=50R\tnetworkId\x126\n" +
+	"\x12security_group_ids\x18\x0e \x03(\tB\b\x8a\xc81\x04<=50R\x10securityGroupIds\x1a9\n" +
 	"\vLabelsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01B\x15\n" +
 	"\x13_cross_zone_enabledJ\x04\b\a\x10\bJ\x04\b\b\x10\tR\x0elistener_specsR\x16attached_target_groups\"\\\n" +
 	"!CreateNetworkLoadBalancerMetadata\x127\n" +
-	"\x18network_load_balancer_id\x18\x01 \x01(\tR\x15networkLoadBalancerId\"\x92\x06\n" +
+	"\x18network_load_balancer_id\x18\x01 \x01(\tR\x15networkLoadBalancerId\"\xf3\x06\n" +
 	" UpdateNetworkLoadBalancerRequest\x12E\n" +
 	"\x18network_load_balancer_id\x18\x01 \x01(\tB\f\xe8\xc71\x01\x8a\xc81\x04<=50R\x15networkLoadBalancerId\x12;\n" +
 	"\vupdate_mask\x18\x02 \x01(\v2\x1a.google.protobuf.FieldMaskR\n" +
@@ -1346,7 +1392,10 @@ const file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_rawDe
 	"\x11allow_zonal_shift\x18\t \x01(\bR\x0fallowZonalShift\x12k\n" +
 	"\x10session_affinity\x18\n" +
 	" \x01(\x0e2@.kacho.cloud.loadbalancer.v1.NetworkLoadBalancer.SessionAffinityR\x0fsessionAffinity\x12,\n" +
-	"\x12cross_zone_enabled\x18\v \x01(\bR\x10crossZoneEnabled\x1a9\n" +
+	"\x12cross_zone_enabled\x18\v \x01(\bR\x10crossZoneEnabled\x12'\n" +
+	"\n" +
+	"network_id\x18\f \x01(\tB\b\x8a\xc81\x04<=50R\tnetworkId\x126\n" +
+	"\x12security_group_ids\x18\r \x03(\tB\b\x8a\xc81\x04<=50R\x10securityGroupIds\x1a9\n" +
 	"\vLabelsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01J\x04\b\x06\x10\aJ\x04\b\a\x10\bR\x0elistener_specsR\x16attached_target_groups\"\\\n" +

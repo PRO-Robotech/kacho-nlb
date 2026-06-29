@@ -258,6 +258,16 @@ message CreateNetworkLoadBalancerRequest {
   // cross_zone_enabled — optional so an omitted field keeps the DB default
   // (true); an explicit false is honoured.
   optional bool cross_zone_enabled = 12;
+
+  // network_id — required for INTERNAL scheme (private VIP inside this VPC
+  // network), rejected for EXTERNAL. Validated against vpc.NetworkService.Get.
+  string network_id = 13 [(length) = "<=50"];
+
+  // security_group_ids — set of vpc.SecurityGroup ids describing the allowed
+  // inbound to the VIP (control-plane intent). Only valid for INTERNAL; each id
+  // must exist and belong to network_id. Validated against
+  // vpc.SecurityGroupService.Get.
+  repeated string security_group_ids = 14 [(length) = "<=50"];
 }
 
 message CreateNetworkLoadBalancerMetadata {
@@ -290,6 +300,15 @@ message UpdateNetworkLoadBalancerRequest {
   // update_mask (or under an empty mask full-PATCH).
   NetworkLoadBalancer.SessionAffinity session_affinity = 10;
   bool cross_zone_enabled = 11;
+
+  // network_id — immutable after Create; present so a client can address it in
+  // update_mask (which is rejected with InvalidArgument). Never applied.
+  string network_id = 12 [(length) = "<=50"];
+
+  // security_group_ids — mutable; full-replace of the SG set when present in
+  // update_mask (or under an empty mask full-PATCH). Each id must exist and
+  // belong to the LB network_id. Validated against vpc.SecurityGroupService.Get.
+  repeated string security_group_ids = 13 [(length) = "<=50"];
 }
 
 message UpdateNetworkLoadBalancerMetadata {

@@ -63,6 +63,8 @@ func NewHandler(
 	opsRepo operations.Repo,
 	peerProject ProjectClient,
 	peerRegion RegionClient,
+	peerNetwork NetworkClient,
+	peerSecurityGroup SecurityGroupClient,
 	listFilter authzfilter.Filter,
 	logger *slog.Logger,
 ) *Handler {
@@ -72,8 +74,8 @@ func NewHandler(
 	return &Handler{
 		get:             NewGetLoadBalancerUseCase(repo),
 		list:            NewListLoadBalancersUseCase(repo, listFilter),
-		create:          NewCreateLoadBalancerUseCase(repo, opsRepo, peerProject, peerRegion, logger),
-		update:          NewUpdateLoadBalancerUseCase(repo, opsRepo, logger),
+		create:          NewCreateLoadBalancerUseCase(repo, opsRepo, peerProject, peerRegion, peerNetwork, peerSecurityGroup, logger),
+		update:          NewUpdateLoadBalancerUseCase(repo, opsRepo, peerSecurityGroup, logger),
 		deleteUC:        NewDeleteLoadBalancerUseCase(repo, opsRepo, logger),
 		start:           NewStartLoadBalancerUseCase(repo, opsRepo, logger),
 		stop:            NewStopLoadBalancerUseCase(repo, opsRepo, logger),

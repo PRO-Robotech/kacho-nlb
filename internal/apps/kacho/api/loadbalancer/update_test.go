@@ -23,7 +23,7 @@ func TestUpdate_HappyPath_PatchName(t *testing.T) {
 	repo := newFakeRepo()
 	lbID := seedLB(t, repo, "prj-a", "edge")
 	opsRepo := newFakeOpsRepo()
-	uc := NewUpdateLoadBalancerUseCase(repo, opsRepo, slog.Default())
+	uc := NewUpdateLoadBalancerUseCase(repo, opsRepo, &fakeSecurityGroupClient{}, slog.Default())
 	op, err := uc.Execute(context.Background(), &lbv1.UpdateNetworkLoadBalancerRequest{
 		NetworkLoadBalancerId: lbID,
 		Name:                  "edge-v2",
@@ -43,7 +43,7 @@ func TestUpdate_LabelsMask_EmitsMirrorIntent(t *testing.T) {
 	repo := newFakeRepo()
 	lbID := seedLB(t, repo, "prj-a", "edge")
 	opsRepo := newFakeOpsRepo()
-	uc := NewUpdateLoadBalancerUseCase(repo, opsRepo, slog.Default())
+	uc := NewUpdateLoadBalancerUseCase(repo, opsRepo, &fakeSecurityGroupClient{}, slog.Default())
 	op, err := uc.Execute(context.Background(), &lbv1.UpdateNetworkLoadBalancerRequest{
 		NetworkLoadBalancerId: lbID,
 		Labels:                map[string]string{"tier": "critical"},
@@ -64,7 +64,7 @@ func TestUpdate_NonLabelsMask_NoMirrorIntent(t *testing.T) {
 	repo := newFakeRepo()
 	lbID := seedLB(t, repo, "prj-a", "edge")
 	opsRepo := newFakeOpsRepo()
-	uc := NewUpdateLoadBalancerUseCase(repo, opsRepo, slog.Default())
+	uc := NewUpdateLoadBalancerUseCase(repo, opsRepo, &fakeSecurityGroupClient{}, slog.Default())
 	op, err := uc.Execute(context.Background(), &lbv1.UpdateNetworkLoadBalancerRequest{
 		NetworkLoadBalancerId: lbID,
 		Name:                  "edge-v2",
@@ -81,7 +81,7 @@ func TestUpdate_SessionAffinityMask(t *testing.T) {
 	repo := newFakeRepo()
 	lbID := seedLB(t, repo, "prj-a", "edge")
 	opsRepo := newFakeOpsRepo()
-	uc := NewUpdateLoadBalancerUseCase(repo, opsRepo, slog.Default())
+	uc := NewUpdateLoadBalancerUseCase(repo, opsRepo, &fakeSecurityGroupClient{}, slog.Default())
 	op, err := uc.Execute(context.Background(), &lbv1.UpdateNetworkLoadBalancerRequest{
 		NetworkLoadBalancerId: lbID,
 		SessionAffinity:       lbv1.NetworkLoadBalancer_CLIENT_IP_ONLY,
@@ -100,7 +100,7 @@ func TestUpdate_CrossZoneEnabledMask(t *testing.T) {
 	lbID := seedLB(t, repo, "prj-a", "edge")
 	repo.lbs[lbID].CrossZoneEnabled = true
 	opsRepo := newFakeOpsRepo()
-	uc := NewUpdateLoadBalancerUseCase(repo, opsRepo, slog.Default())
+	uc := NewUpdateLoadBalancerUseCase(repo, opsRepo, &fakeSecurityGroupClient{}, slog.Default())
 	op, err := uc.Execute(context.Background(), &lbv1.UpdateNetworkLoadBalancerRequest{
 		NetworkLoadBalancerId: lbID,
 		CrossZoneEnabled:      false,
@@ -115,7 +115,7 @@ func TestUpdate_ImmutableType(t *testing.T) {
 	t.Parallel()
 	repo := newFakeRepo()
 	lbID := seedLB(t, repo, "prj-a", "edge")
-	uc := NewUpdateLoadBalancerUseCase(repo, newFakeOpsRepo(), nil)
+	uc := NewUpdateLoadBalancerUseCase(repo, newFakeOpsRepo(), nil, nil)
 	_, err := uc.Execute(context.Background(), &lbv1.UpdateNetworkLoadBalancerRequest{
 		NetworkLoadBalancerId: lbID,
 		UpdateMask:            &fieldmaskpb.FieldMask{Paths: []string{"type"}},
@@ -127,7 +127,7 @@ func TestUpdate_ImmutableProjectID(t *testing.T) {
 	t.Parallel()
 	repo := newFakeRepo()
 	lbID := seedLB(t, repo, "prj-a", "edge")
-	uc := NewUpdateLoadBalancerUseCase(repo, newFakeOpsRepo(), nil)
+	uc := NewUpdateLoadBalancerUseCase(repo, newFakeOpsRepo(), nil, nil)
 	_, err := uc.Execute(context.Background(), &lbv1.UpdateNetworkLoadBalancerRequest{
 		NetworkLoadBalancerId: lbID,
 		UpdateMask:            &fieldmaskpb.FieldMask{Paths: []string{"project_id"}},
@@ -139,7 +139,7 @@ func TestUpdate_UnknownField(t *testing.T) {
 	t.Parallel()
 	repo := newFakeRepo()
 	lbID := seedLB(t, repo, "prj-a", "edge")
-	uc := NewUpdateLoadBalancerUseCase(repo, newFakeOpsRepo(), nil)
+	uc := NewUpdateLoadBalancerUseCase(repo, newFakeOpsRepo(), nil, nil)
 	_, err := uc.Execute(context.Background(), &lbv1.UpdateNetworkLoadBalancerRequest{
 		NetworkLoadBalancerId: lbID,
 		UpdateMask:            &fieldmaskpb.FieldMask{Paths: []string{"frobnicate"}},
@@ -152,7 +152,7 @@ func TestUpdate_EmptyMask_FullPatch(t *testing.T) {
 	repo := newFakeRepo()
 	lbID := seedLB(t, repo, "prj-a", "edge")
 	opsRepo := newFakeOpsRepo()
-	uc := NewUpdateLoadBalancerUseCase(repo, opsRepo, nil)
+	uc := NewUpdateLoadBalancerUseCase(repo, opsRepo, nil, nil)
 	op, err := uc.Execute(context.Background(), &lbv1.UpdateNetworkLoadBalancerRequest{
 		NetworkLoadBalancerId: lbID,
 		Name:                  "renamed",
@@ -166,7 +166,7 @@ func TestUpdate_EmptyMask_FullPatch(t *testing.T) {
 
 func TestUpdate_NotFound(t *testing.T) {
 	t.Parallel()
-	uc := NewUpdateLoadBalancerUseCase(newFakeRepo(), newFakeOpsRepo(), nil)
+	uc := NewUpdateLoadBalancerUseCase(newFakeRepo(), newFakeOpsRepo(), nil, nil)
 	_, err := uc.Execute(context.Background(), &lbv1.UpdateNetworkLoadBalancerRequest{
 		NetworkLoadBalancerId: "nlb-nope",
 		UpdateMask:            &fieldmaskpb.FieldMask{Paths: []string{"name"}},
@@ -177,7 +177,7 @@ func TestUpdate_NotFound(t *testing.T) {
 
 func TestUpdate_EmptyID(t *testing.T) {
 	t.Parallel()
-	uc := NewUpdateLoadBalancerUseCase(newFakeRepo(), newFakeOpsRepo(), nil)
+	uc := NewUpdateLoadBalancerUseCase(newFakeRepo(), newFakeOpsRepo(), nil, nil)
 	_, err := uc.Execute(context.Background(), &lbv1.UpdateNetworkLoadBalancerRequest{})
 	require.Equal(t, codes.InvalidArgument, status.Code(err))
 }

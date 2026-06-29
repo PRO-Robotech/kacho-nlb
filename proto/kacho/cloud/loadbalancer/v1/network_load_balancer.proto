@@ -91,6 +91,22 @@ message NetworkLoadBalancer {
   // region. Distribution programming is data-plane (out of control-plane
   // scope). DB default true.
   bool cross_zone_enabled = 19;
+
+  // ID of the VPC network the load balancer's private VIP belongs to. Required
+  // for INTERNAL scheme (the VIP is allocated inside this network), rejected
+  // for EXTERNAL (its VIP is public, not drawn from a network). Immutable after
+  // Create. Cross-service ref to kacho-vpc Network (TEXT, no FK); validated on
+  // Create via vpc.NetworkService.Get.
+  string network_id = 20;
+
+  // Control-plane intent describing the allowed inbound to the load balancer
+  // VIP. Each id references a kacho-vpc SecurityGroup that must exist and belong
+  // to the same network_id (same-network invariant). Mutable: Update replaces
+  // the whole set via update_mask. Only valid for INTERNAL scheme (SGs live in a
+  // network). Cross-service refs to kacho-vpc SecurityGroup (TEXT, no FK);
+  // validated on Create/Update via vpc.SecurityGroupService.Get. Traffic
+  // filtering itself is data-plane (out of control-plane scope).
+  repeated string security_group_ids = 21;
 }
 
 // AttachedTargetGroup — yc-shim-compat snapshot of a single

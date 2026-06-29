@@ -71,6 +71,46 @@ func TestNetworkLoadBalancer_SessionAffinityMapping(t *testing.T) {
 	}
 }
 
+// TestNetworkLoadBalancer_NetworkIDProjected — the public projection carries
+// network_id verbatim from the DB record (INTERNAL scheme).
+func TestNetworkLoadBalancer_NetworkIDProjected(t *testing.T) {
+	rec := kachorepo.LoadBalancerRecord{
+		LoadBalancer: domain.LoadBalancer{
+			ID: "nlb1", ProjectID: "p1", RegionID: "r1",
+			NetworkID: "enp01ABCDEF1234567xx",
+			Type:      domain.LBTypeInternal, Status: domain.LBStatusInactive,
+			SessionAffinity: domain.SessionAffinity5Tuple,
+		},
+		CreatedAt: time.Now(),
+	}
+	var pb *lbv1.NetworkLoadBalancer
+	require.NoError(t, dto.Transfer(dto.FromTo(rec, &pb)))
+	assert.Equal(t, "enp01ABCDEF1234567xx", pb.GetNetworkId())
+}
+
+// TestNetworkLoadBalancer_SecurityGroupIDsProjected — the public projection
+// carries security_group_ids verbatim from the DB record; empty set → nil.
+func TestNetworkLoadBalancer_SecurityGroupIDsProjected(t *testing.T) {
+	rec := kachorepo.LoadBalancerRecord{
+		LoadBalancer: domain.LoadBalancer{
+			ID: "nlb1", ProjectID: "p1", RegionID: "r1",
+			NetworkID:        "enp01ABCDEF1234567xx",
+			SecurityGroupIDs: []domain.SecurityGroupID{"sgp01AAAAAA1234567xx", "sgp01BBBBBB1234567xx"},
+			Type:             domain.LBTypeInternal, Status: domain.LBStatusInactive,
+			SessionAffinity: domain.SessionAffinity5Tuple,
+		},
+		CreatedAt: time.Now(),
+	}
+	var pb *lbv1.NetworkLoadBalancer
+	require.NoError(t, dto.Transfer(dto.FromTo(rec, &pb)))
+	assert.Equal(t, []string{"sgp01AAAAAA1234567xx", "sgp01BBBBBB1234567xx"}, pb.GetSecurityGroupIds())
+
+	rec.SecurityGroupIDs = nil
+	var pb2 *lbv1.NetworkLoadBalancer
+	require.NoError(t, dto.Transfer(dto.FromTo(rec, &pb2)))
+	assert.Empty(t, pb2.GetSecurityGroupIds())
+}
+
 // TestNetworkLoadBalancer_CrossZoneEnabledProjected — the public projection
 // carries cross_zone_enabled verbatim from the DB record (true and false).
 func TestNetworkLoadBalancer_CrossZoneEnabledProjected(t *testing.T) {

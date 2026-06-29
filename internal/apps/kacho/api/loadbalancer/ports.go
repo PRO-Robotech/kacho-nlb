@@ -6,6 +6,7 @@ package loadbalancer
 import (
 	geoclient "github.com/PRO-Robotech/kacho-nlb/internal/clients/geo"
 	iamclient "github.com/PRO-Robotech/kacho-nlb/internal/clients/iam"
+	vpcclient "github.com/PRO-Robotech/kacho-nlb/internal/clients/vpc"
 	kachorepo "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho"
 )
 
@@ -30,6 +31,19 @@ type ProjectClient = iamclient.ProjectClient
 // в Create use-case'е для валидации `region_id` через geo.RegionService.Get
 // (kacho-geo; ребро nlb→geo заменило nlb→compute «ради region»).
 type RegionClient = geoclient.RegionClient
+
+// NetworkClient — Get(networkID) → *vpcclient.Network. Используется sync-precheck
+// в Create use-case'е для валидации `network_id` INTERNAL-LB через
+// vpc.NetworkService.Get (ребро nlb→vpc): not-found → `InvalidArgument`, peer
+// недоступен → `Unavailable` (fail-closed для мутации).
+type NetworkClient = vpcclient.NetworkClient
+
+// SecurityGroupClient — Get(sgID) → *vpcclient.SecurityGroup. Используется
+// sync-precheck в Create/Update use-case'ах для валидации `security_group_ids`
+// INTERNAL-LB через vpc.SecurityGroupService.Get (ребро nlb→vpc): not-found или
+// SG чужой сети → `InvalidArgument`, peer недоступен → `Unavailable` (fail-closed
+// для мутации).
+type SecurityGroupClient = vpcclient.SecurityGroupClient
 
 // Logger — узкий port логгера; вся работа use-case'ов и worker'ов идёт через
 // этот интерфейс — concrete *slog.Logger удовлетворяет его автоматически.

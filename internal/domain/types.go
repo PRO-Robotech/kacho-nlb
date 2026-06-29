@@ -50,6 +50,11 @@ type (
 	AddressID  = ResourceID
 	NicID      = ResourceID
 	InstanceID = ResourceID
+
+	// SecurityGroupID — id ресурса kacho-vpc SecurityGroup. Алиас ResourceID
+	// (тот же prefix-формат); существование + same-network валидируются в
+	// use-case'е peer-gRPC-вызовом, не на типе.
+	SecurityGroupID = ResourceID
 )
 
 // ---- Семантические строковые поля ------------------------------------------
@@ -272,6 +277,53 @@ func LabelsToMap(d LbLabels) map[string]string {
 		return true
 	})
 	return m
+}
+
+// SecurityGroupIDsFromStrings конвертирует входной []string (proto repeated) в
+// []SecurityGroupID, применяя set-семантику: дубликаты схлопываются с
+// сохранением порядка первого вхождения. nil/пустой вход → nil.
+func SecurityGroupIDsFromStrings(ids []string) []SecurityGroupID {
+	if len(ids) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(ids))
+	out := make([]SecurityGroupID, 0, len(ids))
+	for _, id := range ids {
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		out = append(out, SecurityGroupID(id))
+	}
+	return out
+}
+
+// SecurityGroupIDsToStrings — обратное преобразование для DTO/repo. nil если
+// набор пуст (паритет с proto-семантикой: отсутствие = поле не задано).
+func SecurityGroupIDsToStrings(ids []SecurityGroupID) []string {
+	if len(ids) == 0 {
+		return nil
+	}
+	out := make([]string, len(ids))
+	for i, id := range ids {
+		out[i] = string(id)
+	}
+	return out
+}
+
+// SecurityGroupIDsEqual — порядко-чувствительное сравнение наборов SG (used in
+// Update no-op detection). Набор хранится нормализованным (dedup, стабильный
+// порядок), поэтому ordered-compare корректен.
+func SecurityGroupIDsEqual(a, b []SecurityGroupID) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // LabelsEqual — set-equality для LbLabels (used in Update no-op detection).

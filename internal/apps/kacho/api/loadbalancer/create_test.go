@@ -133,7 +133,7 @@ func TestCreateLoadBalancer_CrossZoneEnabled(t *testing.T) {
 }
 
 func newCreateUC(repo *fakeRepo, opsRepo *fakeOpsRepo, pc ProjectClient, rc RegionClient) *CreateLoadBalancerUseCase {
-	return NewCreateLoadBalancerUseCase(repo, opsRepo, pc, rc, slog.Default())
+	return NewCreateLoadBalancerUseCase(repo, opsRepo, pc, rc, &fakeNetworkClient{}, &fakeSecurityGroupClient{}, slog.Default())
 }
 
 func TestCreateLoadBalancer_HappyPath(t *testing.T) {

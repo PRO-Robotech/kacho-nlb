@@ -3,7 +3,11 @@
 
 package domain
 
-import "go.uber.org/multierr"
+import (
+	"go.uber.org/multierr"
+
+	coreerrors "github.com/PRO-Robotech/kacho-corelib/errors"
+)
 
 // LoadBalancer — domain entity NetworkLoadBalancer.
 //
@@ -11,9 +15,19 @@ import "go.uber.org/multierr"
 // `CreatedAt` сюда НЕ входит — это DB-managed (DEFAULT now), живёт в
 // repo-сущности.
 type LoadBalancer struct {
-	ID                 ResourceID
-	ProjectID          ProjectID
-	RegionID           RegionID
+	ID        ResourceID
+	ProjectID ProjectID
+	RegionID  RegionID
+	// NetworkID — VPC-сеть приватного VIP. Обязателен для INTERNAL, запрещён для
+	// EXTERNAL (cross-field инвариант, validateNetworkBinding). Immutable после
+	// Create. Cross-service ref на kacho-vpc Network (без FK).
+	NetworkID NetworkID
+	// SecurityGroupIDs — набор vpc.SecurityGroup, описывающий допустимый inbound
+	// к VIP (control-plane intent). Валиден только для INTERNAL (SG живут в сети).
+	// Mutable: Update заменяет набор целиком (full-replace через update_mask).
+	// Cross-service refs на kacho-vpc SecurityGroup (без FK); существование +
+	// same-network валидируются peer-API на request-path.
+	SecurityGroupIDs   []SecurityGroupID
 	Name               LbName
 	Description        LbDescription
 	Labels             LbLabels
@@ -35,7 +49,61 @@ func (lb LoadBalancer) Validate() error {
 		lb.Type.Validate(),
 		lb.Status.Validate(),
 		lb.SessionAffinity.Validate(),
+		lb.validateNetworkBinding(),
+		lb.validateSecurityGroupBinding(),
 	)
+}
+
+// validateNetworkBinding — cross-field инвариант network_id ↔ type. INTERNAL-LB
+// несёт приватный VIP внутри VPC-сети → network_id обязателен. EXTERNAL-LB несёт
+// публичный VIP (не из сети) → network_id запрещён. Defense-in-depth дублируется
+// DB CHECK (load_balancers_network_id_scheme_check).
+func (lb LoadBalancer) validateNetworkBinding() error {
+	switch lb.Type {
+	case LBTypeInternal:
+		if lb.NetworkID == "" {
+			return coreerrors.InvalidArgument().
+				AddFieldViolation("network_id", "network_id is required for INTERNAL load balancer").
+				Err()
+		}
+	case LBTypeExternal:
+		if lb.NetworkID != "" {
+			return coreerrors.InvalidArgument().
+				AddFieldViolation("network_id", "network_id is only valid for INTERNAL load balancer").
+				Err()
+		}
+	}
+	return nil
+}
+
+// validateSecurityGroupBinding — cross-field инвариант security_group_ids ↔ type
+// + per-id и cardinality. SG живут внутри VPC-сети → непустой набор валиден
+// только для INTERNAL (у EXTERNAL сети нет). Пустые id запрещены; размер набора
+// ограничен MaxSecurityGroupsPerLB. Defense-in-depth дублируется DB CHECK
+// (load_balancers_sg_internal_check).
+func (lb LoadBalancer) validateSecurityGroupBinding() error {
+	if len(lb.SecurityGroupIDs) == 0 {
+		return nil
+	}
+	if lb.Type != LBTypeInternal {
+		return coreerrors.InvalidArgument().
+			AddFieldViolation("security_group_ids",
+				"security_group_ids is only valid for INTERNAL load balancer").
+			Err()
+	}
+	if len(lb.SecurityGroupIDs) > MaxSecurityGroupsPerLB {
+		return coreerrors.InvalidArgument().
+			AddFieldViolation("security_group_ids", "too many security groups (max 5)").
+			Err()
+	}
+	for _, sg := range lb.SecurityGroupIDs {
+		if sg == "" {
+			return coreerrors.InvalidArgument().
+				AddFieldViolation("security_group_ids", "security group id must not be empty").
+				Err()
+		}
+	}
+	return nil
 }
 
 // Equal — deep equality по domain-полям (для noop-detection в Update-flow).
@@ -44,6 +112,8 @@ func (lb LoadBalancer) Equal(other LoadBalancer) bool {
 	return lb.ID == other.ID &&
 		lb.ProjectID == other.ProjectID &&
 		lb.RegionID == other.RegionID &&
+		lb.NetworkID == other.NetworkID &&
+		SecurityGroupIDsEqual(lb.SecurityGroupIDs, other.SecurityGroupIDs) &&
 		lb.Name == other.Name &&
 		lb.Description == other.Description &&
 		LabelsEqual(lb.Labels, other.Labels) &&

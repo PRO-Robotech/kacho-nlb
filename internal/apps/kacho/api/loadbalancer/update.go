@@ -23,21 +23,22 @@ import (
 // UpdateLoadBalancerUseCase — UpdateMask discipline + async update.
 // Mutable: name / description / labels / deletion_protection /
 // session_affinity / cross_zone_enabled.
-// Immutable: type / region_id / project_id (in mask → InvalidArgument).
+// Immutable: type / region_id / project_id / network_id (in mask → InvalidArgument).
 // allow_zonal_shift (proto field) — пока не хранится в domain (reserved для
 // будущего toggle); если попало в mask — silent-accept без эффекта.
 type UpdateLoadBalancerUseCase struct {
-	repo    Repo
-	opsRepo operations.Repo
-	logger  *slog.Logger
+	repo                Repo
+	opsRepo             operations.Repo
+	securityGroupClient SecurityGroupClient
+	logger              *slog.Logger
 }
 
 // NewUpdateLoadBalancerUseCase конструктор.
-func NewUpdateLoadBalancerUseCase(repo Repo, opsRepo operations.Repo, logger *slog.Logger) *UpdateLoadBalancerUseCase {
+func NewUpdateLoadBalancerUseCase(repo Repo, opsRepo operations.Repo, sgc SecurityGroupClient, logger *slog.Logger) *UpdateLoadBalancerUseCase {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &UpdateLoadBalancerUseCase{repo: repo, opsRepo: opsRepo, logger: logger}
+	return &UpdateLoadBalancerUseCase{repo: repo, opsRepo: opsRepo, securityGroupClient: sgc, logger: logger}
 }
 
 // knownUpdateFields — допустимый whitelist для update_mask. Поле, отсутствующее
@@ -49,6 +50,7 @@ var knownUpdateFields = map[string]bool{
 	"deletion_protection": true,
 	"session_affinity":    true,
 	"cross_zone_enabled":  true,
+	"security_group_ids":  true,
 	"allow_zonal_shift":   true, // silent-accept (no domain effect — reserved).
 }
 
@@ -57,6 +59,7 @@ var immutableUpdateFields = map[string]string{
 	"type":       "type is immutable after NetworkLoadBalancer.Create",
 	"region_id":  "region_id is immutable after NetworkLoadBalancer.Create",
 	"project_id": "project_id is immutable; use NetworkLoadBalancerService.Move",
+	"network_id": "network_id is immutable after NetworkLoadBalancer.Create",
 }
 
 // Execute — sync mask validation + read existing → apply diff → ops insert →
@@ -98,6 +101,18 @@ func (u *UpdateLoadBalancerUseCase) Execute(
 	updated := applyUpdateMask(cur.LoadBalancer, req, mask)
 	if err := updated.Validate(); err != nil {
 		return nil, mapDomainErr(err)
+	}
+
+	// Sync-precheck security_group_ids (только когда mask их трогает — мутация,
+	// не затрагивающая SG, не перевалидирует набор и не падает на dangling-SG).
+	// network_id immutable → берётся из текущего состояния (updated.NetworkID ==
+	// cur.NetworkID). not-found/чужая сеть → InvalidArgument; vpc недоступен →
+	// Unavailable. Прежний набор SG при отказе сохраняется (мутация не доходит до
+	// writer-TX).
+	if securityGroupIDsInMask(mask) {
+		if err := validateSecurityGroups(ctx, u.securityGroupClient, string(updated.NetworkID), updated.SecurityGroupIDs); err != nil {
+			return nil, err
+		}
 	}
 
 	// Operation row.
@@ -219,6 +234,10 @@ func applyUpdateMask(
 	}
 	if apply("cross_zone_enabled") {
 		out.CrossZoneEnabled = req.GetCrossZoneEnabled()
+	}
+	if apply("security_group_ids") {
+		// full-replace набора (set-семантика, dedup); пустой → снятие всех SG.
+		out.SecurityGroupIDs = domain.SecurityGroupIDsFromStrings(req.GetSecurityGroupIds())
 	}
 	// allow_zonal_shift — silent-accept (no-op в domain).
 	return out

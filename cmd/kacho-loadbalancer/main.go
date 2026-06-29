@@ -87,6 +87,8 @@ type peerClients struct {
 	Instance computeclient.InstanceClient
 	// VPC
 	Subnet           vpcclient.SubnetClient
+	Network          vpcclient.NetworkClient
+	SecurityGroup    vpcclient.SecurityGroupClient
 	NetworkInterface vpcclient.NetworkInterfaceClient
 	Address          vpcclient.AddressClient
 	InternalAddress  vpcclient.InternalAddressClient
@@ -338,7 +340,7 @@ func runServe(configPath string) error {
 	// (Internal-vs-external инвариант: Internal.* живут на internalSrv).
 	lbHandler := lbhandler.NewHandler(
 		repo, opsRepo,
-		peers.Project, peers.Region,
+		peers.Project, peers.Region, peers.Network, peers.SecurityGroup,
 		peers.ListFilter,
 		logger,
 	)
@@ -853,6 +855,8 @@ func dialPeers(
 	// kacho-vpc — public (Address/Subnet/NIC/Operation) + internal (InternalAddressService).
 	if vpcPublicConn != nil {
 		peers.Subnet = vpcclient.NewSubnetClient(vpcPublicConn)
+		peers.Network = vpcclient.NewNetworkClient(vpcPublicConn)
+		peers.SecurityGroup = vpcclient.NewSecurityGroupClient(vpcPublicConn)
 		peers.NetworkInterface = vpcclient.NewNetworkInterfaceClient(vpcPublicConn)
 		peers.Address = vpcclient.NewAddressClient(vpcPublicConn)
 	}

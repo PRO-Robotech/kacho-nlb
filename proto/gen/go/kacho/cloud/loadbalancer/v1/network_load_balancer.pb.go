@@ -329,6 +329,20 @@ type NetworkLoadBalancer struct {
 	// region. Distribution programming is data-plane (out of control-plane
 	// scope). DB default true.
 	CrossZoneEnabled bool `protobuf:"varint,19,opt,name=cross_zone_enabled,json=crossZoneEnabled,proto3" json:"cross_zone_enabled,omitempty"`
+	// ID of the VPC network the load balancer's private VIP belongs to. Required
+	// for INTERNAL scheme (the VIP is allocated inside this network), rejected
+	// for EXTERNAL (its VIP is public, not drawn from a network). Immutable after
+	// Create. Cross-service ref to kacho-vpc Network (TEXT, no FK); validated on
+	// Create via vpc.NetworkService.Get.
+	NetworkId string `protobuf:"bytes,20,opt,name=network_id,json=networkId,proto3" json:"network_id,omitempty"`
+	// Control-plane intent describing the allowed inbound to the load balancer
+	// VIP. Each id references a kacho-vpc SecurityGroup that must exist and belong
+	// to the same network_id (same-network invariant). Mutable: Update replaces
+	// the whole set via update_mask. Only valid for INTERNAL scheme (SGs live in a
+	// network). Cross-service refs to kacho-vpc SecurityGroup (TEXT, no FK);
+	// validated on Create/Update via vpc.SecurityGroupService.Get. Traffic
+	// filtering itself is data-plane (out of control-plane scope).
+	SecurityGroupIds []string `protobuf:"bytes,21,rep,name=security_group_ids,json=securityGroupIds,proto3" json:"security_group_ids,omitempty"`
 	unknownFields    protoimpl.UnknownFields
 	sizeCache        protoimpl.SizeCache
 }
@@ -467,6 +481,20 @@ func (x *NetworkLoadBalancer) GetCrossZoneEnabled() bool {
 		return x.CrossZoneEnabled
 	}
 	return false
+}
+
+func (x *NetworkLoadBalancer) GetNetworkId() string {
+	if x != nil {
+		return x.NetworkId
+	}
+	return ""
+}
+
+func (x *NetworkLoadBalancer) GetSecurityGroupIds() []string {
+	if x != nil {
+		return x.SecurityGroupIds
+	}
+	return nil
 }
 
 // AttachedTargetGroup — yc-shim-compat snapshot of a single
@@ -656,7 +684,7 @@ var File_kacho_cloud_loadbalancer_v1_network_load_balancer_proto protoreflect.Fi
 
 const file_kacho_cloud_loadbalancer_v1_network_load_balancer_proto_rawDesc = "" +
 	"\n" +
-	"7kacho/cloud/loadbalancer/v1/network_load_balancer.proto\x12\x1bkacho.cloud.loadbalancer.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a.kacho/cloud/loadbalancer/v1/health_check.proto\x1a\x1ckacho/cloud/validation.proto\"\x84\n" +
+	"7kacho/cloud/loadbalancer/v1/network_load_balancer.proto\x12\x1bkacho.cloud.loadbalancer.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a.kacho/cloud/loadbalancer/v1/health_check.proto\x1a\x1ckacho/cloud/validation.proto\"\xd1\n" +
 	"\n" +
 	"\x13NetworkLoadBalancer\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1d\n" +
@@ -676,7 +704,10 @@ const file_kacho_cloud_loadbalancer_v1_network_load_balancer_proto_rawDesc = "" 
 	"\x13deletion_protection\x18\x0e \x01(\bR\x12deletionProtection\x12*\n" +
 	"\x11allow_zonal_shift\x18\x0f \x01(\bR\x0fallowZonalShift\x12b\n" +
 	"\x15disable_zone_statuses\x18\x12 \x03(\v2..kacho.cloud.loadbalancer.v1.DisableZoneStatusR\x13disableZoneStatuses\x12,\n" +
-	"\x12cross_zone_enabled\x18\x13 \x01(\bR\x10crossZoneEnabled\x1a9\n" +
+	"\x12cross_zone_enabled\x18\x13 \x01(\bR\x10crossZoneEnabled\x12\x1d\n" +
+	"\n" +
+	"network_id\x18\x14 \x01(\tR\tnetworkId\x12,\n" +
+	"\x12security_group_ids\x18\x15 \x03(\tR\x10securityGroupIds\x1a9\n" +
 	"\vLabelsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x7f\n" +

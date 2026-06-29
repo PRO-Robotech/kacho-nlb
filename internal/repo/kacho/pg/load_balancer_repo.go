@@ -20,7 +20,7 @@ import (
 const loadBalancerCols = `
     id, project_id, region_id, created_at, updated_at,
     name, description, labels, type, status, session_affinity,
-    cross_zone_enabled, deletion_protection`
+    cross_zone_enabled, deletion_protection, network_id, security_group_ids`
 
 // loadBalancerReader — Get/List поверх произвольной pgx.Tx (read-only или RW).
 type loadBalancerReader struct {
@@ -30,27 +30,31 @@ type loadBalancerReader struct {
 // scanLB — общий scanner для load_balancers row (в порядке loadBalancerCols).
 func scanLB(row pgx.Row) (*kacho.LoadBalancerRecord, error) {
 	var (
-		rec        kacho.LoadBalancerRecord
-		labelsRaw  []byte
-		nameStr    string
-		descStr    string
-		typeStr    string
-		statusStr  string
-		affinStr   string
-		regionIDs  string
-		projectIDs string
-		idStr      string
+		rec          kacho.LoadBalancerRecord
+		labelsRaw    []byte
+		nameStr      string
+		descStr      string
+		typeStr      string
+		statusStr    string
+		affinStr     string
+		regionIDs    string
+		projectIDs   string
+		idStr        string
+		networkIDStr string
+		sgIDs        []string
 	)
 	if err := row.Scan(
 		&idStr, &projectIDs, &regionIDs, &rec.CreatedAt, &rec.UpdatedAt,
 		&nameStr, &descStr, &labelsRaw, &typeStr, &statusStr, &affinStr,
-		&rec.CrossZoneEnabled, &rec.DeletionProtection,
+		&rec.CrossZoneEnabled, &rec.DeletionProtection, &networkIDStr, &sgIDs,
 	); err != nil {
 		return nil, err
 	}
 	rec.ID = domain.ResourceID(idStr)
 	rec.ProjectID = domain.ProjectID(projectIDs)
 	rec.RegionID = domain.RegionID(regionIDs)
+	rec.NetworkID = domain.NetworkID(networkIDStr)
+	rec.SecurityGroupIDs = domain.SecurityGroupIDsFromStrings(sgIDs)
 	rec.Name = domain.LbName(nameStr)
 	rec.Description = domain.LbDescription(descStr)
 	rec.Type = domain.LBType(typeStr)
@@ -196,14 +200,16 @@ func (w *loadBalancerWriter) Insert(ctx context.Context, lb *domain.LoadBalancer
 	q := fmt.Sprintf(`
         INSERT INTO kacho_nlb.load_balancers
             (id, project_id, region_id, name, description, labels,
-             type, status, session_affinity, cross_zone_enabled, deletion_protection)
-        VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9, $10, $11)
+             type, status, session_affinity, cross_zone_enabled, deletion_protection,
+             network_id, security_group_ids)
+        VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9, $10, $11, $12, $13)
         RETURNING %s`, loadBalancerCols)
 	row := w.tx.QueryRow(ctx, q,
 		string(lb.ID), string(lb.ProjectID), string(lb.RegionID),
 		string(lb.Name), string(lb.Description), labelsJSON,
 		string(lb.Type), string(lb.Status), string(lb.SessionAffinity),
 		lb.CrossZoneEnabled, lb.DeletionProtection,
+		string(lb.NetworkID), sgIDsParam(lb.SecurityGroupIDs),
 	)
 	rec, err := scanLB(row)
 	if err != nil {
@@ -220,6 +226,11 @@ func (w *loadBalancerWriter) Update(ctx context.Context, lb *domain.LoadBalancer
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", kacho.ErrInvalidArg, err)
 	}
+	// security_group_ids — full-replace набора одной атомарной single-statement
+	// UPDATE: text[] переписывается целиком, под row-lock'ом. Конкурентные
+	// replace'ы сериализуются (второй ждёт commit первого и перезаписывает),
+	// итог — один из наборов целиком, без torn-state (data-integrity «full-replace
+	// набора = атомарная запись колонки»).
 	q := fmt.Sprintf(`
         UPDATE kacho_nlb.load_balancers
            SET name = $2,
@@ -228,6 +239,7 @@ func (w *loadBalancerWriter) Update(ctx context.Context, lb *domain.LoadBalancer
                session_affinity = $5,
                cross_zone_enabled = $6,
                deletion_protection = $7,
+               security_group_ids = $8,
                updated_at = now()
          WHERE id = $1
         RETURNING %s`, loadBalancerCols)
@@ -235,6 +247,7 @@ func (w *loadBalancerWriter) Update(ctx context.Context, lb *domain.LoadBalancer
 		string(lb.ID),
 		string(lb.Name), string(lb.Description), labelsJSON,
 		string(lb.SessionAffinity), lb.CrossZoneEnabled, lb.DeletionProtection,
+		sgIDsParam(lb.SecurityGroupIDs),
 	)
 	rec, err := scanLB(row)
 	if err != nil {
@@ -298,6 +311,17 @@ func (w *loadBalancerWriter) Delete(ctx context.Context, id string) error {
 		return fmt.Errorf("%w: NetworkLoadBalancer %s not found", kacho.ErrNotFound, id)
 	}
 	return nil
+}
+
+// sgIDsParam — кодирует набор SG для записи в NOT NULL text[]-колонку. Возвращает
+// НЕ-nil пустой slice для пустого набора (nil []string закодировался бы в NULL и
+// нарушил NOT NULL); непустой набор — материализованные строки.
+func sgIDsParam(ids []domain.SecurityGroupID) []string {
+	out := make([]string, len(ids))
+	for i, id := range ids {
+		out[i] = string(id)
+	}
+	return out
 }
 
 // pgxIsNoRows — true если err оборачивает pgx.ErrNoRows. Helper для CAS-семантики
