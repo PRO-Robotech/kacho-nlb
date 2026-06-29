@@ -24,6 +24,11 @@ func (okPinger) Ping(context.Context) error { return nil }
 
 func quietLogger() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
 
+// readyStub — readyProbe-стаб для readiness-чекеров (vip-origin-reconcile).
+type readyStub struct{ ready bool }
+
+func (s readyStub) Ready() bool { return s.ready }
+
 func hasChecker(checkers []health.Checker, name string) bool {
 	for _, c := range checkers {
 		if c.Name == name {
@@ -39,7 +44,7 @@ func TestBuildReadinessCheckers_DrainerFlipsWithBootGate(t *testing.T) {
 	operations.Start()
 
 	gate := bootgate.New(bootgate.Config{RequireIAM: true, Service: "kacho-nlb"})
-	checkers := buildReadinessCheckers(okPinger{}, gate)
+	checkers := buildReadinessCheckers(okPinger{}, gate, readyStub{ready: true})
 	agg := health.New(checkers)
 
 	// register-drainer not connected → not ready.
@@ -53,10 +58,26 @@ func TestBuildReadinessCheckers_DrainerFlipsWithBootGate(t *testing.T) {
 	}
 }
 
+// TestBuildReadinessCheckers_VIPOriginReconcileGate — until the boot-once
+// vip_origin backfill completes, /readyz is held not-ready (fail-closed).
+func TestBuildReadinessCheckers_VIPOriginReconcileGate(t *testing.T) {
+	operations.Start()
+	gate := bootgate.New(bootgate.Config{}) // RequireIAM=false → drainer checker ready
+	checkers := buildReadinessCheckers(okPinger{}, gate, readyStub{ready: false})
+	agg := health.New(checkers)
+	if ready, down := agg.Evaluate(context.Background()); ready {
+		t.Fatalf("expected not-ready while vip_origin reconcile pending; down=%v", down)
+	}
+	checkersReady := buildReadinessCheckers(okPinger{}, gate, readyStub{ready: true})
+	if ready, down := health.New(checkersReady).Evaluate(context.Background()); !ready {
+		t.Fatalf("expected ready after vip_origin reconcile complete; down=%v", down)
+	}
+}
+
 func TestBuildReadinessCheckers_CoreDependenciesPresent(t *testing.T) {
 	gate := bootgate.New(bootgate.Config{})
-	checkers := buildReadinessCheckers(okPinger{}, gate)
-	for _, want := range []string{"database", "register-drainer", "lro-worker"} {
+	checkers := buildReadinessCheckers(okPinger{}, gate, readyStub{ready: true})
+	for _, want := range []string{"database", "register-drainer", "lro-worker", "vip-origin-reconcile"} {
 		if !hasChecker(checkers, want) {
 			t.Fatalf("readiness checker %q missing", want)
 		}

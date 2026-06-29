@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/H-BF/corlib/pkg/option"
 	"google.golang.org/genproto/googleapis/rpc/status"
 	"google.golang.org/protobuf/types/known/anypb"
 
@@ -44,7 +45,9 @@ type fakeRepo struct {
 	targetGroups  map[string]*kachorepo.TargetGroupRecord
 	outbox        []fakeOutboxEvent
 	fga           []fgaIntentEvent // FGARegisterOutbox intents (flushed on Commit)
-	insertErr     error            // injected error for next Insert
+	insertErr     error            // injected error for next Insert (TX-1 handle)
+	setVIPErr     error            // injected error for next SetVIP (TX-2 persist)
+	casErr        error            // injected error for next SetStatusCAS (TX-3 finalize)
 	commitErr     error            // injected error for next Commit
 	currentWriter *fakeWriter
 }
@@ -391,6 +394,11 @@ func (lw *fakeListenerWriter) Update(_ context.Context, l *domain.Listener) (*ka
 func (lw *fakeListenerWriter) SetStatusCAS(_ context.Context, id string, expected, newStatus domain.ListenerStatus) (*kachorepo.ListenerRecord, error) {
 	lw.r.mu.Lock()
 	defer lw.r.mu.Unlock()
+	if lw.r.casErr != nil {
+		err := lw.r.casErr
+		lw.r.casErr = nil
+		return nil, err
+	}
 	cur, ok := lw.r.listeners[id]
 	if !ok {
 		return nil, fmt.Errorf("%w: Listener %s not found", domain.ErrNotFound, id)
@@ -399,6 +407,45 @@ func (lw *fakeListenerWriter) SetStatusCAS(_ context.Context, id string, expecte
 		return nil, fmt.Errorf("%w: Listener %s status is not %s", domain.ErrFailedPrecondition, id, expected)
 	}
 	cur.Status = newStatus
+	rec := *cur
+	return &rec, nil
+}
+
+// SetVIP — TX-2 persist (durable-handle). Mirrors pg: UPDATE address_id +
+// allocated_address; enforces (region, VIP, port, proto) partial UNIQUE once
+// allocated_address becomes non-empty (parity с pg listeners_region_vip_uniq).
+func (lw *fakeListenerWriter) SetVIP(_ context.Context, id, addressID, allocatedAddress string) (*kachorepo.ListenerRecord, error) {
+	lw.r.mu.Lock()
+	defer lw.r.mu.Unlock()
+	if lw.r.setVIPErr != nil {
+		err := lw.r.setVIPErr
+		lw.r.setVIPErr = nil
+		return nil, err
+	}
+	cur, ok := lw.r.listeners[id]
+	if !ok {
+		return nil, fmt.Errorf("%w: Listener %s not found", domain.ErrNotFound, id)
+	}
+	if allocatedAddress != "" {
+		for oid, existing := range lw.r.listeners {
+			if oid == id {
+				continue
+			}
+			if existing.RegionID == cur.RegionID &&
+				string(existing.AllocatedAddress) == allocatedAddress &&
+				existing.Port == cur.Port &&
+				existing.Protocol == cur.Protocol &&
+				existing.Status != domain.ListenerStatusDeleting {
+				return nil, fmt.Errorf("%w: listener with VIP %s port %d protocol %s already exists in region %s",
+					domain.ErrAlreadyExists, allocatedAddress, cur.Port, cur.Protocol, cur.RegionID)
+			}
+		}
+	}
+	if addressID != "" {
+		cur.AddressID = option.MustNewOption(domain.AddressID(addressID))
+	}
+	cur.AllocatedAddress = domain.IPAddress(allocatedAddress)
+	cur.UpdatedAt = time.Now().UTC()
 	rec := *cur
 	return &rec, nil
 }

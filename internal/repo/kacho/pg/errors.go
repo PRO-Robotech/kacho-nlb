@@ -55,6 +55,13 @@ func mapPgErr(err error, kind, id string) error {
 		case "23505":
 			return fmt.Errorf("%w: %s with name already exists", kacho.ErrAlreadyExists, kind)
 		case "23503":
+			// Композитный FK listeners_default_tg_attached_fk: default_target_group_id
+			// должен ссылаться на TG, приаттаченный к тому же LB. Имя констрейнта
+			// маппится в стабильный contract-текст (set-default на неприаттаченный TG
+			// либо detach default-TG под RESTRICT). См. 0004_listener_default_tg_attached_fk.sql.
+			if pgErr.ConstraintName == "listeners_default_tg_attached_fk" {
+				return fmt.Errorf("%w: default target group is not attached to this load balancer", kacho.ErrFailedPrecondition)
+			}
 			return fmt.Errorf("%w: %s has dependent resources", kacho.ErrFailedPrecondition, kind)
 		case "23514":
 			return fmt.Errorf("%w: %s violates check constraint", kacho.ErrInvalidArg, kind)

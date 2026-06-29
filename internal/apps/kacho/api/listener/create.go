@@ -37,26 +37,24 @@ import (
 //  6. opsRepo.CreateWithPrincipal(op, principal).
 //  7. operations.Run(callerCtx, opsRepo, op.ID, worker) — fire-and-trigger.
 //
-// Async worker:
-//  1. VIP-acquire branch:
-//     - BYO: vpc.AddressService.Get → verify project + ip_version → SetReference CAS.
-//     - Auto/EXTERNAL: vpc.InternalAddressService.AllocateExternalIP.
-//     - Auto/INTERNAL: vpc.InternalAddressService.AllocateInternalIP.
-//  2. repo.Writer open: Insert listener (with allocated_address + address_id) +
-//     outbox emit `nlb_listener:<id> CREATED` + `nlb_load_balancer:<lb_id> UPDATED`
-//     atomically.
-//  3. Commit (Insert + 2× outbox + FGA-register-intent atomically —
-//     creator tuple + parent-link tuple
-//     `lb_network_load_balancer:<lb_id>#load_balancer@lb_listener:<id>` written
-//     in the SAME writer-tx; register-drainer applies it through kacho-iam).
-//  4. operations.Run возвращает marshalled Listener → ops.MarkDone(response).
+// Async worker — durable-handle сага в 3 TX (детали — doc у doCreate):
+//  1. TX-1: INSERT durable handle (status='CREATING'; address_id известен для
+//     BYO, пуст для auto) — ДО alloc.
+//  2. acquireVIP: BYO `Get`+`SetReference`; auto `AllocateExternalIP`/
+//     `AllocateInternalIP`.
+//  3. TX-2: отдельный немедленный commit `address_id`+`allocated_address` в
+//     CREATING-handle (durable address_id для reconcile-by-address).
+//  4. TX-3 (writer-TX): CREATING→ACTIVE + outbox `nlb_listener:<id> CREATED` +
+//     `nlb_load_balancer:<lb_id> UPDATED` + FGA-register-intent (creator +
+//     parent-link `lb_network_load_balancer:<lb_id>#load_balancer@lb_listener:<id>`),
+//     атомарно; register-drainer применяет intent через kacho-iam.
+//  5. operations.Run возвращает marshalled Listener → ops.MarkDone(response).
 //
-// Compensation (defer guard в worker):
-//   - VIP allocated AND (subsequent SetReference|Insert|Commit failed) →
-//     vpc.InternalAddressService.FreeIP (auto-alloc branch) или
-//     vpc.InternalAddressService.ClearReference (BYO branch). Best-effort —
-//     ошибка compensation НЕ маскирует исходную ошибку worker'а (она важнее
-//     для caller'а; cleanup только log'ируется).
+// Compensation (defer guard в worker) до финализации: release VIP (если
+// аллоцирован) + delete handle. Best-effort — ошибка compensation НЕ маскирует
+// исходную ошибку worker'а (cleanup только log'ируется). Если процесс умирает
+// раньше compensation — осиротевший CREATING-handle добивает free_ip_runner
+// (docs/architecture/15-free-ip-runner.md).
 type CreateUseCase struct {
 	repo          RepoFactory
 	opsRepo       OperationsRepo
@@ -143,6 +141,10 @@ func (u *CreateUseCase) Run(ctx context.Context, req *lbv1.CreateListenerRequest
 	}
 	if addrCtx.byo {
 		listener.AddressID = option.MustNewOption(domain.AddressID(addrCtx.addressID))
+		// BYO: tenant передал address_id — Delete снимет лишь ссылку
+		// (ClearReference), сам Address не удаляется. auto-alloc — дефолт
+		// (NewListener уже проставил VipOriginAuto).
+		listener.VipOrigin = domain.VipOriginBYO
 	}
 	if addrCtx.subnetID != "" {
 		listener.SubnetID = option.MustNewOption(domain.SubnetID(addrCtx.subnetID))
@@ -274,79 +276,156 @@ type createInput struct {
 	fgaOwner string
 }
 
-// doCreate — worker-side флоу Listener.Create. Возвращает anypb.Any(Listener)
-// при успехе либо gRPC-status при ошибке (operations.Run пишет в Operation.error).
+// doCreate — worker-side флоу Listener.Create как durable-handle сага в 3 TX.
+// VIP-аллокация — внешний side-effect (единственный dual-write edge), поэтому
+// строка-handle создаётся ДО alloc и address_id персистится сразу после
+// alloc-ответа отдельным commit'ом — чтобы при сбое финала free_ip_runner мог
+// детерминированно освободить VIP по address_id:
+//
+//	TX-1: INSERT listeners (status='CREATING', allocated_address='';
+//	      address_id — известен для BYO, пуст для auto) — durable handle.
+//	acquireVIP — BYO: Get+SetReference; auto: AllocateExternal/InternalIP.
+//	TX-2: UPDATE SET address_id, allocated_address (отдельный немедленный commit,
+//	      всё ещё CREATING) — persist durable address_id.
+//	TX-3: UPDATE CREATING→ACTIVE + outbox CREATED + LB UPDATED + fga-register.
+//
+// Откат до финализации (defer compensateCreate) — освобождает VIP (если
+// аллоцирован) и удаляет handle (best-effort). Если процесс умирает раньше —
+// осиротевший handle (CREATING) добивает free_ip_runner. Узкий auto-only
+// known-gap: краш в окне «alloc-ответ ↔ TX-2 commit» → пустой address_id в
+// строке → reconcile by-address невозможен (docs/architecture/15-free-ip-runner.md).
+// Возвращает anypb.Any(Listener) при успехе либо gRPC-status при ошибке.
 func (u *CreateUseCase) doCreate(ctx context.Context, in createInput) (*anypb.Any, error) {
 	listener := in.listener
 
-	// VIP allocation branch (BYO / auto-EXTERNAL / auto-INTERNAL).
-	allocResult, err := u.acquireVIP(ctx, listener, in.addrCtx)
+	// TX-1: durable handle (status='CREATING'). allocated_address пуст до alloc;
+	// для BYO address_id уже известен (option выставлен в Run), для auto — пуст.
+	if err := u.insertHandle(ctx, &listener); err != nil {
+		return nil, mapDomainErr(err)
+	}
+
+	// Compensation guard (до финализации): release VIP (если аллоцирован) + delete
+	// handle. best-effort; ошибка compensation не маскирует исходную ошибку.
+	finalized := false
+	var alloc vipAllocResult
+	defer func() {
+		if finalized {
+			return
+		}
+		u.compensateCreate(ctx, listener.ID, alloc)
+	}()
+
+	// acquireVIP — внешний side-effect (BYO / auto-EXTERNAL / auto-INTERNAL).
+	var err error
+	alloc, err = u.acquireVIP(ctx, listener, in.addrCtx)
 	if err != nil {
 		return nil, mapDomainErr(err)
 	}
 
-	// Compensation guard: defer rollback VIP if any subsequent step fails.
-	committed := false
-	defer func() {
-		if committed {
-			return
-		}
-		u.compensateVIP(ctx, listener.ID, allocResult)
-	}()
+	// TX-2 (немедленный отдельный commit): persist address_id + allocated_address
+	// в CREATING-handle сразу после alloc-ответа. UNIQUE (region,VIP,port,proto)
+	// ловится здесь (allocated_address становится непустым) → ErrAlreadyExists.
+	if _, err := u.persistVIP(ctx, string(listener.ID), alloc.addressID, alloc.address); err != nil {
+		return nil, mapDomainErr(err)
+	}
 
-	listener.AllocatedAddress = domain.IPAddress(allocResult.address)
-	listener.AddressID = option.MustNewOption(domain.AddressID(allocResult.addressID))
+	// TX-3 (writer-TX): CREATING→ACTIVE + outbox CREATED + LB UPDATED + fga-register.
+	created, err := u.finalizeCreate(ctx, listener, in)
+	if err != nil {
+		return nil, mapDomainErr(err)
+	}
+	finalized = true
 
-	// Open writer-TX: Insert + 2× outbox-emit + Commit atomically.
+	return marshalListener(created)
+}
+
+// insertHandle — TX-1: INSERT durable-handle строки (status='CREATING').
+func (u *CreateUseCase) insertHandle(ctx context.Context, l *domain.Listener) error {
 	w, err := u.repo.Writer(ctx)
 	if err != nil {
-		return nil, mapDomainErr(err)
+		return err
 	}
-	rolledBack := false
+	committed := false
 	defer func() {
-		if rolledBack {
-			return
+		if !committed {
+			w.Abort()
 		}
-		w.Abort()
 	}()
+	if _, err := w.Listeners().Insert(ctx, l); err != nil {
+		return err
+	}
+	if err := w.Commit(); err != nil {
+		return err
+	}
+	committed = true
+	return nil
+}
 
-	created, err := w.Listeners().Insert(ctx, &listener)
+// persistVIP — TX-2: отдельный немедленный commit address_id + allocated_address
+// в CREATING-handle (durable address_id для reconcile-by-address).
+func (u *CreateUseCase) persistVIP(ctx context.Context, id, addressID, allocatedAddress string) (*kachorepo.ListenerRecord, error) {
+	w, err := u.repo.Writer(ctx)
 	if err != nil {
-		w.Abort()
-		rolledBack = true
-		return nil, mapDomainErr(err)
+		return nil, err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			w.Abort()
+		}
+	}()
+	rec, err := w.Listeners().SetVIP(ctx, id, addressID, allocatedAddress)
+	if err != nil {
+		return nil, err
+	}
+	if err := w.Commit(); err != nil {
+		return nil, err
+	}
+	committed = true
+	return rec, nil
+}
+
+// finalizeCreate — TX-3 (writer-TX): CREATING→ACTIVE + outbox CREATED + LB
+// UPDATED + fga-register-intent (creator + parent-link) атомарно одним commit'ом.
+func (u *CreateUseCase) finalizeCreate(ctx context.Context, l domain.Listener, in createInput) (*kachorepo.ListenerRecord, error) {
+	w, err := u.repo.Writer(ctx)
+	if err != nil {
+		return nil, err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			w.Abort()
+		}
+	}()
+	created, err := w.Listeners().SetStatusCAS(ctx, string(l.ID),
+		domain.ListenerStatusCreating, domain.ListenerStatusActive)
+	if err != nil {
+		return nil, err
 	}
 	if err := w.Outbox().Emit(ctx,
 		outboxResourceTypeListener, string(created.ID), string(created.ProjectID),
 		outboxActionCreated, listenerPayloadMap(created),
 	); err != nil {
-		w.Abort()
-		rolledBack = true
-		return nil, mapDomainErr(fmt.Errorf("%w: outbox emit listener CREATED: %v", domain.ErrInternal, err))
+		return nil, fmt.Errorf("%w: outbox emit listener CREATED: %v", domain.ErrInternal, err)
 	}
 	if err := w.Outbox().Emit(ctx,
 		outboxResourceTypeLoadBalancer, string(in.lb.ID), string(in.lb.ProjectID),
 		outboxActionUpdated, lbUpdatedPayloadMap(string(in.lb.ID), string(in.lb.ProjectID), string(in.lb.RegionID), "listener_created"),
 	); err != nil {
-		w.Abort()
-		rolledBack = true
-		return nil, mapDomainErr(fmt.Errorf("%w: outbox emit lb UPDATED: %v", domain.ErrInternal, err))
+		return nil, fmt.Errorf("%w: outbox emit lb UPDATED: %v", domain.ErrInternal, err)
 	}
-	// FGA-register-intent (creator + parent-link) in the SAME writer-tx as
-	// the Insert — register-drainer applies it through kacho-iam RegisterResource.
+	// FGA-register-intent (creator + parent-link) в той же writer-tx —
+	// register-drainer применяет через kacho-iam RegisterResource.
 	if err := w.FGARegisterOutbox().Emit(ctx, domain.FGAEventRegister,
 		listenerRegisterIntent(created, in.fgaOwner)); err != nil {
-		w.Abort()
-		rolledBack = true
-		return nil, mapDomainErr(fmt.Errorf("%w: fga register-intent emit: %v", domain.ErrInternal, err))
+		return nil, fmt.Errorf("%w: fga register-intent emit: %v", domain.ErrInternal, err)
 	}
 	if err := w.Commit(); err != nil {
-		rolledBack = true
-		return nil, mapDomainErr(err)
+		return nil, err
 	}
 	committed = true
-
-	return marshalListener(created)
+	return created, nil
 }
 
 // vipAllocResult — outcome VIP-allocation branch.
@@ -422,7 +501,7 @@ func (u *CreateUseCase) acquireVIP(ctx context.Context, l domain.Listener, addrC
 		// pool, cascade selector).
 		resp, err := u.internalAddrs.AllocateExternalIP(ctx, vpcclient.AllocateExternalIPRequest{
 			ProjectID: string(l.ProjectID),
-			Name:      fmt.Sprintf("nlb-listener-%s", domain.TruncateID(l.ID)),
+			Name:      domain.ListenerAutoAddressName(l.ID),
 			Owner:     owner,
 		})
 		if err != nil {
@@ -438,7 +517,7 @@ func (u *CreateUseCase) acquireVIP(ctx context.Context, l domain.Listener, addrC
 	// INTERNAL → AllocateInternalIP scoped to subnet_id.
 	resp, err := u.internalAddrs.AllocateInternalIP(ctx, vpcclient.AllocateInternalIPRequest{
 		ProjectID: string(l.ProjectID),
-		Name:      fmt.Sprintf("nlb-listener-%s", domain.TruncateID(l.ID)),
+		Name:      domain.ListenerAutoAddressName(l.ID),
 		SubnetID:  addrCtx.subnetID,
 		Owner:     owner,
 	})
@@ -453,31 +532,58 @@ func (u *CreateUseCase) acquireVIP(ctx context.Context, l domain.Listener, addrC
 	}, nil
 }
 
-// compensateVIP — best-effort cleanup after VIP allocated but listener insert
-// / commit failed. Auto-alloc → FreeIP (delete Address); BYO → ClearReference.
-// Errors logged, not propagated (worker already returned original error).
-func (u *CreateUseCase) compensateVIP(ctx context.Context, listenerID domain.ResourceID, alloc vipAllocResult) {
-	if u.internalAddrs == nil || alloc.addressID == "" {
-		return
-	}
-	logger := loggerOrDiscard(u.logger).With(
-		"listener_id", string(listenerID),
-		"address_id", alloc.addressID,
-		"byo", alloc.byo,
-	)
-	if alloc.byo {
-		if err := u.internalAddrs.ClearReference(ctx, alloc.addressID, alloc.owner); err != nil {
-			logger.Warn("listener.Create compensation ClearReference failed", "err", err)
-			return
+// compensateCreate — best-effort rollback осиротевшей create-саги: освобождает
+// VIP (если аллоцирован) и удаляет durable-handle строку. Auto-alloc → FreeIP
+// (delete Address); BYO → ClearReference (Address tenant'а уцелел). Ошибки
+// логируются, не пробрасываются (worker уже вернул исходную ошибку). Если
+// процесс умирает раньше compensation — handle (CREATING) добивает free_ip_runner.
+func (u *CreateUseCase) compensateCreate(ctx context.Context, listenerID domain.ResourceID, alloc vipAllocResult) {
+	logger := loggerOrDiscard(u.logger).With("listener_id", string(listenerID))
+
+	// 1. Release VIP, если он был аллоцирован (alloc.addressID непуст → acquireVIP
+	//    завершился). Пустой → acquireVIP не дошёл до alloc, освобождать нечего.
+	if u.internalAddrs != nil && alloc.addressID != "" {
+		if alloc.byo {
+			if err := u.internalAddrs.ClearReference(ctx, alloc.addressID, alloc.owner); err != nil {
+				logger.Warn("listener.Create compensation ClearReference failed",
+					"err", err, "address_id", alloc.addressID)
+			}
+		} else if err := u.internalAddrs.FreeIP(ctx, alloc.addressID, alloc.owner); err != nil {
+			logger.Warn("listener.Create compensation FreeIP failed",
+				"err", err, "address_id", alloc.addressID)
 		}
-		logger.Info("listener.Create compensation ClearReference ok")
-		return
 	}
-	if err := u.internalAddrs.FreeIP(ctx, alloc.addressID, alloc.owner); err != nil {
-		logger.Warn("listener.Create compensation FreeIP failed", "err", err)
-		return
+
+	// 2. Удаляем durable-handle строку. Идемпотентно (ErrNotFound → ok); сбой →
+	//    handle добьёт free_ip_runner (VIP уже освобождён выше либо им же).
+	if err := u.deleteHandle(ctx, string(listenerID)); err != nil {
+		logger.Warn("listener.Create compensation delete handle failed; free_ip_runner will reconcile", "err", err)
 	}
-	logger.Info("listener.Create compensation FreeIP ok")
+}
+
+// deleteHandle — best-effort DELETE durable-handle строки в собственной TX.
+func (u *CreateUseCase) deleteHandle(ctx context.Context, id string) error {
+	w, err := u.repo.Writer(ctx)
+	if err != nil {
+		return err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			w.Abort()
+		}
+	}()
+	if err := w.Listeners().Delete(ctx, id); err != nil {
+		if errors.Is(err, domain.ErrNotFound) {
+			return nil // уже удалён — идемпотентно (defer Abort откатит пустую TX)
+		}
+		return err
+	}
+	if err := w.Commit(); err != nil {
+		return err
+	}
+	committed = true
+	return nil
 }
 
 // listenerRegisterIntent builds the FGA-register-intent for a created
@@ -546,7 +652,3 @@ func familyForIPVersion(v domain.IPVersion) string {
 func ownerMatches(have, want vpcclient.AddressOwner) bool {
 	return have.Kind == want.Kind && have.ID == want.ID
 }
-
-// unused (defensive): silence unused import / errors helper. errors import is
-// used by Update/Delete; create.go uses it through mapDomainErr indirectly.
-var _ = errors.Is

@@ -38,8 +38,9 @@
 //     return path. Best-effort, не 2PC; failure of compensation is logged but
 //     does not change Operation error (caller already sees the original error).
 //   - Delete       → FreeIP / ClearReference failure marks listener `FAILED`
-//     in outbox + retains row with `status='DELETING'`; `jobs/free_ip_runner`
-//     (follow-up) eventually retries. Within this Delete returns
+//     in outbox + retains row with `status='DELETING'`; background
+//     `jobs/free_ip_runner` reconciles the stuck row (release-by-address +
+//     delete + finalize) on a later tick. Within this Delete returns
 //     Unavailable если peer vpc недоступен; row остаётся в DELETING.
 //
 // FGA owner-hierarchy tuple emit (transactional-outbox, replaces the former

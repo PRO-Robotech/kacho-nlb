@@ -73,6 +73,9 @@ func NewListener(
 		IPVersion:       ipVersion,
 		ProxyProtocolV2: false,
 		Status:          ListenerStatusCreating,
+		// auto-alloc — дефолтный источник VIP; BYO-ветка Create переопределяет
+		// на VipOriginBYO, когда tenant передал address_id.
+		VipOrigin: VipOriginAuto,
 	}
 }
 
@@ -137,4 +140,13 @@ func TruncateID(id ResourceID) string {
 		return s[:ShortIDLen]
 	}
 	return s
+}
+
+// ListenerAutoAddressName — детерминированное имя Address, который NLB создаёт
+// при auto-alloc VIP под листенер: `nlb-listener-<short-id>`. Единый источник
+// формата: используется и генератором имени на Create, и boot-reconcile'ом
+// (распознавание auto-alloc Address по имени, привязанному к КОНКРЕТНОМУ
+// listener-id — устойчиво к чужому BYO-адресу с похожим именем).
+func ListenerAutoAddressName(id ResourceID) string {
+	return "nlb-listener-" + TruncateID(id)
 }

@@ -35,6 +35,9 @@ type Listener struct {
 	ProxyProtocolV2      bool
 	DefaultTargetGroupID option.ValueOf[ResourceID]
 	Status               ListenerStatus
+	// VipOrigin — источник VIP (auto-alloc vs BYO). Управляет release-веткой на
+	// Delete: auto → FreeIP, byo → ClearReference. См. domain.VipOrigin.
+	VipOrigin VipOrigin
 }
 
 // Validate — все семантически-нагруженные поля. Bind-семантика
@@ -49,6 +52,13 @@ func (l Listener) Validate() error {
 	if l.AllocatedAddress != "" {
 		allocErr = l.AllocatedAddress.Validate()
 	}
+	// VipOrigin валидируется только если задан — repo всегда читает непустое
+	// значение (DB DEFAULT 'auto' + CHECK), а тонкие builder'ы (тесты) могут
+	// оставить zero-value. Жёсткий within-service инвариант держит DB-CHECK.
+	vipOriginErr := error(nil)
+	if l.VipOrigin != "" {
+		vipOriginErr = l.VipOrigin.Validate()
+	}
 	return multierr.Combine(
 		l.Name.Validate(),
 		l.Description.Validate(),
@@ -59,6 +69,7 @@ func (l Listener) Validate() error {
 		l.IPVersion.Validate(),
 		allocErr,
 		l.Status.Validate(),
+		vipOriginErr,
 	)
 }
 
@@ -80,7 +91,8 @@ func (l Listener) Equal(other Listener) bool {
 		optEqual(l.SubnetID, other.SubnetID) &&
 		l.ProxyProtocolV2 == other.ProxyProtocolV2 &&
 		optEqual(l.DefaultTargetGroupID, other.DefaultTargetGroupID) &&
-		l.Status == other.Status
+		l.Status == other.Status &&
+		l.VipOrigin == other.VipOrigin
 }
 
 // optEqual — equality двух option.ValueOf[T] по semantic-значению (some/none +

@@ -308,6 +308,7 @@ type MTLSConfig struct {
 // JobsConfig — конфигурация фоновых worker'ов (см. internal/apps/kacho/jobs).
 type JobsConfig struct {
 	TargetDrain TargetDrainConfig `mapstructure:"target-drain"`
+	FreeIP      FreeIPConfig      `mapstructure:"free-ip"`
 }
 
 // TargetDrainConfig — параметры двухфазного drain runner.
@@ -315,6 +316,18 @@ type TargetDrainConfig struct {
 	// Interval — период между тиками drain-runner'а. Default 10s
 	// (см. RegisterDefaults). Должен быть > 0.
 	Interval time.Duration `mapstructure:"interval"`
+}
+
+// FreeIPConfig — параметры free_ip_runner (reconcile застрявших листенеров:
+// durable-handle create-orphan 'CREATING' + незавершённый Delete 'DELETING').
+type FreeIPConfig struct {
+	// Interval — период между тиками reconciler'а. Default 30s (сироты редки,
+	// чаще не нужно). Должен быть > 0.
+	Interval time.Duration `mapstructure:"interval"`
+	// AgeThreshold — минимальный возраст строки (по updated_at), при котором она
+	// считается «застрявшей»: свежий in-flight create/delete (моложе порога) не
+	// трогается, пока легитимный worker дорабатывает. Default 5m. Должен быть > 0.
+	AgeThreshold time.Duration `mapstructure:"age-threshold"`
 }
 
 // ─── InternalLifecycle (stream) ─────────────────────────────────────────

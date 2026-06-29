@@ -125,6 +125,10 @@ func RegisterDefaults(v *viper.Viper) {
 	// target-drain: двухфазный drain runner. 10s — компромисс
 	// между latency удаления expired targets и нагрузкой на БД.
 	v.SetDefault("jobs.target-drain.interval", "10s")
+	// free-ip: reconcile застрявших листенеров. 30s — сироты редки; age-threshold
+	// 5m исключает гонку с нормальным in-flight create/delete.
+	v.SetDefault("jobs.free-ip.interval", "30s")
+	v.SetDefault("jobs.free-ip.age-threshold", "5m")
 
 	// InternalLifecycle (stream к kacho-iam).
 	// 32 одновременных стрима — достаточно для одного-двух iam-pod'ов (по

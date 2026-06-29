@@ -57,6 +57,7 @@ func minimalValidConfig() Config {
 		},
 		Jobs: JobsConfig{
 			TargetDrain: TargetDrainConfig{Interval: 10 * time.Second},
+			FreeIP:      FreeIPConfig{Interval: 30 * time.Second, AgeThreshold: 5 * time.Minute},
 		},
 		InternalLifecycle: InternalLifecycleConfig{MaxStreams: 32},
 	}
@@ -238,6 +239,27 @@ func TestValidate_JobsTargetDrainIntervalNegative(t *testing.T) {
 	err := cfg.Validate()
 	if err == nil || !strings.Contains(err.Error(), "jobs.target-drain.interval") {
 		t.Fatalf("expected target-drain.interval error, got %v", err)
+	}
+}
+
+// TestValidate_JobsFreeIPIntervalZero — free-ip.interval=0s rejected.
+func TestValidate_JobsFreeIPIntervalZero(t *testing.T) {
+	cfg := minimalValidConfig()
+	cfg.Jobs.FreeIP.Interval = 0
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "jobs.free-ip.interval") {
+		t.Fatalf("expected free-ip.interval error, got %v", err)
+	}
+}
+
+// TestValidate_JobsFreeIPAgeThresholdZero — free-ip.age-threshold=0 rejected:
+// нулевой порог → reconciler схватит свежий in-flight create/delete.
+func TestValidate_JobsFreeIPAgeThresholdZero(t *testing.T) {
+	cfg := minimalValidConfig()
+	cfg.Jobs.FreeIP.AgeThreshold = 0
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "jobs.free-ip.age-threshold") {
+		t.Fatalf("expected free-ip.age-threshold error, got %v", err)
 	}
 }
 

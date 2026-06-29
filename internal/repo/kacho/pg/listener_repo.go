@@ -19,7 +19,7 @@ const listenerCols = `
     id, load_balancer_id, project_id, region_id, created_at, updated_at,
     name, description, labels, protocol, port, target_port, ip_version,
     address_id, allocated_address, subnet_id, proxy_protocol_v2,
-    default_target_group_id, status`
+    default_target_group_id, status, vip_origin`
 
 type listenerReader struct {
 	tx pgx.Tx
@@ -44,12 +44,13 @@ func scanListener(row pgx.Row) (*kacho.ListenerRecord, error) {
 		subnetIDs  string
 		dfltTGStr  string
 		statusStr  string
+		vipOrigin  string
 	)
 	if err := row.Scan(
 		&idStr, &lbIDStr, &projectIDs, &regionIDs, &rec.CreatedAt, &rec.UpdatedAt,
 		&nameStr, &descStr, &labelsRaw, &protoStr, &port, &tgtPort, &ipVerStr,
 		&addrIDStr, &allocAddr, &subnetIDs, &rec.ProxyProtocolV2,
-		&dfltTGStr, &statusStr,
+		&dfltTGStr, &statusStr, &vipOrigin,
 	); err != nil {
 		return nil, err
 	}
@@ -68,6 +69,7 @@ func scanListener(row pgx.Row) (*kacho.ListenerRecord, error) {
 	rec.SubnetID = dto.OptFromStr[domain.SubnetID](subnetIDs)
 	rec.DefaultTargetGroupID = dto.OptFromStr[domain.ResourceID](dfltTGStr)
 	rec.Status = domain.ListenerStatus(statusStr)
+	rec.VipOrigin = domain.VipOrigin(vipOrigin)
 	labels, err := dto.LabelsFromJSONB(labelsRaw)
 	if err != nil {
 		return nil, fmt.Errorf("scan listener labels: %w", err)
@@ -172,20 +174,27 @@ func (w *listenerWriter) Insert(ctx context.Context, l *domain.Listener) (*kacho
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", kacho.ErrInvalidArg, err)
 	}
+	// vip_origin: пустое значение от тонких builder'ов → DB DEFAULT 'auto'
+	// (зеркалит NOT NULL DEFAULT 'auto' колонки); Create-флоу всегда передаёт
+	// явное 'auto'/'byo'.
+	vipOrigin := string(l.VipOrigin)
+	if vipOrigin == "" {
+		vipOrigin = string(domain.VipOriginAuto)
+	}
 	q := fmt.Sprintf(`
         INSERT INTO kacho_nlb.listeners
             (id, load_balancer_id, project_id, region_id, name, description, labels,
              protocol, port, target_port, ip_version,
              address_id, allocated_address, subnet_id, proxy_protocol_v2,
-             default_target_group_id, status)
-        VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+             default_target_group_id, status, vip_origin)
+        VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
         RETURNING %s`, listenerCols)
 	row := w.tx.QueryRow(ctx, q,
 		string(l.ID), string(l.LoadBalancerID), string(l.ProjectID), string(l.RegionID),
 		string(l.Name), string(l.Description), labelsJSON,
 		string(l.Protocol), int32(l.Port), int32(l.TargetPort), string(l.IPVersion),
 		dto.OptString(l.AddressID), string(l.AllocatedAddress), dto.OptString(l.SubnetID),
-		l.ProxyProtocolV2, dto.OptString(l.DefaultTargetGroupID), string(l.Status),
+		l.ProxyProtocolV2, dto.OptString(l.DefaultTargetGroupID), string(l.Status), vipOrigin,
 	)
 	rec, err := scanListener(row)
 	if err != nil {
@@ -245,6 +254,20 @@ func (w *listenerWriter) SetAllocatedAddress(ctx context.Context, id, address st
          WHERE id = $1
         RETURNING %s`, listenerCols)
 	row := w.tx.QueryRow(ctx, q, id, address)
+	rec, err := scanListener(row)
+	if err != nil {
+		return nil, mapPgErr(err, "Listener", id)
+	}
+	return rec, nil
+}
+
+func (w *listenerWriter) SetVIP(ctx context.Context, id, addressID, allocatedAddress string) (*kacho.ListenerRecord, error) {
+	q := fmt.Sprintf(`
+        UPDATE kacho_nlb.listeners
+           SET address_id = $2, allocated_address = $3, updated_at = now()
+         WHERE id = $1
+        RETURNING %s`, listenerCols)
+	row := w.tx.QueryRow(ctx, q, id, addressID, allocatedAddress)
 	rec, err := scanListener(row)
 	if err != nil {
 		return nil, mapPgErr(err, "Listener", id)

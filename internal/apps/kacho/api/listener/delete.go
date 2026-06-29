@@ -36,32 +36,22 @@ import (
 //     - auto-alloc (BYO=false): vpc.InternalAddressService.FreeIP(address_id).
 //     - BYO       (BYO=true): vpc.InternalAddressService.ClearReference(address_id).
 //     Failure → outbox `nlb_listener:<id> FAILED` + ops.MarkDone(error UNAVAILABLE);
-//     listener row остаётся в `status='DELETING'` для retry by `free_ip_runner`
-//     (follow-up). Verbatim.
+//     listener row остаётся в `status='DELETING'` — background `free_ip_runner`
+//     реконсилирует её (release-by-address + delete + finalize) на следующем тике.
 //  3. repo.Writer.Listeners.Delete + 2× outbox emit (`nlb_listener:<id> DELETED`
 //     + `nlb_load_balancer:<lb_id> UPDATED`).
 //  4. ops.MarkDone(response=Empty).
 //
 // BYO vs auto-alloc detection:
-// текущая schema хранит `address_id` для обоих вариантов (BYO — original id;
-// auto — id новосозданного Address из AllocateExternalIP/AllocateInternalIP).
-// Чтобы различить branch — храним ещё одну метку. На уровне domain.Listener
-// её нет, поэтому используем эвристику: если AllocateExternalIP/InternalIP
-// в Create wrote отдельный Address — он живёт в kacho-vpc с
-// `used_by={nlb_listener, listener_id}`. На Delete мы спрашиваем
-// vpc.AddressService.Get(address_id) → если `created_for == listener_id`
-// (соблюдается atomic alloc+SetReference в InternalAddressService), значит
-// auto-alloc и можно FreeIP; иначе BYO и достаточно ClearReference.
-//
-// Pragmatic shortcut: heuristic ниже — Address.Name префикс `nlb-listener-<short-id>`
-// (детерминированный builder в acquireVIP). Это надёжный признак auto-alloc
-// branch; альтернативно можно расширить domain.Listener дополнительной flag-
-// колонкой `address_byo bool` — отложено в follow-up (требует миграции
-// schema; acceptance работает и с эвристикой). См. /-023.
+// release-ветка выбирается дискриминатором `listeners.vip_origin`, который
+// проставляется на Create (auto-alloc → 'auto', переданный tenant'ом address_id
+// → 'byo'). Имя Address для решения НЕ используется: tenant волен назвать свой
+// статический адрес как угодно (в т.ч. совпав с auto-паттерном), а ошибочный
+// выбор FreeIP по имени удалил бы чужой адрес (data-loss). Источник истины —
+// колонка, прочитанная вместе с листенером.
 type DeleteUseCase struct {
 	repo          RepoFactory
 	opsRepo       OperationsRepo
-	addresses     AddressClient
 	internalAddrs InternalAddressClient
 	logger        *slog.Logger
 }
@@ -70,14 +60,12 @@ type DeleteUseCase struct {
 func NewDeleteUseCase(
 	repo RepoFactory,
 	opsRepo OperationsRepo,
-	addresses AddressClient,
 	internalAddrs InternalAddressClient,
 	logger *slog.Logger,
 ) *DeleteUseCase {
 	return &DeleteUseCase{
 		repo:          repo,
 		opsRepo:       opsRepo,
-		addresses:     addresses,
 		internalAddrs: internalAddrs,
 		logger:        logger,
 	}
@@ -173,13 +161,11 @@ func (u *DeleteUseCase) doDelete(ctx context.Context, cur *kachorepo.ListenerRec
 		committed = true
 	}
 
-	// Step 2: release VIP. Branch (BYO vs auto-alloc) detection — heuristic
-	// on Address.Name prefix (set in acquireVIP).
+	// Step 2: release VIP. Release-ветка выбирается дискриминатором vip_origin
+	// (auto → FreeIP, byo → ClearReference), прочитанным вместе с листенером —
+	// без обращения к vpc за именем Address (anti data-loss).
 	if addressID != "" {
-		byo, derr := u.detectBYO(ctx, addressID, listenerID)
-		if derr != nil {
-			return nil, u.markFailedAndReturn(ctx, listenerID, projectID, derr)
-		}
+		byo := cur.VipOrigin == domain.VipOriginBYO
 		if err := u.releaseVIP(ctx, addressID, listenerID, byo); err != nil {
 			return nil, u.markFailedAndReturn(ctx, listenerID, projectID, err)
 		}
@@ -233,38 +219,6 @@ func (u *DeleteUseCase) doDelete(ctx context.Context, cur *kachorepo.ListenerRec
 	return any, nil
 }
 
-// detectBYO — heuristic: BYO Address chose by tenant обычно не следует
-// шаблону `nlb-listener-<short-id>`; auto-alloc Address всегда имеет это имя
-// (см. acquireVIP). При недоступности vpc.AddressService адаптера — считаем
-// branch=auto-alloc (FreeIP idempotent если address уже удалён → NotFound = ok).
-//
-// Returned err имеет sentinel-обёртку (domain.Err*) и мапится через
-// mapDomainErr.
-func (u *DeleteUseCase) detectBYO(ctx context.Context, addressID, listenerID string) (bool, error) {
-	if u.addresses == nil {
-		return false, nil
-	}
-	addr, err := u.addresses.Get(ctx, addressID)
-	if err != nil {
-		// NotFound → address уже удалён (предыдущий Delete partial); считаем
-		// BYO=false (FreeIP вернёт NotFound idempotent).
-		if errors.Is(err, domain.ErrInvalidArg) || errors.Is(err, domain.ErrNotFound) {
-			return false, nil
-		}
-		return false, err
-	}
-	// Heuristic: auto-alloc Address всегда имеет name = `nlb-listener-<8chars>`
-	// (см. CreateUseCase.acquireVIP). Если name пуст или другой формат — BYO.
-	const autoPrefix = "nlb-listener-"
-	if len(addr.Name) > len(autoPrefix) && addr.Name[:len(autoPrefix)] == autoPrefix {
-		return false, nil
-	}
-	// Name пустое (vpc.AddressService.Get не вернул) → safer to treat as BYO
-	// (ClearReference вместо FreeIP).
-	_ = listenerID
-	return true, nil
-}
-
 // releaseVIP — branch:
 //
 //	byo == true  → ClearReference (Address остаётся у tenant'а).
@@ -284,7 +238,7 @@ func (u *DeleteUseCase) releaseVIP(ctx context.Context, addressID, listenerID st
 
 // markFailedAndReturn — best-effort outbox emit `nlb_listener:<id> FAILED`
 // + return wrapped error для ops.MarkError. listener row остаётся в DELETING
-// state — retry'ит background `free_ip_runner` (follow-up).
+// state — её реконсилирует background `free_ip_runner` на следующем тике.
 func (u *DeleteUseCase) markFailedAndReturn(ctx context.Context, listenerID, projectID string, original error) error {
 	w, err := u.repo.Writer(ctx)
 	if err == nil {

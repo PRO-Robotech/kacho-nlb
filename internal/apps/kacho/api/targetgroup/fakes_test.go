@@ -620,6 +620,9 @@ func (fakeListenerStub) SetStatusCAS(context.Context, string, domain.ListenerSta
 func (fakeListenerStub) SetAllocatedAddress(context.Context, string, string) (*kachorepo.ListenerRecord, error) {
 	return nil, errors.New("not used")
 }
+func (fakeListenerStub) SetVIP(context.Context, string, string, string) (*kachorepo.ListenerRecord, error) {
+	return nil, errors.New("not used")
+}
 func (fakeListenerStub) MoveProject(context.Context, string, string) (int64, error) {
 	return 0, nil
 }

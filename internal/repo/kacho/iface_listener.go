@@ -38,6 +38,14 @@ type ListenerWriterIface interface {
 	// ErrAlreadyExists (race с параллельной аллокацией того же VIP).
 	SetAllocatedAddress(ctx context.Context, id, address string) (*ListenerRecord, error)
 
+	// SetVIP персистит address_id + allocated_address в durable-handle строку
+	// (TX-2 create-саги) ОТДЕЛЬНЫМ немедленным commit'ом сразу после
+	// VIP-аллокации, ещё в status='CREATING'. Делает address_id durable до
+	// перехода в ACTIVE: при сбое финала free_ip_runner детерминированно
+	// освобождает VIP по address_id. UNIQUE-violation (region, VIP, port,
+	// protocol) → ErrAlreadyExists (гонка аллокации того же VIP).
+	SetVIP(ctx context.Context, id, addressID, allocatedAddress string) (*ListenerRecord, error)
+
 	// MoveProject — каскад от LB.MoveProject; вызывается из
 	// LoadBalancerWriterIface.MoveProject внутри той же TX.
 	MoveProject(ctx context.Context, lbID, newProjectID string) (int64, error)

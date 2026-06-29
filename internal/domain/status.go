@@ -98,6 +98,31 @@ func (s ListenerStatus) Validate() error {
 		Err()
 }
 
+// ---- VipOrigin -------------------------------------------------------------
+// VipOrigin — дискриминатор источника VIP листенера. Определяет release-ветку
+// при Listener.Delete (и в boot-reconcile): `auto` — Address аллоцирован самим
+// NLB и должен быть освобождён целиком (FreeIP); `byo` — Address передан
+// tenant'ом, при удалении листенера снимается только ссылка (ClearReference),
+// сам Address не удаляется. Хранится отдельной колонкой `listeners.vip_origin`
+// (а не выводится эвристикой по имени Address) — имя tenant волен задать любым.
+
+type VipOrigin string
+
+const (
+	VipOriginAuto VipOrigin = "auto"
+	VipOriginBYO  VipOrigin = "byo"
+)
+
+func (o VipOrigin) Validate() error {
+	switch o {
+	case VipOriginAuto, VipOriginBYO:
+		return nil
+	}
+	return coreerrors.InvalidArgument().
+		AddFieldViolation("vip_origin", "vip_origin must be one of: auto, byo").
+		Err()
+}
+
 // ---- TargetGroupStatus -----------------------------------------------------
 
 type TargetGroupStatus string

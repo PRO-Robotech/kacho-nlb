@@ -173,7 +173,7 @@ func Catalog() []string {
 //
 // Семантика per-RPC:
 //   - Create / List              — на parent scope `project:<project_id>` (из request);
-//   - Get/Update/Delete/<verb>   — на самом ресурсе `nlb_<type>:<id>`;
+//   - Get/Update/Delete/<verb>   — на самом ресурсе `lb_<type>:<id>`;
 //   - OperationService.Get/Cancel — `Public: true` (proto-аннотация `<exempt>`);
 //     api-gateway opsproxy маршрутизирует по prefix, single-resource Check
 //     здесь нерелевантен (op-id opaque + поллится creator'ом сразу после Create —
@@ -187,19 +187,19 @@ func Catalog() []string {
 // parity, но Interceptor его не вызывает.
 //
 // **Move** (NLB & TG): per-RPC Check выполняется на ресурсе (`editor on
-// nlb_*`) — это гарантирует authz на source project через FGA cascade
-// (`editor on nlb_*` ← `editor on project`). Проверка editor'а на
+// lb_*`) — это гарантирует authz на source project через FGA cascade
+// (`editor on lb_*` ← `editor on project`). Проверка editor'а на
 // destination_project_id — задача handler'а (он зовёт `iam.Check` напрямую
 // перед `repo.Update(project_id=<dst>)`). Acceptance покрывает оба
 // edge'а в end-to-end newman case.
 //
-// **AttachTargetGroup**: per-RPC Check — `editor on nlb_load_balancer:<lb_id>`.
-// Дополнительный `viewer on nlb_target_group:<tg_id>` проверяется
+// **AttachTargetGroup**: per-RPC Check — `editor on lb_network_load_balancer:<lb_id>`.
+// Дополнительный `viewer on lb_target_group:<tg_id>` проверяется
 // handler'ом перед attach (`iam.Check` напрямую).
 //
 // scope-guard: для Get/Update/Delete/<verb> мы НЕ резолвим
 // project_id из БД заранее — лишний DB-trip; relation проверяется на самом
-// ресурсе, FGA-модель E3 настроена так, что `editor on nlb_load_balancer` →
+// ресурсе, FGA-модель E3 настроена так, что `editor on lb_network_load_balancer` →
 // computed через `editor on project` → `member on group`.
 func PermissionMap() authz.RPCMap {
 	return authz.RPCMap{

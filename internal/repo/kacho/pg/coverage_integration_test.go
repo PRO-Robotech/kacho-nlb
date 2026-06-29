@@ -91,6 +91,7 @@ func TestCoverage_ListenerUpdate_SetAllocatedAddress_MoveProject(t *testing.T) {
 	ctx := context.Background()
 
 	lb := newLB("prj01CVR31234567890ll", "cov3-lb")
+	tg := newTG(string(lb.ProjectID), "cov3-tg")
 	l := newListener(lb.ID, string(lb.ProjectID), "cov3-lst", 8888)
 	l.AllocatedAddress = "" // simulate fresh CREATING state
 	l.Status = domain.ListenerStatusCreating
@@ -98,7 +99,13 @@ func TestCoverage_ListenerUpdate_SetAllocatedAddress_MoveProject(t *testing.T) {
 	commitWriter(t, repo, func(w kacho.RepositoryWriter) {
 		_, err := w.LoadBalancers().Insert(ctx, lb)
 		require.NoError(t, err)
+		_, err = w.TargetGroups().Insert(ctx, tg)
+		require.NoError(t, err)
 		_, err = w.Listeners().Insert(ctx, l)
+		require.NoError(t, err)
+		// default_target_group_id обязан ссылаться на приаттаченный TG
+		// (композитный FK listeners_default_tg_attached_fk).
+		_, _, err = w.AttachedTargetGroups().Attach(ctx, string(lb.ID), string(tg.ID), 100)
 		require.NoError(t, err)
 	})
 
@@ -112,7 +119,7 @@ func TestCoverage_ListenerUpdate_SetAllocatedAddress_MoveProject(t *testing.T) {
 	// Update — name/labels/proxy_protocol_v2.
 	l.Name = "cov3-lst-updated"
 	l.ProxyProtocolV2 = true
-	l.DefaultTargetGroupID = option.MustNewOption(domain.ResourceID("tgr0X1234567890123ll"))
+	l.DefaultTargetGroupID = option.MustNewOption(tg.ID)
 	commitWriter(t, repo, func(w kacho.RepositoryWriter) {
 		rec, err := w.Listeners().Update(ctx, l)
 		require.NoError(t, err)
@@ -120,7 +127,7 @@ func TestCoverage_ListenerUpdate_SetAllocatedAddress_MoveProject(t *testing.T) {
 		assert.True(t, rec.ProxyProtocolV2)
 		v, ok := rec.DefaultTargetGroupID.Maybe()
 		require.True(t, ok)
-		assert.Equal(t, domain.ResourceID("tgr0X1234567890123ll"), v)
+		assert.Equal(t, tg.ID, v)
 	})
 
 	// Listener.MoveProject (cascaded helper, exposed for direct ops).

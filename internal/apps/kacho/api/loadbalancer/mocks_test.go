@@ -406,6 +406,9 @@ func (q *fakeListenerWriter) SetStatusCAS(ctx context.Context, id string, expect
 func (q *fakeListenerWriter) SetAllocatedAddress(ctx context.Context, id, address string) (*kachorepo.ListenerRecord, error) {
 	return nil, errors.New("not implemented in fake")
 }
+func (q *fakeListenerWriter) SetVIP(ctx context.Context, id, addressID, allocatedAddress string) (*kachorepo.ListenerRecord, error) {
+	return nil, errors.New("not implemented in fake")
+}
 func (q *fakeListenerWriter) MoveProject(ctx context.Context, lbID, newProjectID string) (int64, error) {
 	return 0, nil
 }

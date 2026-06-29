@@ -406,6 +406,21 @@ func runServe(configPath string) error {
 	drainRunner := jobs.NewTargetDrainRunner(pool, logger, cfg.Jobs.TargetDrain.Interval)
 	background = append(background, bgWorker{"target-drain", drainRunner.Run})
 
+	// free_ip_runner: reconcile застрявших листенеров — durable-handle
+	// create-orphan ('CREATING' с персистнутым address_id) + незавершённый Delete
+	// ('DELETING') старше age-порога. Освобождает VIP по address_id
+	// (vip_origin='auto' → FreeIP, 'byo' → ClearReference) + удаляет/финализирует
+	// handle. Multi-replica-safe (FOR UPDATE SKIP LOCKED). Требует vpc
+	// internal-address client (release): без него reconcile не может безопасно
+	// удалять handle (иначе утечка VIP) → runner не стартует.
+	if peers.InternalAddress != nil {
+		freeIPRunner := jobs.NewFreeIPRunner(pool, peers.InternalAddress, logger,
+			cfg.Jobs.FreeIP.Interval, cfg.Jobs.FreeIP.AgeThreshold)
+		background = append(background, bgWorker{"free-ip-runner", freeIPRunner.Run})
+	} else {
+		logger.Warn("free_ip_runner_disabled — no vpc internal-address client; stuck-listener VIP reconcile inactive")
+	}
+
 	// FGA Check cache invalidator: LISTEN `kacho_iam_subjects` на iam-DB через
 	// DEDICATED pgx-conn (LISTEN/NOTIFY требует non-pooled conn). На каждый NOTIFY →
 	// invalidate cache по subject_id; на conn-drop → backoff + conservative
@@ -479,12 +494,25 @@ func runServe(configPath string) error {
 			"enable", cfg.FGA.RegisterDrainer.Enable, "iam_peer", peers.Register != nil)
 	}
 
+	// Boot-once backfill listeners.vip_origin: проставляет release-дискриминатор
+	// (auto/byo) уже существующим листенерам по реальному Address из vpc. Держит
+	// readiness not-ready (fail-closed) до успешного завершения — пока pre-existing
+	// BYO-листенеры не получили реальный vip_origin, их Delete мог бы уйти по
+	// FreeIP-ветке и удалить чужой статический адрес. Свежий стенд (нет строк) →
+	// no-op → readiness сразу ready. Idempotent; gated через readiness-checker.
+	vipOriginGate := &vipOriginReconcileGate{}
+	vipOriginReconciler := jobs.NewVIPOriginReconciler(
+		jobs.NewPgVIPOriginStore(pool), peers.Address, logger)
+	background = append(background, bgWorker{"vip-origin-reconcile", func(c context.Context) error {
+		return runVIPOriginReconcile(c, vipOriginReconciler, vipOriginGate, logger)
+	}})
+
 	// Dependency-aware readiness: /readyz отражает здоровье database / register-
-	// drainer (= IAM-достижимость в nlb) / lro-worker; /healthz — только живость
-	// процесса (защита от restart-storm). Результат зеркалится в dependency_up
-	// Prometheus-gauge.
+	// drainer (= IAM-достижимость в nlb) / lro-worker / vip-origin-reconcile;
+	// /healthz — только живость процесса (защита от restart-storm). Результат
+	// зеркалится в dependency_up Prometheus-gauge.
 	healthAgg := health.New(
-		buildReadinessCheckers(pool, bootGate),
+		buildReadinessCheckers(pool, bootGate, vipOriginGate),
 		health.WithResultObserver(metricsAdapter.SetDependencyUp),
 	)
 	// Diagnostic HTTP-listener (cluster-internal): /metrics + /healthz + /readyz.

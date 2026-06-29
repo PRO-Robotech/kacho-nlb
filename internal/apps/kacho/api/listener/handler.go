@@ -52,7 +52,7 @@ func NewHandler(
 		list:           NewListUseCase(repo, listFilter),
 		create:         NewCreateUseCase(repo, opsRepo, addresses, internalAddrs, subnets, logger),
 		update:         NewUpdateUseCase(repo, opsRepo, logger),
-		deleteUC:       NewDeleteUseCase(repo, opsRepo, addresses, internalAddrs, logger),
+		deleteUC:       NewDeleteUseCase(repo, opsRepo, internalAddrs, logger),
 		listOperations: NewListOperationsUseCase(opsRepo),
 	}
 }

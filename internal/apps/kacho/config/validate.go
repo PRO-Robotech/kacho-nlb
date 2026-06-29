@@ -148,6 +148,16 @@ func (c Config) Validate() error {
 		errs = multierr.Append(errs, fmt.Errorf("jobs.target-drain.interval must be > 0, got %v", c.Jobs.TargetDrain.Interval))
 	}
 
+	// Jobs.free-ip (reconciler застрявших листенеров). Interval > 0 (иначе
+	// tight-loop); age-threshold > 0 (иначе reconciler схватит свежий in-flight
+	// create/delete и удалит легитимную in-progress строку — гонка).
+	if c.Jobs.FreeIP.Interval <= 0 {
+		errs = multierr.Append(errs, fmt.Errorf("jobs.free-ip.interval must be > 0, got %v", c.Jobs.FreeIP.Interval))
+	}
+	if c.Jobs.FreeIP.AgeThreshold <= 0 {
+		errs = multierr.Append(errs, fmt.Errorf("jobs.free-ip.age-threshold must be > 0, got %v", c.Jobs.FreeIP.AgeThreshold))
+	}
+
 	// InternalLifecycle.MaxStreams (stream). Должен быть > 0:
 	// =0 означало бы «никакие streams не разрешены» → kacho-iam не сможет
 	// подключиться → tuple-sync сломан.

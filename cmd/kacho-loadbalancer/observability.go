@@ -15,11 +15,13 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"sync/atomic"
 	"time"
 
 	"github.com/PRO-Robotech/kacho-corelib/operations"
 	"github.com/PRO-Robotech/kacho-corelib/outbox/bootgate"
 
+	"github.com/PRO-Robotech/kacho-nlb/internal/apps/kacho/jobs"
 	"github.com/PRO-Robotech/kacho-nlb/internal/observability/health"
 	"github.com/PRO-Robotech/kacho-nlb/internal/observability/metrics"
 )
@@ -27,9 +29,30 @@ import (
 // Сентинелы readiness-чекеров: причина «down» в логах/ответе /readyz без leak'а
 // внутренних деталей наружу (имена зависимостей — operational, cluster-internal).
 var (
-	errDrainerNotConnected = errors.New("register-drainer not connected to kacho-iam")
-	errLROWorkerDown       = errors.New("LRO dispatcher loop not running")
+	errDrainerNotConnected       = errors.New("register-drainer not connected to kacho-iam")
+	errLROWorkerDown             = errors.New("LRO dispatcher loop not running")
+	errVIPOriginReconcilePending = errors.New("vip_origin boot reconcile not complete")
 )
+
+// readyProbe — узкий булев readiness-сигнал (boot-once задачи). Реализуется
+// vipOriginReconcileGate; тесты подставляют стаб.
+type readyProbe interface {
+	Ready() bool
+}
+
+// vipOriginReconcileGate — boolean-флаг готовности boot-reconcile'а vip_origin.
+// До успешного backfill (или no-op на свежем стенде) /readyz держится not-ready
+// (fail-closed): ни один Delete не должен уйти по неверной release-ветке, пока
+// существующие BYO-листенеры не получили реальный vip_origin.
+type vipOriginReconcileGate struct {
+	done atomic.Bool
+}
+
+// markReady открывает gate (reconcile успешно завершён, в т.ч. no-op).
+func (g *vipOriginReconcileGate) markReady() { g.done.Store(true) }
+
+// Ready — readyProbe: true когда reconcile завершён.
+func (g *vipOriginReconcileGate) Ready() bool { return g.done.Load() }
 
 // build-info — инжектится через -ldflags "-X main.buildVersion=… -X main.buildCommit=…";
 // дефолты для локальной сборки.
@@ -74,7 +97,10 @@ func startLROWorker(rec operations.Recorder, logger *slog.Logger) error {
 //     Ready (dev back-compat);
 //   - lro-worker — operations.Ready: dispatcher-loop запущен и готов забирать
 //     in-flight операции.
-func buildReadinessCheckers(db readinessPinger, gate *bootgate.Gate) []health.Checker {
+//   - vip-origin-reconcile — boot-once backfill listeners.vip_origin завершён
+//     (fail-closed: until then Delete release-ветка может быть неверной для
+//     pre-existing BYO-листенеров).
+func buildReadinessCheckers(db readinessPinger, gate *bootgate.Gate, vipOrigin readyProbe) []health.Checker {
 	return []health.Checker{
 		{Name: "database", Check: func(ctx context.Context) error { return db.Ping(ctx) }},
 		{Name: "register-drainer", Check: func(context.Context) error {
@@ -89,6 +115,42 @@ func buildReadinessCheckers(db readinessPinger, gate *bootgate.Gate) []health.Ch
 			}
 			return errLROWorkerDown
 		}},
+		{Name: "vip-origin-reconcile", Check: func(context.Context) error {
+			if vipOrigin.Ready() {
+				return nil
+			}
+			return errVIPOriginReconcilePending
+		}},
+	}
+}
+
+// vipOriginReconcileRetry — пауза между попытками boot-reconcile при недоступном
+// vpc (readiness держится not-ready всё это время).
+const vipOriginReconcileRetry = 5 * time.Second
+
+// runVIPOriginReconcile — supervised boot-once задача: гоняет
+// VIPOriginReconciler.Reconcile с retry, пока не пройдёт успешно (или ctx не
+// отменён). На успехе открывает readiness-gate и блокируется до shutdown
+// (чтобы superviseBackground видел ctx-cancel как штатный выход, а не
+// «неожиданный exit»). Idempotent: повторные прогоны безопасны.
+func runVIPOriginReconcile(ctx context.Context, rec *jobs.VIPOriginReconciler, gate *vipOriginReconcileGate, logger *slog.Logger) error {
+	for {
+		if err := rec.Reconcile(ctx); err == nil {
+			gate.markReady()
+			logger.Info("vip_origin reconcile complete — readiness gate opened")
+			<-ctx.Done()
+			return nil
+		} else if ctx.Err() != nil {
+			return nil
+		} else {
+			logger.Warn("vip_origin reconcile failed — readiness held not-ready",
+				"err", err, "retry_in", vipOriginReconcileRetry)
+		}
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-time.After(vipOriginReconcileRetry):
+		}
 	}
 }
 

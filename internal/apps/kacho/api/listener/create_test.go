@@ -61,7 +61,8 @@ func TestCreateListener_GWT_LST_001_AutoExternal_HappyPath(t *testing.T) {
 	addrID, hasID := got.AddressID.Maybe()
 	require.True(t, hasID)
 	require.Equal(t, "e9bALLOCSTUB000001", string(addrID))
-	require.Equal(t, domain.ListenerStatusCreating, got.Status)
+	// durable-handle сага: CREATING-handle → ACTIVE на финальном TX-3.
+	require.Equal(t, domain.ListenerStatusActive, got.Status)
 	require.Equal(t, suite.lb.RegionID, got.RegionID)
 	require.Equal(t, suite.lb.ProjectID, got.ProjectID)
 
@@ -356,7 +357,8 @@ func TestCreateListener_GWT_LST_009_UnsupportedProtocol(t *testing.T) {
 }
 
 // TestCreateListener_GWT_LST_010_DuplicatePortProto — fake repo enforces UNIQUE
-// (lb_id, port, protocol) → AlreadyExists. Second Insert through writer fails.
+// (lb_id, port, protocol) → AlreadyExists at the TX-1 durable-handle INSERT,
+// BEFORE VIP-allocation. No VIP is wasted → no compensation FreeIP.
 func TestCreateListener_GWT_LST_010_DuplicatePortProto(t *testing.T) {
 	t.Parallel()
 	suite := newCreateSuite(t, domain.LBTypeExternal)
@@ -394,9 +396,12 @@ func TestCreateListener_GWT_LST_010_DuplicatePortProto(t *testing.T) {
 	require.Equal(t, int32(codes.AlreadyExists), done.Error.Code)
 	require.Contains(t, done.Error.Message, "already exists")
 
-	// Compensation: FreeIP called for the second alloc to release VIP.
-	require.Len(t, suite.internalAddrs.freeCalls, 1)
-	require.Equal(t, "e9bSECONDALLOC00002", suite.internalAddrs.freeCalls[0])
+	// INSERT-before-alloc (durable handle, TX-1) catches the (lb,port,proto)
+	// duplicate BEFORE acquireVIP runs → no VIP allocated → no FreeIP. Only the
+	// first create reached VIP-alloc (allocExternalCalls is cumulative).
+	require.Empty(t, suite.internalAddrs.freeCalls, "duplicate caught at TX-1 INSERT — no VIP allocated")
+	require.Len(t, suite.internalAddrs.allocExternalCalls, 1, "only the first create reached VIP-alloc; second failed at TX-1")
+	require.Len(t, suite.allListeners(), 1, "only the first listener persists")
 }
 
 // TestCreateListener_GWT_LST_011_DuplicateRegionVIPPortProto — same (region,
@@ -486,13 +491,13 @@ func TestCreateListener_GWT_LST_014_VIPAllocFails(t *testing.T) {
 	require.Empty(t, suite.repo.pendingOutbox(), "no outbox events on failed alloc")
 }
 
-// TestCreateListener_GWT_LST_015_InsertFailsAfterAlloc_Compensation — VIP
-// allocated but Insert fails → defer FreeIP runs.
-func TestCreateListener_GWT_LST_015_CompensationAfterInsertFail(t *testing.T) {
+// TestCreateListener_GWT_LST_015_PersistVIPFails_Compensation — VIP allocated,
+// TX-2 persist (SetVIP) fails → compensation FreeIP + durable-handle deleted.
+func TestCreateListener_GWT_LST_015_PersistVIPFails_Compensation(t *testing.T) {
 	t.Parallel()
 	suite := newCreateSuite(t, domain.LBTypeExternal)
-	// Inject Insert error so VIP gets allocated but row never persisted.
-	suite.repo.insertErr = fmt.Errorf("%w: simulated DB CHECK violation", domain.ErrInvalidArg)
+	// Inject TX-2 persist error so VIP gets allocated but address_id never lands.
+	suite.repo.setVIPErr = fmt.Errorf("%w: simulated SetVIP failure", domain.ErrInternal)
 
 	op, err := suite.uc.Run(context.Background(), &lbv1.CreateListenerRequest{
 		LoadBalancerId: string(suite.lb.ID),
@@ -506,15 +511,66 @@ func TestCreateListener_GWT_LST_015_CompensationAfterInsertFail(t *testing.T) {
 	require.NoError(t, err)
 	done := awaitOpDone(t, suite.ops, op.ID, time.Second)
 	require.NotNil(t, done.Error)
-	require.Equal(t, int32(codes.InvalidArgument), done.Error.Code)
 	require.Len(t, suite.internalAddrs.freeCalls, 1, "FreeIP must be called as compensation")
 	require.Equal(t, "e9bALLOCSTUB000001", suite.internalAddrs.freeCalls[0])
-	require.Empty(t, suite.allListeners())
+	require.Empty(t, suite.allListeners(), "durable handle must be deleted by compensation")
 	require.Empty(t, suite.repo.pendingOutbox())
 }
 
-// TestCreateListener_BYO_CompensationClearReference — BYO branch, Insert fails
-// → ClearReference compensation (NOT FreeIP — tenant Address must not be deleted).
+// TestCreateListener_GWT_LST_015b_InsertHandleFails_NoAlloc — TX-1 durable-handle
+// INSERT fails BEFORE acquireVIP → no VIP allocated, no compensation FreeIP, no row.
+func TestCreateListener_GWT_LST_015b_InsertHandleFails_NoAlloc(t *testing.T) {
+	t.Parallel()
+	suite := newCreateSuite(t, domain.LBTypeExternal)
+	suite.repo.insertErr = fmt.Errorf("%w: simulated DB CHECK violation", domain.ErrInvalidArg)
+
+	op, err := suite.uc.Run(context.Background(), &lbv1.CreateListenerRequest{
+		LoadBalancerId: string(suite.lb.ID),
+		Name:           "handle-fail",
+		Protocol:       lbv1.Listener_TCP,
+		Port:           80,
+		TargetPort:     8080,
+		IpVersion:      lbv1.IpVersion_IPV4,
+		AddressSpec:    autoSpec(""),
+	})
+	require.NoError(t, err)
+	done := awaitOpDone(t, suite.ops, op.ID, time.Second)
+	require.NotNil(t, done.Error)
+	require.Equal(t, int32(codes.InvalidArgument), done.Error.Code)
+	require.Empty(t, suite.internalAddrs.allocExternalCalls, "acquireVIP must not run if TX-1 INSERT fails")
+	require.Empty(t, suite.internalAddrs.freeCalls, "no VIP allocated → no compensation")
+	require.Empty(t, suite.allListeners())
+}
+
+// TestCreateListener_GWT_LST_015c_FinalizeFails_Compensation — VIP allocated +
+// persisted (TX-2 ok), TX-3 finalize (CREATING→ACTIVE) fails → compensation
+// FreeIP + durable-handle deleted; no outbox (TX-3 rolled back).
+func TestCreateListener_GWT_LST_015c_FinalizeFails_Compensation(t *testing.T) {
+	t.Parallel()
+	suite := newCreateSuite(t, domain.LBTypeExternal)
+	suite.repo.casErr = fmt.Errorf("%w: simulated finalize failure", domain.ErrInternal)
+
+	op, err := suite.uc.Run(context.Background(), &lbv1.CreateListenerRequest{
+		LoadBalancerId: string(suite.lb.ID),
+		Name:           "finalize-fail",
+		Protocol:       lbv1.Listener_TCP,
+		Port:           80,
+		TargetPort:     8080,
+		IpVersion:      lbv1.IpVersion_IPV4,
+		AddressSpec:    autoSpec(""),
+	})
+	require.NoError(t, err)
+	done := awaitOpDone(t, suite.ops, op.ID, time.Second)
+	require.NotNil(t, done.Error)
+	require.Len(t, suite.internalAddrs.freeCalls, 1, "FreeIP compensation after finalize fail")
+	require.Equal(t, "e9bALLOCSTUB000001", suite.internalAddrs.freeCalls[0])
+	require.Empty(t, suite.allListeners(), "durable handle deleted by compensation")
+	require.Empty(t, suite.repo.pendingOutbox(), "no outbox events committed (TX-3 rolled back)")
+}
+
+// TestCreateListener_BYO_CompensationClearReference — BYO branch, TX-2 persist
+// fails after SetReference → ClearReference compensation (NOT FreeIP — tenant
+// Address must not be deleted) + durable-handle deleted.
 func TestCreateListener_BYO_Compensation_ClearReference(t *testing.T) {
 	t.Parallel()
 	suite := newCreateSuite(t, domain.LBTypeExternal)
@@ -526,7 +582,7 @@ func TestCreateListener_BYO_Compensation_ClearReference(t *testing.T) {
 		Value:     "198.51.100.20",
 		Family:    vpcclient.AddressFamilyIPv4,
 	})
-	suite.repo.insertErr = fmt.Errorf("%w: simulated Insert failure", domain.ErrInternal)
+	suite.repo.setVIPErr = fmt.Errorf("%w: simulated SetVIP failure", domain.ErrInternal)
 
 	op, err := suite.uc.Run(context.Background(), &lbv1.CreateListenerRequest{
 		LoadBalancerId: string(suite.lb.ID),
@@ -675,6 +731,64 @@ func byoSpec(addrID string) *lbv1.ListenerAddressSpec {
 	return &lbv1.ListenerAddressSpec{
 		Source: &lbv1.ListenerAddressSpec_AddressId{AddressId: addrID},
 	}
+}
+
+// TestCreateListener_AutoOrigin_SetsVipOriginAuto — auto-alloc Create stamps
+// vip_origin='auto' on the inserted row (release-discriminator source of truth).
+func TestCreateListener_AutoOrigin_SetsVipOriginAuto(t *testing.T) {
+	t.Parallel()
+	suite := newCreateSuite(t, domain.LBTypeExternal)
+
+	op, err := suite.uc.Run(context.Background(), &lbv1.CreateListenerRequest{
+		LoadBalancerId: string(suite.lb.ID),
+		Name:           "auto-origin",
+		Protocol:       lbv1.Listener_TCP,
+		Port:           80,
+		TargetPort:     8080,
+		IpVersion:      lbv1.IpVersion_IPV4,
+		AddressSpec:    autoSpec(""),
+	})
+	require.NoError(t, err)
+	done := awaitOpDone(t, suite.ops, op.ID, time.Second)
+	require.Nil(t, done.Error)
+
+	listeners := suite.allListeners()
+	require.Len(t, listeners, 1)
+	require.Equal(t, domain.VipOriginAuto, listeners[0].VipOrigin)
+}
+
+// TestCreateListener_BYOOrigin_SetsVipOriginByo — BYO Create (tenant address_id)
+// stamps vip_origin='byo' so Delete releases via ClearReference, never FreeIP.
+func TestCreateListener_BYOOrigin_SetsVipOriginByo(t *testing.T) {
+	t.Parallel()
+	suite := newCreateSuite(t, domain.LBTypeExternal)
+	const addrID = "e9bBYOORIGIN000001"
+	suite.addresses.seed(&vpcclient.Address{
+		ID:        addrID,
+		ProjectID: string(suite.lb.ProjectID),
+		Name:      "tenant-static-ip",
+		Value:     "198.51.100.5",
+		Family:    vpcclient.AddressFamilyIPv4,
+		External:  true,
+	})
+
+	op, err := suite.uc.Run(context.Background(), &lbv1.CreateListenerRequest{
+		LoadBalancerId: string(suite.lb.ID),
+		Name:           "byo-origin",
+		Protocol:       lbv1.Listener_TCP,
+		Port:           80,
+		TargetPort:     8080,
+		IpVersion:      lbv1.IpVersion_IPV4,
+		AddressSpec:    byoSpec(addrID),
+	})
+	require.NoError(t, err)
+	done := awaitOpDone(t, suite.ops, op.ID, time.Second)
+	require.Nil(t, done.Error)
+
+	listeners := suite.allListeners()
+	require.Len(t, listeners, 1)
+	require.Equal(t, domain.VipOriginBYO, listeners[0].VipOrigin,
+		"BYO listener must persist vip_origin=byo")
 }
 
 // _ used so errors package linked even if no test uses it directly.

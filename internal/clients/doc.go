@@ -9,9 +9,9 @@
 // (workspace CLAUDE.md «Чистая архитектура»: domain/service не знают о существовании
 // конкретных gRPC-stub'ов; wiring — в `cmd/kacho-loadbalancer/main.go`):
 //
-//   - iam     — ProjectClient / CheckClient / HierarchyWriter
-//     (iam.ProjectService.Get + iam.InternalIAMService.{Check, WriteCreatorTuple}).
-//     Project existence + per-RPC FGA Check + sync creator-tuple write.
+//   - iam     — ProjectClient / CheckClient / fga-register applier
+//     (iam.ProjectService.Get + iam.InternalIAMService.{Check, RegisterResource, UnregisterResource}).
+//     Project existence + per-RPC FGA Check + owner-tuple register/unregister via fga_register_outbox drainer.
 //   - geo     — RegionClient (geo.RegionService.Get).
 //     region_id validation (stateless pass-through, без кэша; kacho-geo).
 //   - compute — InstanceClient (compute.InstanceService.Get).

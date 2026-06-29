@@ -30,6 +30,7 @@ import (
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
 
 	"github.com/PRO-Robotech/kacho-nlb/internal/apps/kacho/api/listener"
+	"github.com/PRO-Robotech/kacho-nlb/internal/apps/kacho/jobs"
 	vpcclient "github.com/PRO-Robotech/kacho-nlb/internal/clients/vpc"
 	"github.com/PRO-Robotech/kacho-nlb/internal/domain"
 	_ "github.com/PRO-Robotech/kacho-nlb/internal/dto/type2pb"
@@ -226,6 +227,8 @@ func TestIntegration_Listener_Create_EndToEnd(t *testing.T) {
 	require.Equal(t, lb.RegionID, got.RegionID, "Listener.region_id denorm must match LB")
 	require.Equal(t, lb.ProjectID, got.ProjectID, "Listener.project_id denorm must match LB")
 	require.NotEmpty(t, got.AllocatedAddress)
+	// durable-handle saga: CREATING-handle finalized to ACTIVE (TX-3).
+	require.Equal(t, domain.ListenerStatusActive, got.Status, "create-saga must finalize CREATING→ACTIVE")
 
 	// Verify outbox events.
 	rows, err := ic.pool.Query(context.Background(),
@@ -314,8 +317,70 @@ func TestIntegration_Listener_Create_UniquePortRace(t *testing.T) {
 	page, _, err := rd.Listeners().ListByLB(context.Background(), string(lb.ID), kachorepo.Pagination{})
 	require.NoError(t, err)
 	require.Len(t, page, 1)
-	// Compensation: failed branch frees its allocated VIP.
-	assert.Equal(t, 1, internalAddrs.frees, "failed listener must free its VIP via compensation")
+	// Durable-handle saga: the loser fails at the TX-1 INSERT (lb,port,proto
+	// UNIQUE) BEFORE acquireVIP runs → it never allocated a VIP → nothing to free.
+	assert.Equal(t, 0, internalAddrs.frees, "loser fails at TX-1 INSERT before VIP-alloc — no compensation free")
+}
+
+// TestIntegration_Listener_CreateOrphan_FreeIPReconcile — 6.0-38 (durable-handle,
+// create-path orphan). Симулируем краш после TX-2 (persist address_id), но до
+// TX-3 (CREATING→ACTIVE): строка остаётся в 'CREATING' с известным address_id.
+// free_ip_runner находит её (старше age-порога) → FreeIP по address_id + DELETE
+// handle. VIP не утёк, сирота финализирована.
+func TestIntegration_Listener_CreateOrphan_FreeIPReconcile(t *testing.T) {
+	t.Parallel()
+	ic := newIntegrationCtx(t)
+	lb := ic.seedLB(t, "prj01INTEGORPHAN001", "ru-central1", domain.LBTypeExternal, "lb-orphan")
+
+	const addrID = "e9bORPHANADDR00001"
+	// TX-1 (durable handle, CREATING) + TX-2 (persist address_id) через РЕАЛЬНЫЙ
+	// repo, без TX-3 — эквивалент краха после persist address_id.
+	l := domain.NewListener(lb.LoadBalancer, "orphan-lst",
+		domain.LbProto("TCP"), domain.LbPort(80), domain.LbPort(8080), domain.IPVersion("IPV4"))
+	w1, err := ic.repo.Writer(context.Background())
+	require.NoError(t, err)
+	_, err = w1.Listeners().Insert(context.Background(), &l)
+	require.NoError(t, err)
+	require.NoError(t, w1.Commit())
+	w2, err := ic.repo.Writer(context.Background())
+	require.NoError(t, err)
+	_, err = w2.Listeners().SetVIP(context.Background(), string(l.ID), addrID, "203.0.113.55")
+	require.NoError(t, err)
+	require.NoError(t, w2.Commit())
+
+	// Backdate updated_at за age-порог (симулируем «застряло давно»).
+	_, err = ic.pool.Exec(context.Background(),
+		`UPDATE kacho_nlb.listeners SET updated_at = now() - interval '10 minutes' WHERE id = $1`, string(l.ID))
+	require.NoError(t, err)
+
+	rel := &recordingInternalAddrs{}
+	runner := jobs.NewFreeIPRunner(ic.pool, rel, slog.Default(), 100*time.Millisecond, time.Minute)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = runner.Run(ctx) }()
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if listenerRowCount(t, ic.pool, string(l.ID)) == 0 {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	cancel()
+
+	assert.Equal(t, 0, listenerRowCount(t, ic.pool, string(l.ID)), "durable handle reconciled away")
+	rel.mu.Lock()
+	frees := rel.frees
+	rel.mu.Unlock()
+	assert.Equal(t, 1, frees, "orphan VIP freed exactly once by free_ip_runner")
+}
+
+func listenerRowCount(t *testing.T, pool *pgxpool.Pool, id string) int {
+	t.Helper()
+	var n int
+	require.NoError(t, pool.QueryRow(context.Background(),
+		`SELECT count(*) FROM kacho_nlb.listeners WHERE id = $1`, id).Scan(&n))
+	return n
 }
 
 // TestIntegration_Listener_Delete_FreeIP — happy-path Delete: VIP freed,
@@ -325,9 +390,8 @@ func TestIntegration_Listener_Delete_FreeIP(t *testing.T) {
 	ic := newIntegrationCtx(t)
 	lb := ic.seedLB(t, "prj01INTEGTEST000003", "ru-central1", domain.LBTypeExternal, "lb-delete")
 	internalAddrs := &recordingInternalAddrs{}
-	addresses := &deleteIntegrationAddressClient{name: "nlb-listener-stub"}
-	createUC := listener.NewCreateUseCase(ic.repo, ic.opsRepo, addresses, internalAddrs, nil, slog.Default())
-	deleteUC := listener.NewDeleteUseCase(ic.repo, ic.opsRepo, addresses, internalAddrs, slog.Default())
+	createUC := listener.NewCreateUseCase(ic.repo, ic.opsRepo, nil, internalAddrs, nil, slog.Default())
+	deleteUC := listener.NewDeleteUseCase(ic.repo, ic.opsRepo, internalAddrs, slog.Default())
 
 	op, err := createUC.Run(context.Background(), &lbv1.CreateListenerRequest{
 		LoadBalancerId: string(lb.ID),
@@ -347,11 +411,10 @@ func TestIntegration_Listener_Delete_FreeIP(t *testing.T) {
 	page, _, err := rd.Listeners().ListByLB(context.Background(), string(lb.ID), kachorepo.Pagination{})
 	require.NoError(t, err)
 	require.Len(t, page, 1)
-	addressID, _ := page[0].AddressID.Maybe()
-	addresses.id = string(addressID)
+	require.Equal(t, domain.VipOriginAuto, page[0].VipOrigin, "auto-alloc listener must carry vip_origin=auto")
 	_ = rd.Close()
 
-	// Delete.
+	// Delete: vip_origin=auto → FreeIP (Address удаляется целиком).
 	delOp, err := deleteUC.Run(context.Background(), &lbv1.DeleteListenerRequest{
 		ListenerId: string(page[0].ID),
 	})
@@ -373,7 +436,89 @@ func TestIntegration_Listener_Delete_FreeIP(t *testing.T) {
 	assert.Equal(t, 1, internalAddrs.frees, "FreeIP must be called exactly once")
 }
 
+// TestIntegration_Listener_Delete_BYO_ClearReference — BYO delete-path: a
+// tenant-supplied Address (vip_origin=byo persisted on Create) is released via
+// ClearReference, NOT FreeIP — the static address survives. Guards the
+// data-loss regression at the DB+use-case boundary (vip_origin round-trips
+// through Postgres and drives the release branch).
+func TestIntegration_Listener_Delete_BYO_ClearReference(t *testing.T) {
+	t.Parallel()
+	ic := newIntegrationCtx(t)
+	lb := ic.seedLB(t, "prj01INTEGTEST000004", "ru-central1", domain.LBTypeExternal, "lb-delete-byo")
+	internalAddrs := &recordingInternalAddrs{}
+	const byoAddrID = "e9bINTEGBYOADDR001"
+	// BYO Address deliberately named like an auto-alloc one ("nlb-listener-*")
+	// to prove the release branch ignores the name and reads vip_origin.
+	addresses := &byoIntegrationAddressClient{
+		addr: &vpcclient.Address{
+			ID:        byoAddrID,
+			ProjectID: string(lb.ProjectID),
+			Name:      "nlb-listener-edge",
+			Value:     "198.51.100.9",
+			Family:    vpcclient.AddressFamilyIPv4,
+			External:  true,
+		},
+	}
+	createUC := listener.NewCreateUseCase(ic.repo, ic.opsRepo, addresses, internalAddrs, nil, slog.Default())
+	deleteUC := listener.NewDeleteUseCase(ic.repo, ic.opsRepo, internalAddrs, slog.Default())
+
+	op, err := createUC.Run(context.Background(), &lbv1.CreateListenerRequest{
+		LoadBalancerId: string(lb.ID),
+		Name:           "byo-to-delete",
+		Protocol:       lbv1.Listener_TCP,
+		Port:           80,
+		TargetPort:     8080,
+		IpVersion:      lbv1.IpVersion_IPV4,
+		AddressSpec:    byoSpecIntegration(byoAddrID),
+	})
+	require.NoError(t, err)
+	awaitOpDoneIntegration(t, ic.opsRepo, op.ID, 5*time.Second)
+	gotOp, err := ic.opsRepo.Get(context.Background(), op.ID)
+	require.NoError(t, err)
+	require.Nil(t, gotOp.Error, "BYO Create must succeed; got %v", gotOp.Error)
+
+	rd, err := ic.repo.Reader(context.Background())
+	require.NoError(t, err)
+	page, _, err := rd.Listeners().ListByLB(context.Background(), string(lb.ID), kachorepo.Pagination{})
+	require.NoError(t, err)
+	require.Len(t, page, 1)
+	require.Equal(t, domain.VipOriginBYO, page[0].VipOrigin, "BYO listener must persist vip_origin=byo")
+	_ = rd.Close()
+
+	delOp, err := deleteUC.Run(context.Background(), &lbv1.DeleteListenerRequest{
+		ListenerId: string(page[0].ID),
+	})
+	require.NoError(t, err)
+	awaitOpDoneIntegration(t, ic.opsRepo, delOp.ID, 5*time.Second)
+	delGot, err := ic.opsRepo.Get(context.Background(), delOp.ID)
+	require.NoError(t, err)
+	require.Nil(t, delGot.Error, "BYO Delete must succeed; got %v", delGot.Error)
+
+	assert.Equal(t, 1, internalAddrs.clears, "ClearReference must be called for vip_origin=byo")
+	assert.Equal(t, 0, internalAddrs.frees, "FreeIP must NOT be called for vip_origin=byo (data-loss guard)")
+}
+
 // ---- helpers ----
+
+// byoIntegrationAddressClient — minimal AddressClient returning a single seeded
+// tenant Address (for BYO Create validation path).
+type byoIntegrationAddressClient struct {
+	addr *vpcclient.Address
+}
+
+func (c *byoIntegrationAddressClient) Get(_ context.Context, id string) (*vpcclient.Address, error) {
+	if c.addr != nil && c.addr.ID == id {
+		cp := *c.addr
+		return &cp, nil
+	}
+	return nil, errors.New("address not found")
+}
+
+func byoSpecIntegration(addressID string) *lbv1.ListenerAddressSpec {
+	return &lbv1.ListenerAddressSpec{
+		Source: &lbv1.ListenerAddressSpec_AddressId{AddressId: addressID},
+	}
+}
 
 func autoSpecIntegration(subnetID string) *lbv1.ListenerAddressSpec {
 	return &lbv1.ListenerAddressSpec{
@@ -394,26 +539,6 @@ func awaitOpDoneIntegration(t *testing.T, repo operations.Repo, id string, timeo
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatalf("operation %s did not complete within %s", id, timeout)
-}
-
-// deleteIntegrationAddressClient — minimal AddressClient that returns a
-// auto-alloc-shaped name so Delete uses FreeIP branch.
-type deleteIntegrationAddressClient struct {
-	id   string
-	name string
-}
-
-func (c *deleteIntegrationAddressClient) Get(_ context.Context, id string) (*vpcclient.Address, error) {
-	if c.id != "" && id != c.id {
-		return nil, errors.New("address mismatch")
-	}
-	return &vpcclient.Address{
-		ID:        id,
-		ProjectID: "prj01INTEGTEST000003",
-		Name:      c.name,
-		Value:     "203.0.113.42",
-		Family:    vpcclient.AddressFamilyIPv4,
-	}, nil
 }
 
 // _ — sentinel for option / anypb / codes used in some lines but not directly
