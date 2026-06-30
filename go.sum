@@ -20,6 +20,8 @@ github.com/PRO-Robotech/kacho-iam v1.0.2 h1:m5hTGvtHDhPYxZcMRVg2iE4DGiT5GxPMt2ct
 github.com/PRO-Robotech/kacho-iam v1.0.2/go.mod h1:ymkWHTbc84MB73kDuZAPdW6vLhC/QUmLuc/7G8cg82c=
 github.com/PRO-Robotech/kacho-vpc v0.0.0-20260630130935-c708a07015e8 h1:bo3wl2jAiU4V1hJT+QJQmNBgPO9fHrQEW4u0fv1LgpQ=
 github.com/PRO-Robotech/kacho-vpc v0.0.0-20260630130935-c708a07015e8/go.mod h1:i+IE2Oav84VVxCxiUOdwLdA+Km/IME5HR2DJbxAcoLI=
+github.com/PRO-Robotech/kacho-vpc v0.0.0-20260630182346-e04cba393f5a h1:mVMkmMdnZ45/n7vdHbzYw1LIFL4sAHbqA0VrFgCc3M8=
+github.com/PRO-Robotech/kacho-vpc v0.0.0-20260630182346-e04cba393f5a/go.mod h1:i+IE2Oav84VVxCxiUOdwLdA+Km/IME5HR2DJbxAcoLI=
 github.com/ahmetb/go-linq/v3 v3.2.0 h1:BEuMfp+b59io8g5wYzNoFe9pWPalRklhlhbiU3hYZDE=
 github.com/ahmetb/go-linq/v3 v3.2.0/go.mod h1:haQ3JfOeWK8HpVxMtHHEMPVgBKiYyQ+f1/kLZh/cj9U=
 github.com/beorn7/perks v1.0.1 h1:VlbKKnNfV8bJzeqoa4cOKqO6bYr3WgKZxO8Z16+hsOM=

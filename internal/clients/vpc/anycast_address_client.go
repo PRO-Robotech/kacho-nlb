@@ -131,6 +131,10 @@ func (c *internalAddressClient) AttachAnycastBYO(
 			ReferrerId:      req.Owner.ID,
 			ExpectProjectId: req.ExpectProjectID,
 			ExpectIpVersion: expectVer,
+			// BYO-привязка VIP допускает ТОЛЬКО anycast-адрес: server-side guard
+			// отвергнет обычный (в т.ч. публичный external) Address, чтобы INTERNAL
+			// LB не мог притянуть адрес не из anycast-пула.
+			ExpectAnycast: true,
 		})
 		if rerr == nil {
 			return nil
