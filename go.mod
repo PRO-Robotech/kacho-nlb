@@ -4,10 +4,11 @@ go 1.26.4
 
 require (
 	github.com/H-BF/corlib v1.2.31-dev
+	github.com/PRO-Robotech/kacho-compute v1.0.2
 	github.com/PRO-Robotech/kacho-corelib v1.0.3-0.20260629221224-9ee70b8d274e
 	github.com/PRO-Robotech/kacho-geo v1.0.2
 	github.com/PRO-Robotech/kacho-iam v1.0.2
-	github.com/PRO-Robotech/kacho-vpc v0.0.0-20260630130935-c708a07015e8
+	github.com/PRO-Robotech/kacho-vpc v1.0.2
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.29.0
 	github.com/jackc/pgx/v5 v5.9.2
 	github.com/pressly/goose/v3 v3.27.1
@@ -103,6 +104,7 @@ require (
 	golang.org/x/net v0.56.0 // indirect
 	golang.org/x/sys v0.46.0 // indirect
 	golang.org/x/text v0.38.0 // indirect
-	google.golang.org/grpc/cmd/protoc-gen-go-grpc v1.6.2 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
+
+replace github.com/PRO-Robotech/kacho-vpc => github.com/PRO-Robotech/kacho-vpc v0.0.0-20260630130935-c708a07015e8
