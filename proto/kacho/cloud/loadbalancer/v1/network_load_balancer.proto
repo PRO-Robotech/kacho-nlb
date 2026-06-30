@@ -23,12 +23,15 @@ message NetworkLoadBalancer {
   // Reserved hot-path / future fields. 8/16/17 are vestigial upstream
   // numbers. 12 (was inline `repeated Listener listeners`) is now reserved
   // because Listener is a standalone resource (see listener.proto) and
-  // promoting the field would create a circular proto import. 30-39 are
-  // claimed for the future GlobalLoadBalancer composition layer (design
-  // §«Future TODO» / §6.3) so a single NLB can be lifted into a GLB without
-  // renumbering wire-incompatibly.
-  reserved 8, 12, 16, 17;
-  reserved "listeners";
+  // promoting the field would create a circular proto import. 15
+  // (`allow_zonal_shift`) and 18 (`disable_zone_statuses`) перечисляли зоны на
+  // публичной поверхности — это per-zone-сигнал (placement), несовместимый с
+  // моделью «один anycast VIP скрывает зональную раскладку»; убраны с
+  // tenant-facing проекции (инфра-чувствительное — только Internal-проекция).
+  // 30-39 are claimed for the future GlobalLoadBalancer composition layer so a
+  // single NLB can be lifted into a GLB without renumbering wire-incompatibly.
+  reserved 8, 12, 15, 16, 17, 18;
+  reserved "listeners", "allow_zonal_shift", "disable_zone_statuses";
   reserved 30 to 39;
 
   enum Status {
@@ -83,10 +86,6 @@ message NetworkLoadBalancer {
 
   bool deletion_protection = 14;
 
-  bool allow_zonal_shift = 15;
-
-  repeated DisableZoneStatus disable_zone_statuses = 18;
-
   // Control-plane intent to spread traffic across targets in all zones of the
   // region. Distribution programming is data-plane (out of control-plane
   // scope). DB default true.
@@ -107,6 +106,22 @@ message NetworkLoadBalancer {
   // validated on Create/Update via vpc.SecurityGroupService.Get. Traffic
   // filtering itself is data-plane (out of control-plane scope).
   repeated string security_group_ids = 21;
+
+  // Единый anycast VIP сервиса — output-only. Назначается worker'ом после
+  // VIP-аллокации; пуст, пока status=CREATING (durable-handle до alloc). Один
+  // VIP на LoadBalancer на семейство (single-VIP-per-LB, инвариант на DB-уровне:
+  // кардинальность строки + CAS-attach), а не per-Listener. Значения, переданные
+  // клиентом в теле Create/Update, игнорируются (адрес назначает только worker).
+  string address_v4 = 22;
+  string address_v6 = 23;
+
+  // Binding на vpc Address (BYO или auto-аллокация из AnycastAddressPool) —
+  // output-only. Cross-service ref на kacho-vpc Address (TEXT, без FK).
+  string address_id_v4 = 24;
+  string address_id_v6 = 25;
+
+  // Заявленные семейства адресов VIP (одно — single-family, либо оба — dualstack).
+  repeated IpVersion ip_families = 26;
 }
 
 // AttachedTargetGroup — yc-shim-compat snapshot of a single
@@ -141,11 +156,4 @@ message TargetState {
   string address = 2;
   Status status = 3;
   bool zone_shifted = 4;
-}
-
-// DisableZoneStatus — zonal-shift state record (deprecated upstream feature
-// not implemented in kacho-nlb; field 18 retained as data carrier only).
-message DisableZoneStatus {
-  string zone_id = 1 [(required) = true];
-  google.protobuf.Timestamp disabled_until = 2;
 }

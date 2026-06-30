@@ -207,107 +207,16 @@ func (x *ListListenersResponse) GetNextPageToken() string {
 	return ""
 }
 
-// VIP source for a Listener — BYO address_id or auto-allocate (design §4.2).
-// Empty `address` ⇒ auto-allocate via vpc.InternalAddressService.
-type ListenerAddressSpec struct {
-	state protoimpl.MessageState `protogen:"open.v1"`
-	// Types that are valid to be assigned to Source:
-	//
-	//	*ListenerAddressSpec_AddressId
-	//	*ListenerAddressSpec_Auto
-	Source        isListenerAddressSpec_Source `protobuf_oneof:"source"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *ListenerAddressSpec) Reset() {
-	*x = ListenerAddressSpec{}
-	mi := &file_kacho_cloud_loadbalancer_v1_listener_service_proto_msgTypes[3]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *ListenerAddressSpec) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*ListenerAddressSpec) ProtoMessage() {}
-
-func (x *ListenerAddressSpec) ProtoReflect() protoreflect.Message {
-	mi := &file_kacho_cloud_loadbalancer_v1_listener_service_proto_msgTypes[3]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use ListenerAddressSpec.ProtoReflect.Descriptor instead.
-func (*ListenerAddressSpec) Descriptor() ([]byte, []int) {
-	return file_kacho_cloud_loadbalancer_v1_listener_service_proto_rawDescGZIP(), []int{3}
-}
-
-func (x *ListenerAddressSpec) GetSource() isListenerAddressSpec_Source {
-	if x != nil {
-		return x.Source
-	}
-	return nil
-}
-
-func (x *ListenerAddressSpec) GetAddressId() string {
-	if x != nil {
-		if x, ok := x.Source.(*ListenerAddressSpec_AddressId); ok {
-			return x.AddressId
-		}
-	}
-	return ""
-}
-
-func (x *ListenerAddressSpec) GetAuto() *ListenerAddressSpec_AutoAllocate {
-	if x != nil {
-		if x, ok := x.Source.(*ListenerAddressSpec_Auto); ok {
-			return x.Auto
-		}
-	}
-	return nil
-}
-
-type isListenerAddressSpec_Source interface {
-	isListenerAddressSpec_Source()
-}
-
-type ListenerAddressSpec_AddressId struct {
-	// ID of a pre-allocated kacho-vpc Address (BYO). Same-project check at
-	// the worker against AddressService.Get + atomic SetReference CAS.
-	AddressId string `protobuf:"bytes,1,opt,name=address_id,json=addressId,proto3,oneof"`
-}
-
-type ListenerAddressSpec_Auto struct {
-	// Auto-allocation hint when no `address_id` is supplied. For INTERNAL
-	// listeners `subnet_id` is required; for EXTERNAL it is empty.
-	Auto *ListenerAddressSpec_AutoAllocate `protobuf:"bytes,2,opt,name=auto,proto3,oneof"`
-}
-
-func (*ListenerAddressSpec_AddressId) isListenerAddressSpec_Source() {}
-
-func (*ListenerAddressSpec_Auto) isListenerAddressSpec_Source() {}
-
 type CreateListenerRequest struct {
-	state          protoimpl.MessageState `protogen:"open.v1"`
-	LoadBalancerId string                 `protobuf:"bytes,1,opt,name=load_balancer_id,json=loadBalancerId,proto3" json:"load_balancer_id,omitempty"`
-	Name           string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
-	Description    string                 `protobuf:"bytes,3,opt,name=description,proto3" json:"description,omitempty"`
-	Labels         map[string]string      `protobuf:"bytes,4,rep,name=labels,proto3" json:"labels,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	Protocol       Listener_Protocol      `protobuf:"varint,5,opt,name=protocol,proto3,enum=kacho.cloud.loadbalancer.v1.Listener_Protocol" json:"protocol,omitempty"`
-	Port           int64                  `protobuf:"varint,6,opt,name=port,proto3" json:"port,omitempty"`
-	TargetPort     int64                  `protobuf:"varint,7,opt,name=target_port,json=targetPort,proto3" json:"target_port,omitempty"`
-	IpVersion      IpVersion              `protobuf:"varint,8,opt,name=ip_version,json=ipVersion,proto3,enum=kacho.cloud.loadbalancer.v1.IpVersion" json:"ip_version,omitempty"`
-	// VIP source — BYO address_id or auto-allocate.
-	AddressSpec     *ListenerAddressSpec `protobuf:"bytes,9,opt,name=address_spec,json=addressSpec,proto3" json:"address_spec,omitempty"`
-	ProxyProtocolV2 bool                 `protobuf:"varint,10,opt,name=proxy_protocol_v2,json=proxyProtocolV2,proto3" json:"proxy_protocol_v2,omitempty"`
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	LoadBalancerId  string                 `protobuf:"bytes,1,opt,name=load_balancer_id,json=loadBalancerId,proto3" json:"load_balancer_id,omitempty"`
+	Name            string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	Description     string                 `protobuf:"bytes,3,opt,name=description,proto3" json:"description,omitempty"`
+	Labels          map[string]string      `protobuf:"bytes,4,rep,name=labels,proto3" json:"labels,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	Protocol        Listener_Protocol      `protobuf:"varint,5,opt,name=protocol,proto3,enum=kacho.cloud.loadbalancer.v1.Listener_Protocol" json:"protocol,omitempty"`
+	Port            int64                  `protobuf:"varint,6,opt,name=port,proto3" json:"port,omitempty"`
+	TargetPort      int64                  `protobuf:"varint,7,opt,name=target_port,json=targetPort,proto3" json:"target_port,omitempty"`
+	ProxyProtocolV2 bool                   `protobuf:"varint,10,opt,name=proxy_protocol_v2,json=proxyProtocolV2,proto3" json:"proxy_protocol_v2,omitempty"`
 	// Default target group ID — soft reference to a TG attached to the parent
 	// LB. Optional; can be set later via Update.
 	DefaultTargetGroupId string `protobuf:"bytes,11,opt,name=default_target_group_id,json=defaultTargetGroupId,proto3" json:"default_target_group_id,omitempty"`
@@ -317,7 +226,7 @@ type CreateListenerRequest struct {
 
 func (x *CreateListenerRequest) Reset() {
 	*x = CreateListenerRequest{}
-	mi := &file_kacho_cloud_loadbalancer_v1_listener_service_proto_msgTypes[4]
+	mi := &file_kacho_cloud_loadbalancer_v1_listener_service_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -329,7 +238,7 @@ func (x *CreateListenerRequest) String() string {
 func (*CreateListenerRequest) ProtoMessage() {}
 
 func (x *CreateListenerRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_kacho_cloud_loadbalancer_v1_listener_service_proto_msgTypes[4]
+	mi := &file_kacho_cloud_loadbalancer_v1_listener_service_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -342,7 +251,7 @@ func (x *CreateListenerRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateListenerRequest.ProtoReflect.Descriptor instead.
 func (*CreateListenerRequest) Descriptor() ([]byte, []int) {
-	return file_kacho_cloud_loadbalancer_v1_listener_service_proto_rawDescGZIP(), []int{4}
+	return file_kacho_cloud_loadbalancer_v1_listener_service_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *CreateListenerRequest) GetLoadBalancerId() string {
@@ -394,20 +303,6 @@ func (x *CreateListenerRequest) GetTargetPort() int64 {
 	return 0
 }
 
-func (x *CreateListenerRequest) GetIpVersion() IpVersion {
-	if x != nil {
-		return x.IpVersion
-	}
-	return IpVersion_IP_VERSION_UNSPECIFIED
-}
-
-func (x *CreateListenerRequest) GetAddressSpec() *ListenerAddressSpec {
-	if x != nil {
-		return x.AddressSpec
-	}
-	return nil
-}
-
 func (x *CreateListenerRequest) GetProxyProtocolV2() bool {
 	if x != nil {
 		return x.ProxyProtocolV2
@@ -432,7 +327,7 @@ type CreateListenerMetadata struct {
 
 func (x *CreateListenerMetadata) Reset() {
 	*x = CreateListenerMetadata{}
-	mi := &file_kacho_cloud_loadbalancer_v1_listener_service_proto_msgTypes[5]
+	mi := &file_kacho_cloud_loadbalancer_v1_listener_service_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -444,7 +339,7 @@ func (x *CreateListenerMetadata) String() string {
 func (*CreateListenerMetadata) ProtoMessage() {}
 
 func (x *CreateListenerMetadata) ProtoReflect() protoreflect.Message {
-	mi := &file_kacho_cloud_loadbalancer_v1_listener_service_proto_msgTypes[5]
+	mi := &file_kacho_cloud_loadbalancer_v1_listener_service_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -457,7 +352,7 @@ func (x *CreateListenerMetadata) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateListenerMetadata.ProtoReflect.Descriptor instead.
 func (*CreateListenerMetadata) Descriptor() ([]byte, []int) {
-	return file_kacho_cloud_loadbalancer_v1_listener_service_proto_rawDescGZIP(), []int{5}
+	return file_kacho_cloud_loadbalancer_v1_listener_service_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *CreateListenerMetadata) GetListenerId() string {
@@ -477,8 +372,9 @@ func (x *CreateListenerMetadata) GetLoadBalancerId() string {
 type UpdateListenerRequest struct {
 	state      protoimpl.MessageState `protogen:"open.v1"`
 	ListenerId string                 `protobuf:"bytes,1,opt,name=listener_id,json=listenerId,proto3" json:"listener_id,omitempty"`
-	// Immutable fields rejected here: load_balancer_id, protocol, port,
-	// ip_version, address_id (design §3.3).
+	// Immutable fields rejected here: load_balancer_id, protocol, port (design
+	// §3.3). Адресных полей у листенера больше нет — address_id/ip_version из
+	// immutable-списка ушли вместе с переездом VIP на LoadBalancer.
 	UpdateMask           *fieldmaskpb.FieldMask `protobuf:"bytes,2,opt,name=update_mask,json=updateMask,proto3" json:"update_mask,omitempty"`
 	Name                 string                 `protobuf:"bytes,3,opt,name=name,proto3" json:"name,omitempty"`
 	Description          string                 `protobuf:"bytes,4,opt,name=description,proto3" json:"description,omitempty"`
@@ -491,7 +387,7 @@ type UpdateListenerRequest struct {
 
 func (x *UpdateListenerRequest) Reset() {
 	*x = UpdateListenerRequest{}
-	mi := &file_kacho_cloud_loadbalancer_v1_listener_service_proto_msgTypes[6]
+	mi := &file_kacho_cloud_loadbalancer_v1_listener_service_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -503,7 +399,7 @@ func (x *UpdateListenerRequest) String() string {
 func (*UpdateListenerRequest) ProtoMessage() {}
 
 func (x *UpdateListenerRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_kacho_cloud_loadbalancer_v1_listener_service_proto_msgTypes[6]
+	mi := &file_kacho_cloud_loadbalancer_v1_listener_service_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -516,7 +412,7 @@ func (x *UpdateListenerRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateListenerRequest.ProtoReflect.Descriptor instead.
 func (*UpdateListenerRequest) Descriptor() ([]byte, []int) {
-	return file_kacho_cloud_loadbalancer_v1_listener_service_proto_rawDescGZIP(), []int{6}
+	return file_kacho_cloud_loadbalancer_v1_listener_service_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *UpdateListenerRequest) GetListenerId() string {
@@ -577,7 +473,7 @@ type UpdateListenerMetadata struct {
 
 func (x *UpdateListenerMetadata) Reset() {
 	*x = UpdateListenerMetadata{}
-	mi := &file_kacho_cloud_loadbalancer_v1_listener_service_proto_msgTypes[7]
+	mi := &file_kacho_cloud_loadbalancer_v1_listener_service_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -589,7 +485,7 @@ func (x *UpdateListenerMetadata) String() string {
 func (*UpdateListenerMetadata) ProtoMessage() {}
 
 func (x *UpdateListenerMetadata) ProtoReflect() protoreflect.Message {
-	mi := &file_kacho_cloud_loadbalancer_v1_listener_service_proto_msgTypes[7]
+	mi := &file_kacho_cloud_loadbalancer_v1_listener_service_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -602,7 +498,7 @@ func (x *UpdateListenerMetadata) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateListenerMetadata.ProtoReflect.Descriptor instead.
 func (*UpdateListenerMetadata) Descriptor() ([]byte, []int) {
-	return file_kacho_cloud_loadbalancer_v1_listener_service_proto_rawDescGZIP(), []int{7}
+	return file_kacho_cloud_loadbalancer_v1_listener_service_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *UpdateListenerMetadata) GetListenerId() string {
@@ -621,7 +517,7 @@ type DeleteListenerRequest struct {
 
 func (x *DeleteListenerRequest) Reset() {
 	*x = DeleteListenerRequest{}
-	mi := &file_kacho_cloud_loadbalancer_v1_listener_service_proto_msgTypes[8]
+	mi := &file_kacho_cloud_loadbalancer_v1_listener_service_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -633,7 +529,7 @@ func (x *DeleteListenerRequest) String() string {
 func (*DeleteListenerRequest) ProtoMessage() {}
 
 func (x *DeleteListenerRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_kacho_cloud_loadbalancer_v1_listener_service_proto_msgTypes[8]
+	mi := &file_kacho_cloud_loadbalancer_v1_listener_service_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -646,7 +542,7 @@ func (x *DeleteListenerRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteListenerRequest.ProtoReflect.Descriptor instead.
 func (*DeleteListenerRequest) Descriptor() ([]byte, []int) {
-	return file_kacho_cloud_loadbalancer_v1_listener_service_proto_rawDescGZIP(), []int{8}
+	return file_kacho_cloud_loadbalancer_v1_listener_service_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *DeleteListenerRequest) GetListenerId() string {
@@ -666,7 +562,7 @@ type DeleteListenerMetadata struct {
 
 func (x *DeleteListenerMetadata) Reset() {
 	*x = DeleteListenerMetadata{}
-	mi := &file_kacho_cloud_loadbalancer_v1_listener_service_proto_msgTypes[9]
+	mi := &file_kacho_cloud_loadbalancer_v1_listener_service_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -678,7 +574,7 @@ func (x *DeleteListenerMetadata) String() string {
 func (*DeleteListenerMetadata) ProtoMessage() {}
 
 func (x *DeleteListenerMetadata) ProtoReflect() protoreflect.Message {
-	mi := &file_kacho_cloud_loadbalancer_v1_listener_service_proto_msgTypes[9]
+	mi := &file_kacho_cloud_loadbalancer_v1_listener_service_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -691,7 +587,7 @@ func (x *DeleteListenerMetadata) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteListenerMetadata.ProtoReflect.Descriptor instead.
 func (*DeleteListenerMetadata) Descriptor() ([]byte, []int) {
-	return file_kacho_cloud_loadbalancer_v1_listener_service_proto_rawDescGZIP(), []int{9}
+	return file_kacho_cloud_loadbalancer_v1_listener_service_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *DeleteListenerMetadata) GetListenerId() string {
@@ -719,7 +615,7 @@ type ListListenerOperationsRequest struct {
 
 func (x *ListListenerOperationsRequest) Reset() {
 	*x = ListListenerOperationsRequest{}
-	mi := &file_kacho_cloud_loadbalancer_v1_listener_service_proto_msgTypes[10]
+	mi := &file_kacho_cloud_loadbalancer_v1_listener_service_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -731,7 +627,7 @@ func (x *ListListenerOperationsRequest) String() string {
 func (*ListListenerOperationsRequest) ProtoMessage() {}
 
 func (x *ListListenerOperationsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_kacho_cloud_loadbalancer_v1_listener_service_proto_msgTypes[10]
+	mi := &file_kacho_cloud_loadbalancer_v1_listener_service_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -744,7 +640,7 @@ func (x *ListListenerOperationsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListListenerOperationsRequest.ProtoReflect.Descriptor instead.
 func (*ListListenerOperationsRequest) Descriptor() ([]byte, []int) {
-	return file_kacho_cloud_loadbalancer_v1_listener_service_proto_rawDescGZIP(), []int{10}
+	return file_kacho_cloud_loadbalancer_v1_listener_service_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *ListListenerOperationsRequest) GetListenerId() string {
@@ -778,7 +674,7 @@ type ListListenerOperationsResponse struct {
 
 func (x *ListListenerOperationsResponse) Reset() {
 	*x = ListListenerOperationsResponse{}
-	mi := &file_kacho_cloud_loadbalancer_v1_listener_service_proto_msgTypes[11]
+	mi := &file_kacho_cloud_loadbalancer_v1_listener_service_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -790,7 +686,7 @@ func (x *ListListenerOperationsResponse) String() string {
 func (*ListListenerOperationsResponse) ProtoMessage() {}
 
 func (x *ListListenerOperationsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_kacho_cloud_loadbalancer_v1_listener_service_proto_msgTypes[11]
+	mi := &file_kacho_cloud_loadbalancer_v1_listener_service_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -803,7 +699,7 @@ func (x *ListListenerOperationsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListListenerOperationsResponse.ProtoReflect.Descriptor instead.
 func (*ListListenerOperationsResponse) Descriptor() ([]byte, []int) {
-	return file_kacho_cloud_loadbalancer_v1_listener_service_proto_rawDescGZIP(), []int{11}
+	return file_kacho_cloud_loadbalancer_v1_listener_service_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *ListListenerOperationsResponse) GetOperations() []*operation.Operation {
@@ -820,56 +716,11 @@ func (x *ListListenerOperationsResponse) GetNextPageToken() string {
 	return ""
 }
 
-type ListenerAddressSpec_AutoAllocate struct {
-	state protoimpl.MessageState `protogen:"open.v1"`
-	// Required for INTERNAL listeners; ignored for EXTERNAL.
-	SubnetId      string `protobuf:"bytes,1,opt,name=subnet_id,json=subnetId,proto3" json:"subnet_id,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *ListenerAddressSpec_AutoAllocate) Reset() {
-	*x = ListenerAddressSpec_AutoAllocate{}
-	mi := &file_kacho_cloud_loadbalancer_v1_listener_service_proto_msgTypes[12]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *ListenerAddressSpec_AutoAllocate) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*ListenerAddressSpec_AutoAllocate) ProtoMessage() {}
-
-func (x *ListenerAddressSpec_AutoAllocate) ProtoReflect() protoreflect.Message {
-	mi := &file_kacho_cloud_loadbalancer_v1_listener_service_proto_msgTypes[12]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use ListenerAddressSpec_AutoAllocate.ProtoReflect.Descriptor instead.
-func (*ListenerAddressSpec_AutoAllocate) Descriptor() ([]byte, []int) {
-	return file_kacho_cloud_loadbalancer_v1_listener_service_proto_rawDescGZIP(), []int{3, 0}
-}
-
-func (x *ListenerAddressSpec_AutoAllocate) GetSubnetId() string {
-	if x != nil {
-		return x.SubnetId
-	}
-	return ""
-}
-
 var File_kacho_cloud_loadbalancer_v1_listener_service_proto protoreflect.FileDescriptor
 
 const file_kacho_cloud_loadbalancer_v1_listener_service_proto_rawDesc = "" +
 	"\n" +
-	"2kacho/cloud/loadbalancer/v1/listener_service.proto\x12\x1bkacho.cloud.loadbalancer.v1\x1a\x1cgoogle/api/annotations.proto\x1a google/protobuf/field_mask.proto\x1a\x1fkacho/cloud/api/operation.proto\x1a*kacho/cloud/loadbalancer/v1/listener.proto\x1a7kacho/cloud/loadbalancer/v1/network_load_balancer.proto\x1a%kacho/cloud/operation/operation.proto\x1a\x1ckacho/cloud/validation.proto\x1a&kacho/iam/authz/v1/authz_options.proto\"C\n" +
+	"2kacho/cloud/loadbalancer/v1/listener_service.proto\x12\x1bkacho.cloud.loadbalancer.v1\x1a\x1cgoogle/api/annotations.proto\x1a google/protobuf/field_mask.proto\x1a\x1fkacho/cloud/api/operation.proto\x1a*kacho/cloud/loadbalancer/v1/listener.proto\x1a%kacho/cloud/operation/operation.proto\x1a\x1ckacho/cloud/validation.proto\x1a&kacho/iam/authz/v1/authz_options.proto\"C\n" +
 	"\x12GetListenerRequest\x12-\n" +
 	"\vlistener_id\x18\x01 \x01(\tB\f\xe8\xc71\x01\x8a\xc81\x04<=50R\n" +
 	"listenerId\"\xee\x01\n" +
@@ -885,14 +736,7 @@ const file_kacho_cloud_loadbalancer_v1_listener_service_proto_rawDesc = "" +
 	"\x8a\xc81\x06<=1000R\x06filter\"\x84\x01\n" +
 	"\x15ListListenersResponse\x12C\n" +
 	"\tlisteners\x18\x01 \x03(\v2%.kacho.cloud.loadbalancer.v1.ListenerR\tlisteners\x12&\n" +
-	"\x0fnext_page_token\x18\x02 \x01(\tR\rnextPageToken\"\xcc\x01\n" +
-	"\x13ListenerAddressSpec\x12\x1f\n" +
-	"\n" +
-	"address_id\x18\x01 \x01(\tH\x00R\taddressId\x12S\n" +
-	"\x04auto\x18\x02 \x01(\v2=.kacho.cloud.loadbalancer.v1.ListenerAddressSpec.AutoAllocateH\x00R\x04auto\x1a5\n" +
-	"\fAutoAllocate\x12%\n" +
-	"\tsubnet_id\x18\x01 \x01(\tB\b\x8a\xc81\x04<=50R\bsubnetIdB\b\n" +
-	"\x06source\"\xb4\x06\n" +
+	"\x0fnext_page_token\x18\x02 \x01(\tR\rnextPageToken\"\xb8\x05\n" +
 	"\x15CreateListenerRequest\x126\n" +
 	"\x10load_balancer_id\x18\x01 \x01(\tB\f\xe8\xc71\x01\x8a\xc81\x04<=50R\x0eloadBalancerId\x125\n" +
 	"\x04name\x18\x02 \x01(\tB!\xf2\xc71\x1d|[a-z][-a-z0-9]{1,61}[a-z0-9]R\x04name\x12+\n" +
@@ -901,16 +745,15 @@ const file_kacho_cloud_loadbalancer_v1_listener_service_proto_rawDesc = "" +
 	"\bprotocol\x18\x05 \x01(\x0e2..kacho.cloud.loadbalancer.v1.Listener.ProtocolB\x04\xe8\xc71\x01R\bprotocol\x12\x1f\n" +
 	"\x04port\x18\x06 \x01(\x03B\v\xfa\xc71\a1-65535R\x04port\x12,\n" +
 	"\vtarget_port\x18\a \x01(\x03B\v\xfa\xc71\a1-65535R\n" +
-	"targetPort\x12E\n" +
-	"\n" +
-	"ip_version\x18\b \x01(\x0e2&.kacho.cloud.loadbalancer.v1.IpVersionR\tipVersion\x12Y\n" +
-	"\faddress_spec\x18\t \x01(\v20.kacho.cloud.loadbalancer.v1.ListenerAddressSpecB\x04\xe8\xc71\x01R\vaddressSpec\x12*\n" +
+	"targetPort\x12*\n" +
 	"\x11proxy_protocol_v2\x18\n" +
 	" \x01(\bR\x0fproxyProtocolV2\x12?\n" +
 	"\x17default_target_group_id\x18\v \x01(\tB\b\x8a\xc81\x04<=50R\x14defaultTargetGroupId\x1a9\n" +
 	"\vLabelsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"c\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01J\x04\b\b\x10\tJ\x04\b\t\x10\n" +
+	"R\n" +
+	"ip_versionR\faddress_spec\"c\n" +
 	"\x16CreateListenerMetadata\x12\x1f\n" +
 	"\vlistener_id\x18\x01 \x01(\tR\n" +
 	"listenerId\x12(\n" +
@@ -980,56 +823,50 @@ func file_kacho_cloud_loadbalancer_v1_listener_service_proto_rawDescGZIP() []byt
 	return file_kacho_cloud_loadbalancer_v1_listener_service_proto_rawDescData
 }
 
-var file_kacho_cloud_loadbalancer_v1_listener_service_proto_msgTypes = make([]protoimpl.MessageInfo, 15)
+var file_kacho_cloud_loadbalancer_v1_listener_service_proto_msgTypes = make([]protoimpl.MessageInfo, 13)
 var file_kacho_cloud_loadbalancer_v1_listener_service_proto_goTypes = []any{
-	(*GetListenerRequest)(nil),               // 0: kacho.cloud.loadbalancer.v1.GetListenerRequest
-	(*ListListenersRequest)(nil),             // 1: kacho.cloud.loadbalancer.v1.ListListenersRequest
-	(*ListListenersResponse)(nil),            // 2: kacho.cloud.loadbalancer.v1.ListListenersResponse
-	(*ListenerAddressSpec)(nil),              // 3: kacho.cloud.loadbalancer.v1.ListenerAddressSpec
-	(*CreateListenerRequest)(nil),            // 4: kacho.cloud.loadbalancer.v1.CreateListenerRequest
-	(*CreateListenerMetadata)(nil),           // 5: kacho.cloud.loadbalancer.v1.CreateListenerMetadata
-	(*UpdateListenerRequest)(nil),            // 6: kacho.cloud.loadbalancer.v1.UpdateListenerRequest
-	(*UpdateListenerMetadata)(nil),           // 7: kacho.cloud.loadbalancer.v1.UpdateListenerMetadata
-	(*DeleteListenerRequest)(nil),            // 8: kacho.cloud.loadbalancer.v1.DeleteListenerRequest
-	(*DeleteListenerMetadata)(nil),           // 9: kacho.cloud.loadbalancer.v1.DeleteListenerMetadata
-	(*ListListenerOperationsRequest)(nil),    // 10: kacho.cloud.loadbalancer.v1.ListListenerOperationsRequest
-	(*ListListenerOperationsResponse)(nil),   // 11: kacho.cloud.loadbalancer.v1.ListListenerOperationsResponse
-	(*ListenerAddressSpec_AutoAllocate)(nil), // 12: kacho.cloud.loadbalancer.v1.ListenerAddressSpec.AutoAllocate
-	nil,                                      // 13: kacho.cloud.loadbalancer.v1.CreateListenerRequest.LabelsEntry
-	nil,                                      // 14: kacho.cloud.loadbalancer.v1.UpdateListenerRequest.LabelsEntry
-	(*Listener)(nil),                         // 15: kacho.cloud.loadbalancer.v1.Listener
-	(Listener_Protocol)(0),                   // 16: kacho.cloud.loadbalancer.v1.Listener.Protocol
-	(IpVersion)(0),                           // 17: kacho.cloud.loadbalancer.v1.IpVersion
-	(*fieldmaskpb.FieldMask)(nil),            // 18: google.protobuf.FieldMask
-	(*operation.Operation)(nil),              // 19: kacho.cloud.operation.Operation
+	(*GetListenerRequest)(nil),             // 0: kacho.cloud.loadbalancer.v1.GetListenerRequest
+	(*ListListenersRequest)(nil),           // 1: kacho.cloud.loadbalancer.v1.ListListenersRequest
+	(*ListListenersResponse)(nil),          // 2: kacho.cloud.loadbalancer.v1.ListListenersResponse
+	(*CreateListenerRequest)(nil),          // 3: kacho.cloud.loadbalancer.v1.CreateListenerRequest
+	(*CreateListenerMetadata)(nil),         // 4: kacho.cloud.loadbalancer.v1.CreateListenerMetadata
+	(*UpdateListenerRequest)(nil),          // 5: kacho.cloud.loadbalancer.v1.UpdateListenerRequest
+	(*UpdateListenerMetadata)(nil),         // 6: kacho.cloud.loadbalancer.v1.UpdateListenerMetadata
+	(*DeleteListenerRequest)(nil),          // 7: kacho.cloud.loadbalancer.v1.DeleteListenerRequest
+	(*DeleteListenerMetadata)(nil),         // 8: kacho.cloud.loadbalancer.v1.DeleteListenerMetadata
+	(*ListListenerOperationsRequest)(nil),  // 9: kacho.cloud.loadbalancer.v1.ListListenerOperationsRequest
+	(*ListListenerOperationsResponse)(nil), // 10: kacho.cloud.loadbalancer.v1.ListListenerOperationsResponse
+	nil,                                    // 11: kacho.cloud.loadbalancer.v1.CreateListenerRequest.LabelsEntry
+	nil,                                    // 12: kacho.cloud.loadbalancer.v1.UpdateListenerRequest.LabelsEntry
+	(*Listener)(nil),                       // 13: kacho.cloud.loadbalancer.v1.Listener
+	(Listener_Protocol)(0),                 // 14: kacho.cloud.loadbalancer.v1.Listener.Protocol
+	(*fieldmaskpb.FieldMask)(nil),          // 15: google.protobuf.FieldMask
+	(*operation.Operation)(nil),            // 16: kacho.cloud.operation.Operation
 }
 var file_kacho_cloud_loadbalancer_v1_listener_service_proto_depIdxs = []int32{
-	15, // 0: kacho.cloud.loadbalancer.v1.ListListenersResponse.listeners:type_name -> kacho.cloud.loadbalancer.v1.Listener
-	12, // 1: kacho.cloud.loadbalancer.v1.ListenerAddressSpec.auto:type_name -> kacho.cloud.loadbalancer.v1.ListenerAddressSpec.AutoAllocate
-	13, // 2: kacho.cloud.loadbalancer.v1.CreateListenerRequest.labels:type_name -> kacho.cloud.loadbalancer.v1.CreateListenerRequest.LabelsEntry
-	16, // 3: kacho.cloud.loadbalancer.v1.CreateListenerRequest.protocol:type_name -> kacho.cloud.loadbalancer.v1.Listener.Protocol
-	17, // 4: kacho.cloud.loadbalancer.v1.CreateListenerRequest.ip_version:type_name -> kacho.cloud.loadbalancer.v1.IpVersion
-	3,  // 5: kacho.cloud.loadbalancer.v1.CreateListenerRequest.address_spec:type_name -> kacho.cloud.loadbalancer.v1.ListenerAddressSpec
-	18, // 6: kacho.cloud.loadbalancer.v1.UpdateListenerRequest.update_mask:type_name -> google.protobuf.FieldMask
-	14, // 7: kacho.cloud.loadbalancer.v1.UpdateListenerRequest.labels:type_name -> kacho.cloud.loadbalancer.v1.UpdateListenerRequest.LabelsEntry
-	19, // 8: kacho.cloud.loadbalancer.v1.ListListenerOperationsResponse.operations:type_name -> kacho.cloud.operation.Operation
-	0,  // 9: kacho.cloud.loadbalancer.v1.ListenerService.Get:input_type -> kacho.cloud.loadbalancer.v1.GetListenerRequest
-	1,  // 10: kacho.cloud.loadbalancer.v1.ListenerService.List:input_type -> kacho.cloud.loadbalancer.v1.ListListenersRequest
-	4,  // 11: kacho.cloud.loadbalancer.v1.ListenerService.Create:input_type -> kacho.cloud.loadbalancer.v1.CreateListenerRequest
-	6,  // 12: kacho.cloud.loadbalancer.v1.ListenerService.Update:input_type -> kacho.cloud.loadbalancer.v1.UpdateListenerRequest
-	8,  // 13: kacho.cloud.loadbalancer.v1.ListenerService.Delete:input_type -> kacho.cloud.loadbalancer.v1.DeleteListenerRequest
-	10, // 14: kacho.cloud.loadbalancer.v1.ListenerService.ListOperations:input_type -> kacho.cloud.loadbalancer.v1.ListListenerOperationsRequest
-	15, // 15: kacho.cloud.loadbalancer.v1.ListenerService.Get:output_type -> kacho.cloud.loadbalancer.v1.Listener
-	2,  // 16: kacho.cloud.loadbalancer.v1.ListenerService.List:output_type -> kacho.cloud.loadbalancer.v1.ListListenersResponse
-	19, // 17: kacho.cloud.loadbalancer.v1.ListenerService.Create:output_type -> kacho.cloud.operation.Operation
-	19, // 18: kacho.cloud.loadbalancer.v1.ListenerService.Update:output_type -> kacho.cloud.operation.Operation
-	19, // 19: kacho.cloud.loadbalancer.v1.ListenerService.Delete:output_type -> kacho.cloud.operation.Operation
-	11, // 20: kacho.cloud.loadbalancer.v1.ListenerService.ListOperations:output_type -> kacho.cloud.loadbalancer.v1.ListListenerOperationsResponse
-	15, // [15:21] is the sub-list for method output_type
-	9,  // [9:15] is the sub-list for method input_type
-	9,  // [9:9] is the sub-list for extension type_name
-	9,  // [9:9] is the sub-list for extension extendee
-	0,  // [0:9] is the sub-list for field type_name
+	13, // 0: kacho.cloud.loadbalancer.v1.ListListenersResponse.listeners:type_name -> kacho.cloud.loadbalancer.v1.Listener
+	11, // 1: kacho.cloud.loadbalancer.v1.CreateListenerRequest.labels:type_name -> kacho.cloud.loadbalancer.v1.CreateListenerRequest.LabelsEntry
+	14, // 2: kacho.cloud.loadbalancer.v1.CreateListenerRequest.protocol:type_name -> kacho.cloud.loadbalancer.v1.Listener.Protocol
+	15, // 3: kacho.cloud.loadbalancer.v1.UpdateListenerRequest.update_mask:type_name -> google.protobuf.FieldMask
+	12, // 4: kacho.cloud.loadbalancer.v1.UpdateListenerRequest.labels:type_name -> kacho.cloud.loadbalancer.v1.UpdateListenerRequest.LabelsEntry
+	16, // 5: kacho.cloud.loadbalancer.v1.ListListenerOperationsResponse.operations:type_name -> kacho.cloud.operation.Operation
+	0,  // 6: kacho.cloud.loadbalancer.v1.ListenerService.Get:input_type -> kacho.cloud.loadbalancer.v1.GetListenerRequest
+	1,  // 7: kacho.cloud.loadbalancer.v1.ListenerService.List:input_type -> kacho.cloud.loadbalancer.v1.ListListenersRequest
+	3,  // 8: kacho.cloud.loadbalancer.v1.ListenerService.Create:input_type -> kacho.cloud.loadbalancer.v1.CreateListenerRequest
+	5,  // 9: kacho.cloud.loadbalancer.v1.ListenerService.Update:input_type -> kacho.cloud.loadbalancer.v1.UpdateListenerRequest
+	7,  // 10: kacho.cloud.loadbalancer.v1.ListenerService.Delete:input_type -> kacho.cloud.loadbalancer.v1.DeleteListenerRequest
+	9,  // 11: kacho.cloud.loadbalancer.v1.ListenerService.ListOperations:input_type -> kacho.cloud.loadbalancer.v1.ListListenerOperationsRequest
+	13, // 12: kacho.cloud.loadbalancer.v1.ListenerService.Get:output_type -> kacho.cloud.loadbalancer.v1.Listener
+	2,  // 13: kacho.cloud.loadbalancer.v1.ListenerService.List:output_type -> kacho.cloud.loadbalancer.v1.ListListenersResponse
+	16, // 14: kacho.cloud.loadbalancer.v1.ListenerService.Create:output_type -> kacho.cloud.operation.Operation
+	16, // 15: kacho.cloud.loadbalancer.v1.ListenerService.Update:output_type -> kacho.cloud.operation.Operation
+	16, // 16: kacho.cloud.loadbalancer.v1.ListenerService.Delete:output_type -> kacho.cloud.operation.Operation
+	10, // 17: kacho.cloud.loadbalancer.v1.ListenerService.ListOperations:output_type -> kacho.cloud.loadbalancer.v1.ListListenerOperationsResponse
+	12, // [12:18] is the sub-list for method output_type
+	6,  // [6:12] is the sub-list for method input_type
+	6,  // [6:6] is the sub-list for extension type_name
+	6,  // [6:6] is the sub-list for extension extendee
+	0,  // [0:6] is the sub-list for field type_name
 }
 
 func init() { file_kacho_cloud_loadbalancer_v1_listener_service_proto_init() }
@@ -1038,18 +875,13 @@ func file_kacho_cloud_loadbalancer_v1_listener_service_proto_init() {
 		return
 	}
 	file_kacho_cloud_loadbalancer_v1_listener_proto_init()
-	file_kacho_cloud_loadbalancer_v1_network_load_balancer_proto_init()
-	file_kacho_cloud_loadbalancer_v1_listener_service_proto_msgTypes[3].OneofWrappers = []any{
-		(*ListenerAddressSpec_AddressId)(nil),
-		(*ListenerAddressSpec_Auto)(nil),
-	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_kacho_cloud_loadbalancer_v1_listener_service_proto_rawDesc), len(file_kacho_cloud_loadbalancer_v1_listener_service_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   15,
+			NumMessages:   13,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

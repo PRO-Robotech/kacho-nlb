@@ -1,0 +1,101 @@
+// Copyright (c) PRO-Robotech
+// SPDX-License-Identifier: BUSL-1.1
+
+syntax = "proto3";
+
+package kacho.cloud.loadbalancer.v1;
+
+import "google/protobuf/timestamp.proto";
+import "kacho/cloud/loadbalancer/v1/network_load_balancer.proto";
+import "kacho/iam/authz/v1/authz_options.proto";
+
+option go_package = "github.com/PRO-Robotech/kacho-nlb/proto/gen/go/kacho/cloud/loadbalancer/v1;loadbalancerv1";
+
+// InternalLoadBalancerAnnounceService — cluster-internal RPC (порт 9091; запрет
+// #6), наблюдаемая per-zone announce-state anycast-VIP.
+//
+// Type-level separation: announce-state (BGP up/down, route/VRF id, kernel-prog,
+// числовой инфра-id, перечень зон) — инфра-чувствительные данные (security.md),
+// которых НЕТ ни в одном поле публичного NetworkLoadBalancer и которые
+// физически не возвращаются ни одним public RPC. Доступ — только этим internal
+// сервисом на :9091, mTLS.
+//
+// AuthN+AuthZ ВЕЗДЕ (инвариант security.md): per-RPC InternalIAMService.Check
+// энфорсится и здесь — НЕ <exempt>. Read гейтится viewer-tier; inbound write
+// (data-plane→nlb) — least-priv writer-relation. Внутренний периметр не
+// доверенный (defense-in-depth против lateral movement).
+service InternalLoadBalancerAnnounceService {
+  // GetAnnounceState — read наблюдаемой per-zone announce-state одного LB.
+  // Viewer-gated, реальный per-RPC Check (НЕ exempt), mTLS. Не маршрутизируется
+  // на external endpoint — только internal mux api-gateway.
+  rpc GetAnnounceState(GetLoadBalancerAnnounceStateRequest) returns (LoadBalancerAnnounceState) {
+    option (kacho.iam.authz.v1.permission)        = "loadbalancer.networkLoadBalancers.getAnnounceState";
+    option (kacho.iam.authz.v1.required_relation) = "v_get";
+    option (kacho.iam.authz.v1.scope_extractor)   = {
+      object_type:        "lb_network_load_balancer"
+      from_request_field: "network_load_balancer_id"
+    };
+    option (kacho.iam.authz.v1.required_acr_min)  = "2";
+  }
+
+  // ReportAnnounceState — inbound write-канал data-plane→nlb (новое одностороннее
+  // runtime-ребро kacho-vpc-implement → kacho-nlb, announce-state feedback).
+  // Только :9091, mTLS, least-priv writer-relation (единственный writer
+  // announce-state = data plane). anon/без mTLS → fail-closed; viewer/tenant →
+  // PERMISSION_DENIED. Per-RPC Check НЕ exempt.
+  //
+  // Форма канала — застаблена в этой под-фазе (acceptance §3.4: поведенческий
+  // контракт фиксирован независимо от формы). Writer-relation `announce_writer`
+  // в FGA-модели — часть iam-стороны интеграции (отдельная задача).
+  rpc ReportAnnounceState(ReportLoadBalancerAnnounceStateRequest) returns (ReportLoadBalancerAnnounceStateResponse) {
+    option (kacho.iam.authz.v1.permission)        = "loadbalancer.networkLoadBalancers.reportAnnounceState";
+    option (kacho.iam.authz.v1.required_relation) = "announce_writer";
+    option (kacho.iam.authz.v1.scope_extractor)   = {
+      object_type:        "lb_network_load_balancer"
+      from_request_field: "network_load_balancer_id"
+    };
+    option (kacho.iam.authz.v1.required_acr_min)  = "2";
+  }
+}
+
+// AnnounceZoneState — per-zone announce-state одного семейства anycast-VIP,
+// наблюдаемая из data plane. Инфра-чувствительное (security.md): никогда не
+// выходит на публичную проекцию NetworkLoadBalancer.
+message AnnounceZoneState {
+  // ID зоны, из которой анонсируется (withdraw'ится) VIP.
+  string zone_id = 1;
+  // Семейство адреса, к которому относится зональный анонс.
+  IpVersion ip_version = 2;
+  // BGP-сессия зоны для этого VIP поднята (true) / отозвана (false).
+  bool bgp_up = 3;
+  // Идентификатор запрограммированного маршрута VIP в этой зоне.
+  string route_id = 4;
+  // Идентификатор VRF/routing-таблицы, в которой живёт маршрут.
+  string vrf_id = 5;
+  // Статус программирования маршрута в ядре data-plane-узла.
+  bool kernel_programmed = 6;
+  // Числовой инфра-идентификатор зонального анонса (внутренний для data plane).
+  int64 infra_id = 7;
+}
+
+// LoadBalancerAnnounceState — полная наблюдаемая announce-state одного LB по
+// всем зонам и семействам (internal-проекция, :9091 only).
+message LoadBalancerAnnounceState {
+  string network_load_balancer_id = 1;
+  string address_v4 = 2;
+  string address_v6 = 3;
+  repeated AnnounceZoneState zones = 4;
+  // Момент последнего обновления announce-state data-plane'ом.
+  google.protobuf.Timestamp observed_at = 5;
+}
+
+message GetLoadBalancerAnnounceStateRequest {
+  string network_load_balancer_id = 1;
+}
+
+message ReportLoadBalancerAnnounceStateRequest {
+  string network_load_balancer_id = 1;
+  repeated AnnounceZoneState zones = 2;
+}
+
+message ReportLoadBalancerAnnounceStateResponse {}

@@ -149,10 +149,6 @@ type Listener struct {
 	ProjectId string `protobuf:"bytes,2,opt,name=project_id,json=projectId,proto3" json:"project_id,omitempty"`
 	// ID of the parent NetworkLoadBalancer (FK `listeners.load_balancer_id`).
 	LoadBalancerId string `protobuf:"bytes,3,opt,name=load_balancer_id,json=loadBalancerId,proto3" json:"load_balancer_id,omitempty"`
-	// ID of the region. Denormalized from the parent LB; required at the
-	// listener row for the `(region_id, allocated_address, port, protocol)`
-	// UNIQUE constraint (design §5.2).
-	RegionId string `protobuf:"bytes,4,opt,name=region_id,json=regionId,proto3" json:"region_id,omitempty"`
 	// Creation timestamp.
 	CreatedAt *timestamppb.Timestamp `protobuf:"bytes,5,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
 	// Name of the listener. Unique per parent load balancer.
@@ -167,18 +163,6 @@ type Listener struct {
 	Port int64 `protobuf:"varint,10,opt,name=port,proto3" json:"port,omitempty"`
 	// Port on which targets receive forwarded traffic.
 	TargetPort int64 `protobuf:"varint,11,opt,name=target_port,json=targetPort,proto3" json:"target_port,omitempty"`
-	// IP version of the VIP. Shared enum defined in network_load_balancer.proto.
-	IpVersion IpVersion `protobuf:"varint,12,opt,name=ip_version,json=ipVersion,proto3,enum=kacho.cloud.loadbalancer.v1.IpVersion" json:"ip_version,omitempty"`
-	// BYO `address_id` of a pre-allocated VPC Address; empty when the VIP was
-	// auto-allocated. Source of truth lives in kacho-vpc; this field is the
-	// soft cross-service reference (design §2.6).
-	AddressId string `protobuf:"bytes,13,opt,name=address_id,json=addressId,proto3" json:"address_id,omitempty"`
-	// The IP address actually bound to the listener once allocation completes.
-	// Empty while `status == CREATING`.
-	AllocatedAddress string `protobuf:"bytes,14,opt,name=allocated_address,json=allocatedAddress,proto3" json:"allocated_address,omitempty"`
-	// For INTERNAL load balancers, the subnet from which the VIP is allocated.
-	// Empty for EXTERNAL listeners. Soft cross-service reference to kacho-vpc.
-	SubnetId string `protobuf:"bytes,15,opt,name=subnet_id,json=subnetId,proto3" json:"subnet_id,omitempty"`
 	// Enables PROXY-protocol v2 framing on accepted connections.
 	ProxyProtocolV2 bool `protobuf:"varint,16,opt,name=proxy_protocol_v2,json=proxyProtocolV2,proto3" json:"proxy_protocol_v2,omitempty"`
 	// Optional target group that receives traffic when no per-listener routing
@@ -241,13 +225,6 @@ func (x *Listener) GetLoadBalancerId() string {
 	return ""
 }
 
-func (x *Listener) GetRegionId() string {
-	if x != nil {
-		return x.RegionId
-	}
-	return ""
-}
-
 func (x *Listener) GetCreatedAt() *timestamppb.Timestamp {
 	if x != nil {
 		return x.CreatedAt
@@ -297,34 +274,6 @@ func (x *Listener) GetTargetPort() int64 {
 	return 0
 }
 
-func (x *Listener) GetIpVersion() IpVersion {
-	if x != nil {
-		return x.IpVersion
-	}
-	return IpVersion_IP_VERSION_UNSPECIFIED
-}
-
-func (x *Listener) GetAddressId() string {
-	if x != nil {
-		return x.AddressId
-	}
-	return ""
-}
-
-func (x *Listener) GetAllocatedAddress() string {
-	if x != nil {
-		return x.AllocatedAddress
-	}
-	return ""
-}
-
-func (x *Listener) GetSubnetId() string {
-	if x != nil {
-		return x.SubnetId
-	}
-	return ""
-}
-
 func (x *Listener) GetProxyProtocolV2() bool {
 	if x != nil {
 		return x.ProxyProtocolV2
@@ -350,13 +299,12 @@ var File_kacho_cloud_loadbalancer_v1_listener_proto protoreflect.FileDescriptor
 
 const file_kacho_cloud_loadbalancer_v1_listener_proto_rawDesc = "" +
 	"\n" +
-	"*kacho/cloud/loadbalancer/v1/listener.proto\x12\x1bkacho.cloud.loadbalancer.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a7kacho/cloud/loadbalancer/v1/network_load_balancer.proto\"\xe7\a\n" +
+	"*kacho/cloud/loadbalancer/v1/listener.proto\x12\x1bkacho.cloud.loadbalancer.v1\x1a\x1fgoogle/protobuf/timestamp.proto\"\xf9\x06\n" +
 	"\bListener\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1d\n" +
 	"\n" +
 	"project_id\x18\x02 \x01(\tR\tprojectId\x12(\n" +
-	"\x10load_balancer_id\x18\x03 \x01(\tR\x0eloadBalancerId\x12\x1b\n" +
-	"\tregion_id\x18\x04 \x01(\tR\bregionId\x129\n" +
+	"\x10load_balancer_id\x18\x03 \x01(\tR\x0eloadBalancerId\x129\n" +
 	"\n" +
 	"created_at\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\x12\x12\n" +
 	"\x04name\x18\x06 \x01(\tR\x04name\x12 \n" +
@@ -366,13 +314,7 @@ const file_kacho_cloud_loadbalancer_v1_listener_proto_rawDesc = "" +
 	"\x04port\x18\n" +
 	" \x01(\x03R\x04port\x12\x1f\n" +
 	"\vtarget_port\x18\v \x01(\x03R\n" +
-	"targetPort\x12E\n" +
-	"\n" +
-	"ip_version\x18\f \x01(\x0e2&.kacho.cloud.loadbalancer.v1.IpVersionR\tipVersion\x12\x1d\n" +
-	"\n" +
-	"address_id\x18\r \x01(\tR\taddressId\x12+\n" +
-	"\x11allocated_address\x18\x0e \x01(\tR\x10allocatedAddress\x12\x1b\n" +
-	"\tsubnet_id\x18\x0f \x01(\tR\bsubnetId\x12*\n" +
+	"targetPort\x12*\n" +
 	"\x11proxy_protocol_v2\x18\x10 \x01(\bR\x0fproxyProtocolV2\x125\n" +
 	"\x17default_target_group_id\x18\x11 \x01(\tR\x14defaultTargetGroupId\x12D\n" +
 	"\x06status\x18\x12 \x01(\x0e2,.kacho.cloud.loadbalancer.v1.Listener.StatusR\x06status\x1a9\n" +
@@ -389,7 +331,9 @@ const file_kacho_cloud_loadbalancer_v1_listener_proto_rawDesc = "" +
 	"\bProtocol\x12\x18\n" +
 	"\x14PROTOCOL_UNSPECIFIED\x10\x00\x12\a\n" +
 	"\x03TCP\x10\x01\x12\a\n" +
-	"\x03UDP\x10\x02J\x04\b2\x10<B[ZYgithub.com/PRO-Robotech/kacho-nlb/proto/gen/go/kacho/cloud/loadbalancer/v1;loadbalancerv1b\x06proto3"
+	"\x03UDP\x10\x02J\x04\b\x04\x10\x05J\x04\b\f\x10\rJ\x04\b\r\x10\x0eJ\x04\b\x0e\x10\x0fJ\x04\b\x0f\x10\x10J\x04\b2\x10<R\tregion_idR\n" +
+	"ip_versionR\n" +
+	"address_idR\x11allocated_addressR\tsubnet_idB[ZYgithub.com/PRO-Robotech/kacho-nlb/proto/gen/go/kacho/cloud/loadbalancer/v1;loadbalancerv1b\x06proto3"
 
 var (
 	file_kacho_cloud_loadbalancer_v1_listener_proto_rawDescOnce sync.Once
@@ -411,19 +355,17 @@ var file_kacho_cloud_loadbalancer_v1_listener_proto_goTypes = []any{
 	(*Listener)(nil),              // 2: kacho.cloud.loadbalancer.v1.Listener
 	nil,                           // 3: kacho.cloud.loadbalancer.v1.Listener.LabelsEntry
 	(*timestamppb.Timestamp)(nil), // 4: google.protobuf.Timestamp
-	(IpVersion)(0),                // 5: kacho.cloud.loadbalancer.v1.IpVersion
 }
 var file_kacho_cloud_loadbalancer_v1_listener_proto_depIdxs = []int32{
 	4, // 0: kacho.cloud.loadbalancer.v1.Listener.created_at:type_name -> google.protobuf.Timestamp
 	3, // 1: kacho.cloud.loadbalancer.v1.Listener.labels:type_name -> kacho.cloud.loadbalancer.v1.Listener.LabelsEntry
 	1, // 2: kacho.cloud.loadbalancer.v1.Listener.protocol:type_name -> kacho.cloud.loadbalancer.v1.Listener.Protocol
-	5, // 3: kacho.cloud.loadbalancer.v1.Listener.ip_version:type_name -> kacho.cloud.loadbalancer.v1.IpVersion
-	0, // 4: kacho.cloud.loadbalancer.v1.Listener.status:type_name -> kacho.cloud.loadbalancer.v1.Listener.Status
-	5, // [5:5] is the sub-list for method output_type
-	5, // [5:5] is the sub-list for method input_type
-	5, // [5:5] is the sub-list for extension type_name
-	5, // [5:5] is the sub-list for extension extendee
-	0, // [0:5] is the sub-list for field type_name
+	0, // 3: kacho.cloud.loadbalancer.v1.Listener.status:type_name -> kacho.cloud.loadbalancer.v1.Listener.Status
+	4, // [4:4] is the sub-list for method output_type
+	4, // [4:4] is the sub-list for method input_type
+	4, // [4:4] is the sub-list for extension type_name
+	4, // [4:4] is the sub-list for extension extendee
+	0, // [0:4] is the sub-list for field type_name
 }
 
 func init() { file_kacho_cloud_loadbalancer_v1_listener_proto_init() }
@@ -431,7 +373,6 @@ func file_kacho_cloud_loadbalancer_v1_listener_proto_init() {
 	if File_kacho_cloud_loadbalancer_v1_listener_proto != nil {
 		return
 	}
-	file_kacho_cloud_loadbalancer_v1_network_load_balancer_proto_init()
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
