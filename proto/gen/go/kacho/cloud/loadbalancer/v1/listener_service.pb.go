@@ -792,13 +792,11 @@ const file_kacho_cloud_loadbalancer_v1_listener_service_proto_rawDesc = "" +
 	"\n" +
 	"operations\x18\x01 \x03(\v2 .kacho.cloud.operation.OperationR\n" +
 	"operations\x12&\n" +
-	"\x0fnext_page_token\x18\x02 \x01(\tR\rnextPageToken2\xe5\v\n" +
+	"\x0fnext_page_token\x18\x02 \x01(\tR\rnextPageToken2\xaa\v\n" +
 	"\x0fListenerService\x12\xd0\x01\n" +
 	"\x03Get\x12/.kacho.cloud.loadbalancer.v1.GetListenerRequest\x1a%.kacho.cloud.loadbalancer.v1.Listener\"q\x8a\xb5\x18\x1aloadbalancer.listeners.get\x92\xb5\x18\x05v_get\x9a\xb5\x18\x1a\n" +
-	"\vlb_listener\x12\vlistener_id\xa2\xb5\x18\x012\x82\xd3\xe4\x93\x02!\x12\x1f/nlb/v1/listeners/{listener_id}\x12\xcf\x01\n" +
-	"\x04List\x121.kacho.cloud.loadbalancer.v1.ListListenersRequest\x1a2.kacho.cloud.loadbalancer.v1.ListListenersResponse\"`\x8a\xb5\x18\x1bloadbalancer.listeners.list\x92\xb5\x18\x06v_list\x9a\xb5\x18\x15\n" +
-	"\aproject\x12\n" +
-	"project_id\xa2\xb5\x18\x012\x82\xd3\xe4\x93\x02\x13\x12\x11/nlb/v1/listeners\x12\x83\x02\n" +
+	"\vlb_listener\x12\vlistener_id\xa2\xb5\x18\x012\x82\xd3\xe4\x93\x02!\x12\x1f/nlb/v1/listeners/{listener_id}\x12\x94\x01\n" +
+	"\x04List\x121.kacho.cloud.loadbalancer.v1.ListListenersRequest\x1a2.kacho.cloud.loadbalancer.v1.ListListenersResponse\"%\x8a\xb5\x18\b<exempt>\x82\xd3\xe4\x93\x02\x13\x12\x11/nlb/v1/listeners\x12\x83\x02\n" +
 	"\x06Create\x122.kacho.cloud.loadbalancer.v1.CreateListenerRequest\x1a .kacho.cloud.operation.Operation\"\xa2\x01\x8a\xb5\x18\x1dloadbalancer.listeners.create\x92\xb5\x18\x06editor\x9a\xb5\x18,\n" +
 	"\x18lb_network_load_balancer\x12\x10load_balancer_id\xa2\xb5\x18\x012\xb2\xd2*\"\n" +
 	"\x16CreateListenerMetadata\x12\bListener\x82\xd3\xe4\x93\x02\x16:\x01*\"\x11/nlb/v1/listeners\x12\x81\x02\n" +

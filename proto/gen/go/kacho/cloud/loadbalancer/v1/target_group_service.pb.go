@@ -1086,13 +1086,11 @@ const file_kacho_cloud_loadbalancer_v1_target_group_service_proto_rawDesc = "" +
 	"\n" +
 	"operations\x18\x01 \x03(\v2 .kacho.cloud.operation.OperationR\n" +
 	"operations\x12&\n" +
-	"\x0fnext_page_token\x18\x02 \x01(\tR\rnextPageToken2\xc3\x13\n" +
+	"\x0fnext_page_token\x18\x02 \x01(\tR\rnextPageToken2\x85\x13\n" +
 	"\x12TargetGroupService\x12\xe9\x01\n" +
 	"\x03Get\x122.kacho.cloud.loadbalancer.v1.GetTargetGroupRequest\x1a(.kacho.cloud.loadbalancer.v1.TargetGroup\"\x83\x01\x8a\xb5\x18\x1dloadbalancer.targetGroups.get\x92\xb5\x18\x05v_get\x9a\xb5\x18\"\n" +
-	"\x0flb_target_group\x12\x0ftarget_group_id\xa2\xb5\x18\x012\x82\xd3\xe4\x93\x02(\x12&/nlb/v1/targetGroups/{target_group_id}\x12\xdb\x01\n" +
-	"\x04List\x124.kacho.cloud.loadbalancer.v1.ListTargetGroupsRequest\x1a5.kacho.cloud.loadbalancer.v1.ListTargetGroupsResponse\"f\x8a\xb5\x18\x1eloadbalancer.targetGroups.list\x92\xb5\x18\x06v_list\x9a\xb5\x18\x15\n" +
-	"\aproject\x12\n" +
-	"project_id\xa2\xb5\x18\x012\x82\xd3\xe4\x93\x02\x16\x12\x14/nlb/v1/targetGroups\x12\xfb\x01\n" +
+	"\x0flb_target_group\x12\x0ftarget_group_id\xa2\xb5\x18\x012\x82\xd3\xe4\x93\x02(\x12&/nlb/v1/targetGroups/{target_group_id}\x12\x9d\x01\n" +
+	"\x04List\x124.kacho.cloud.loadbalancer.v1.ListTargetGroupsRequest\x1a5.kacho.cloud.loadbalancer.v1.ListTargetGroupsResponse\"(\x8a\xb5\x18\b<exempt>\x82\xd3\xe4\x93\x02\x16\x12\x14/nlb/v1/targetGroups\x12\xfb\x01\n" +
 	"\x06Create\x125.kacho.cloud.loadbalancer.v1.CreateTargetGroupRequest\x1a .kacho.cloud.operation.Operation\"\x97\x01\x8a\xb5\x18 loadbalancer.targetGroups.create\x92\xb5\x18\x06editor\x9a\xb5\x18\x15\n" +
 	"\aproject\x12\n" +
 	"project_id\xa2\xb5\x18\x012\xb2\xd2*(\n" +

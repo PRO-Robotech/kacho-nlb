@@ -33,13 +33,11 @@ service NetworkLoadBalancerService {
 
   rpc List(ListNetworkLoadBalancersRequest) returns (ListNetworkLoadBalancersResponse) {
     option (google.api.http) = {get: "/nlb/v1/networkLoadBalancers"};
-    option (kacho.iam.authz.v1.permission)        = "loadbalancer.networkLoadBalancers.list";
-    option (kacho.iam.authz.v1.required_relation) = "v_list";
-    option (kacho.iam.authz.v1.scope_extractor)   = {
-      object_type:        "project"
-      from_request_field: "project_id"
-    };
-    option (kacho.iam.authz.v1.required_acr_min)  = "2";
+    // Scope-filtered List: handler фильтрует результат через iam ListObjects
+    // (viewer ∪ v_list, per-object), поэтому gateway освобождает RPC от per-RPC
+    // Check (<exempt>) — единый project-scope Check отклонил бы viewer'а без
+    // отдельного v_list-tuple `no path` 403 ещё до фильтра. authn остаётся (JWT).
+    option (kacho.iam.authz.v1.permission) = "<exempt>";
   }
 
   rpc Create(CreateNetworkLoadBalancerRequest) returns (operation.Operation) {

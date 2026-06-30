@@ -32,17 +32,13 @@ service ListenerService {
 
   rpc List(ListListenersRequest) returns (ListListenersResponse) {
     option (google.api.http) = {get: "/nlb/v1/listeners"};
-    option (kacho.iam.authz.v1.permission)        = "loadbalancer.listeners.list";
-    option (kacho.iam.authz.v1.required_relation) = "v_list";
-    // KAC-229: project-scoped List (parity with NetworkLoadBalancer/TargetGroup
-    // List). Listeners carry a denormalized project_id; load_balancer_id is an
-    // optional filter. The UI lists listeners at project level (no LB context),
-    // so per-LB scoping produced lb_network_load_balancer:* → no-path → 403.
-    option (kacho.iam.authz.v1.scope_extractor)   = {
-      object_type:        "project"
-      from_request_field: "project_id"
-    };
-    option (kacho.iam.authz.v1.required_acr_min)  = "2";
+    // Project-scoped, scope-filtered List: listeners carry a denormalized
+    // project_id; load_balancer_id is an optional filter. The handler filters
+    // the result through iam ListObjects (viewer ∪ v_list), so the gateway
+    // exempts the RPC from a per-RPC Check (<exempt>) — a single project-scope
+    // Check would reject a viewer without an explicit v_list tuple before the
+    // filter runs. authn (JWT) still required.
+    option (kacho.iam.authz.v1.permission) = "<exempt>";
   }
 
   // Creates a listener under the specified load balancer. VIP allocation

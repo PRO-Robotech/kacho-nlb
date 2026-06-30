@@ -1735,13 +1735,11 @@ const file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_rawDe
 	"\x18network_load_balancer_id\x18\x01 \x01(\tB\b\x8a\xc81\x04<=50R\x15networkLoadBalancerId\x120\n" +
 	"\x0ftarget_group_id\x18\x02 \x01(\tB\b\x8a\xc81\x04<=50R\rtargetGroupId\"h\n" +
 	"\x17GetTargetStatesResponse\x12M\n" +
-	"\rtarget_states\x18\x01 \x03(\v2(.kacho.cloud.loadbalancer.v1.TargetStateR\ftargetStates2\xbd \n" +
+	"\rtarget_states\x18\x01 \x03(\v2(.kacho.cloud.loadbalancer.v1.TargetStateR\ftargetStates2\xf7\x1f\n" +
 	"\x1aNetworkLoadBalancerService\x12\xa4\x02\n" +
 	"\x03Get\x12:.kacho.cloud.loadbalancer.v1.GetNetworkLoadBalancerRequest\x1a0.kacho.cloud.loadbalancer.v1.NetworkLoadBalancer\"\xae\x01\x8a\xb5\x18%loadbalancer.networkLoadBalancers.get\x92\xb5\x18\x05v_get\x9a\xb5\x184\n" +
-	"\x18lb_network_load_balancer\x12\x18network_load_balancer_id\xa2\xb5\x18\x012\x82\xd3\xe4\x93\x029\x127/nlb/v1/networkLoadBalancers/{network_load_balancer_id}\x12\xfb\x01\n" +
-	"\x04List\x12<.kacho.cloud.loadbalancer.v1.ListNetworkLoadBalancersRequest\x1a=.kacho.cloud.loadbalancer.v1.ListNetworkLoadBalancersResponse\"v\x8a\xb5\x18&loadbalancer.networkLoadBalancers.list\x92\xb5\x18\x06v_list\x9a\xb5\x18\x15\n" +
-	"\aproject\x12\n" +
-	"project_id\xa2\xb5\x18\x012\x82\xd3\xe4\x93\x02\x1e\x12\x1c/nlb/v1/networkLoadBalancers\x12\xa3\x02\n" +
+	"\x18lb_network_load_balancer\x12\x18network_load_balancer_id\xa2\xb5\x18\x012\x82\xd3\xe4\x93\x029\x127/nlb/v1/networkLoadBalancers/{network_load_balancer_id}\x12\xb5\x01\n" +
+	"\x04List\x12<.kacho.cloud.loadbalancer.v1.ListNetworkLoadBalancersRequest\x1a=.kacho.cloud.loadbalancer.v1.ListNetworkLoadBalancersResponse\"0\x8a\xb5\x18\b<exempt>\x82\xd3\xe4\x93\x02\x1e\x12\x1c/nlb/v1/networkLoadBalancers\x12\xa3\x02\n" +
 	"\x06Create\x12=.kacho.cloud.loadbalancer.v1.CreateNetworkLoadBalancerRequest\x1a .kacho.cloud.operation.Operation\"\xb7\x01\x8a\xb5\x18(loadbalancer.networkLoadBalancers.create\x92\xb5\x18\x06editor\x9a\xb5\x18\x15\n" +
 	"\aproject\x12\n" +
 	"project_id\xa2\xb5\x18\x012\xb2\xd2*8\n" +
