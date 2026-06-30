@@ -150,3 +150,16 @@ func TruncateID(id ResourceID) string {
 func ListenerAutoAddressName(id ResourceID) string {
 	return "nlb-listener-" + TruncateID(id)
 }
+
+// LBAnycastAddressName — детерминированное имя anycast-Address, который NLB
+// создаёт при auto-alloc VIP под LoadBalancer на семейство:
+// `nlb-lb-<short-id>-v4` / `nlb-lb-<short-id>-v6`. Единый источник формата:
+// используется генератором имени на Create и reconcile-распознаванием auto-alloc
+// Address по имени, привязанному к КОНКРЕТНОМУ load-balancer-id и семейству.
+func LBAnycastAddressName(id ResourceID, family IPVersion) string {
+	suffix := "v4"
+	if family == IPVersionV6 {
+		suffix = "v6"
+	}
+	return "nlb-lb-" + TruncateID(id) + "-" + suffix
+}

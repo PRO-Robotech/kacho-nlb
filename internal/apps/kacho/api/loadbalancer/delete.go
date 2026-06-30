@@ -45,17 +45,18 @@ func lbUnregisterIntent(id, projectID string) domain.FGARegisterIntent {
 // Worker: Writer-TX → Delete (FK 23503 backstop → ErrFailedPrecondition) +
 // outbox-emit DELETED → Commit. Response = google.protobuf.Empty.
 type DeleteLoadBalancerUseCase struct {
-	repo    Repo
-	opsRepo operations.Repo
-	logger  *slog.Logger
+	repo          Repo
+	opsRepo       operations.Repo
+	anycastClient AnycastAddressClient
+	logger        *slog.Logger
 }
 
 // NewDeleteLoadBalancerUseCase конструктор.
-func NewDeleteLoadBalancerUseCase(repo Repo, opsRepo operations.Repo, logger *slog.Logger) *DeleteLoadBalancerUseCase {
+func NewDeleteLoadBalancerUseCase(repo Repo, opsRepo operations.Repo, ac AnycastAddressClient, logger *slog.Logger) *DeleteLoadBalancerUseCase {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &DeleteLoadBalancerUseCase{repo: repo, opsRepo: opsRepo, logger: logger}
+	return &DeleteLoadBalancerUseCase{repo: repo, opsRepo: opsRepo, anycastClient: ac, logger: logger}
 }
 
 // Execute — sync prechecks + ops insert + spawn worker.
@@ -121,18 +122,42 @@ func (u *DeleteLoadBalancerUseCase) Execute(
 		return nil, mapDomainErr(err)
 	}
 
+	snap := vipBinding{
+		addressIDV4: string(cur.AddressIDV4),
+		addressIDV6: string(cur.AddressIDV6),
+		originV4:    cur.VipOriginV4,
+		originV6:    cur.VipOriginV6,
+	}
 	projectID := string(cur.ProjectID)
 	operations.Run(ctx, u.opsRepo, op.ID, func(workerCtx context.Context) (*anypb.Any, error) {
-		return u.doDelete(workerCtx, id, projectID)
+		return u.doDelete(workerCtx, id, projectID, snap)
 	})
 
 	return &op, nil
 }
 
-// doDelete — worker: open Writer → Delete + outbox DELETED → Commit. FK 23503
-// backstop → ErrFailedPrecondition (TOCTOU: листенер появился между sync-check
-// и worker-delete).
-func (u *DeleteLoadBalancerUseCase) doDelete(ctx context.Context, id, projectID string) (*anypb.Any, error) {
+// vipBinding — per-family VIP-привязка LB (release-вход для Delete).
+type vipBinding struct {
+	addressIDV4 string
+	addressIDV6 string
+	originV4    domain.VipOrigin
+	originV6    domain.VipOrigin
+}
+
+// doDelete — worker: per-family release VIP (auto → FreeIP, byo → ClearReference;
+// идемпотентно по address_id) → Writer-TX: Delete + outbox DELETED + fga-unregister
+// → Commit. release-сбой (vpc Unavailable) → fail-closed error, строка остаётся
+// (повторный Delete идемпотентен — release по address_id трактует NotFound как успех).
+// FK 23503 backstop → ErrFailedPrecondition (листенер появился между sync-check и delete).
+func (u *DeleteLoadBalancerUseCase) doDelete(ctx context.Context, id, projectID string, vip vipBinding) (*anypb.Any, error) {
+	// Per-family release VIP до удаления строки (раздельно v4/v6).
+	if err := u.releaseVIP(ctx, id, vip.addressIDV4, vip.originV4); err != nil {
+		return nil, mapDomainErr(err)
+	}
+	if err := u.releaseVIP(ctx, id, vip.addressIDV6, vip.originV6); err != nil {
+		return nil, mapDomainErr(err)
+	}
+
 	w, err := u.repo.Writer(ctx)
 	if err != nil {
 		return nil, mapDomainErr(err)
@@ -163,4 +188,21 @@ func (u *DeleteLoadBalancerUseCase) doDelete(ctx context.Context, id, projectID 
 		return nil, mapDomainErr(err)
 	}
 	return out, nil
+}
+
+// releaseVIP — освобождает VIP одного семейства по address_id: auto → FreeIP
+// (Address удаляется), byo → ClearReference (Address tenant'а уцелел). Пустой
+// addressID → no-op (семейство без VIP). Идемпотентно (NotFound → успех).
+func (u *DeleteLoadBalancerUseCase) releaseVIP(ctx context.Context, lbID, addressID string, origin domain.VipOrigin) error {
+	if addressID == "" {
+		return nil
+	}
+	if u.anycastClient == nil {
+		return status.Error(codes.Unavailable, "vpc anycast address client not configured")
+	}
+	owner := lbAddressOwner(lbID)
+	if origin == domain.VipOriginBYO {
+		return u.anycastClient.ClearReference(ctx, addressID, owner)
+	}
+	return u.anycastClient.FreeIP(ctx, addressID, owner)
 }

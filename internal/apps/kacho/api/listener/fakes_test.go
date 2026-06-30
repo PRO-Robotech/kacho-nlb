@@ -262,6 +262,9 @@ func (w *fakeLBWriter) Insert(_ context.Context, lb *domain.LoadBalancer) (*kach
 func (w *fakeLBWriter) Update(context.Context, *domain.LoadBalancer) (*kachorepo.LoadBalancerRecord, error) {
 	return nil, errors.New("fakeLBWriter.Update not implemented")
 }
+func (w *fakeLBWriter) AttachVIP(context.Context, string, domain.IPVersion, string, string, domain.VipOrigin) (*kachorepo.LoadBalancerRecord, error) {
+	return nil, errors.New("fakeLBWriter.AttachVIP not implemented")
+}
 func (w *fakeLBWriter) SetStatusCAS(context.Context, string, domain.LBStatus, domain.LBStatus) (*kachorepo.LoadBalancerRecord, error) {
 	return nil, errors.New("fakeLBWriter.SetStatusCAS not implemented")
 }

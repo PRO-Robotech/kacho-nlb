@@ -40,6 +40,7 @@ type fakeRepo struct {
 	failOnUpdate    error
 	failOnDelete    error
 	failOnSetStatus error
+	failOnAttachVIP error
 	failOnMove      error
 	failOnAttach    error
 	failOnList      error
@@ -333,6 +334,46 @@ func (q *fakeLBWriter) SetStatusCAS(ctx context.Context, id string, expected, ne
 	q.w.pendingLBs = append(q.w.pendingLBs, &c)
 	// Pending hasn't been applied yet — for fake purpose, also update in-place
 	// so subsequent SetStatusCAS in same writer sees new state.
+	*cur = c
+	return &c, nil
+}
+
+func (q *fakeLBWriter) AttachVIP(ctx context.Context, id string, family domain.IPVersion, address, addressID string, origin domain.VipOrigin) (*kachorepo.LoadBalancerRecord, error) {
+	if q.w.r.failOnAttachVIP != nil {
+		return nil, q.w.r.failOnAttachVIP
+	}
+	q.w.r.mu.Lock()
+	defer q.w.r.mu.Unlock()
+	cur, ok := q.w.r.lbs[id]
+	if !ok {
+		return nil, fmt.Errorf("%w: NetworkLoadBalancer %s not found", kachorepo.ErrNotFound, id)
+	}
+	// CAS-attach: семейство свободно ИЛИ уже несёт тот же адрес (идемпотентность
+	// retry). Иначе — single-VIP-per-LB conflict → FailedPrecondition.
+	var existing string
+	switch family {
+	case domain.IPVersionV4:
+		existing = string(cur.AddressV4)
+	case domain.IPVersionV6:
+		existing = string(cur.AddressV6)
+	default:
+		return nil, fmt.Errorf("%w: unsupported ip family %q", kachorepo.ErrInvalidArg, family)
+	}
+	if existing != "" && existing != address {
+		return nil, fmt.Errorf("%w: load balancer already has an address for this family", kachorepo.ErrFailedPrecondition)
+	}
+	switch family {
+	case domain.IPVersionV4:
+		cur.AddressV4 = domain.IPAddress(address)
+		cur.AddressIDV4 = domain.AddressID(addressID)
+		cur.VipOriginV4 = origin
+	case domain.IPVersionV6:
+		cur.AddressV6 = domain.IPAddress(address)
+		cur.AddressIDV6 = domain.AddressID(addressID)
+		cur.VipOriginV6 = origin
+	}
+	c := *cur
+	q.w.pendingLBs = append(q.w.pendingLBs, &c)
 	*cur = c
 	return &c, nil
 }
@@ -642,6 +683,68 @@ func (f *fakeSecurityGroupClient) Get(ctx context.Context, sgID string) (*vpccli
 	return &vpcclient.SecurityGroup{ID: sgID, ProjectID: "prj-a", NetworkID: "enp-1", Name: "fake-sg"}, nil
 }
 
+// fakeAnycastClient — двойник vpc.AnycastAddressClient для per-family fan-out
+// саги. Дефолт: auto/byo возвращают детерминированный адрес; frees/clears
+// записываются для assert'ов compensation/Delete. getFunc-хуки подменяют под
+// negative-сценарии (пул исчерпан, BYO mismatch).
+type fakeAnycastClient struct {
+	mu        sync.Mutex
+	allocFunc func(ctx context.Context, req vpcclient.AllocateAnycastRequest) (*vpcclient.AllocateResponse, error)
+	byoFunc   func(ctx context.Context, req vpcclient.AttachAnycastBYORequest) (*vpcclient.AllocateResponse, error)
+	allocReqs []vpcclient.AllocateAnycastRequest
+	byoReqs   []vpcclient.AttachAnycastBYORequest
+	freed     []string
+	cleared   []string
+	seq       int
+}
+
+func (f *fakeAnycastClient) AllocateAnycast(ctx context.Context, req vpcclient.AllocateAnycastRequest) (*vpcclient.AllocateResponse, error) {
+	f.mu.Lock()
+	f.allocReqs = append(f.allocReqs, req)
+	f.seq++
+	seq := f.seq
+	f.mu.Unlock()
+	if f.allocFunc != nil {
+		return f.allocFunc(ctx, req)
+	}
+	prefix := "10.0.0."
+	if req.Family == vpcclient.AddressFamilyIPv6 {
+		prefix = "fd00::"
+	}
+	return &vpcclient.AllocateResponse{
+		AddressID: fmt.Sprintf("adr%017d", seq),
+		Value:     fmt.Sprintf("%s%d", prefix, seq),
+	}, nil
+}
+
+func (f *fakeAnycastClient) AttachAnycastBYO(ctx context.Context, req vpcclient.AttachAnycastBYORequest) (*vpcclient.AllocateResponse, error) {
+	f.mu.Lock()
+	f.byoReqs = append(f.byoReqs, req)
+	f.mu.Unlock()
+	if f.byoFunc != nil {
+		return f.byoFunc(ctx, req)
+	}
+	val := "10.0.0.250"
+	if req.ExpectFamily == vpcclient.AddressFamilyIPv6 {
+		val = "fd00::250"
+	}
+	return &vpcclient.AllocateResponse{AddressID: req.AddressID, Value: val}, nil
+}
+
+func (f *fakeAnycastClient) FreeIP(ctx context.Context, addressID string, _ vpcclient.AddressOwner) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.freed = append(f.freed, addressID)
+	return nil
+}
+
+func (f *fakeAnycastClient) ClearReference(ctx context.Context, addressID string, _ vpcclient.AddressOwner) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.cleared = append(f.cleared, addressID)
+	return nil
+}
+
 // fakeFGARegisterOutbox records FGARegisterOutbox.Emit into the writer's
 // pending buffer (flushed to fakeRepo.fga on Commit, dropped on Abort).
 type fakeFGARegisterOutbox struct{ w *fakeWriter }
@@ -661,4 +764,5 @@ var (
 	_ RegionClient         = (*fakeRegionClient)(nil)
 	_ NetworkClient        = (*fakeNetworkClient)(nil)
 	_ SecurityGroupClient  = (*fakeSecurityGroupClient)(nil)
+	_ AnycastAddressClient = (*fakeAnycastClient)(nil)
 )

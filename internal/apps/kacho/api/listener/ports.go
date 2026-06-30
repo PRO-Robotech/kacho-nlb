@@ -26,16 +26,11 @@ type RepoFactory = kachorepo.Repository
 // Aliased to local name so use-cases don't reach into corelib by full path.
 type OperationsRepo = operations.Repo
 
-// AddressClient — read-side vpc.AddressService consumer (BYO validation).
-type AddressClient = vpcclient.AddressClient
-
-// InternalAddressClient — write-side vpc.InternalAddressService consumer
-// (auto-alloc + SetReference CAS + FreeIP / ClearReference compensation).
+// InternalAddressClient — write-side vpc.InternalAddressService consumer.
+// VIP консолидирован на LoadBalancer, поэтому листенер сам адрес не аллоцирует;
+// клиент остаётся только для release legacy-VIP в Delete (FreeIP / ClearReference)
+// — pre-cut листенеры до hard-cut могли нести собственный address_id.
 type InternalAddressClient = vpcclient.InternalAddressClient
-
-// SubnetClient — read-side vpc.SubnetService consumer (INTERNAL Listener
-// subnet validation, same project + denormalised region resolve).
-type SubnetClient = vpcclient.SubnetClient
 
 // FGA owner-hierarchy / creator / parent-link tuple-регистрация — через
 // transactional-outbox (FGARegisterOutbox emit в writer-tx + register-drainer →

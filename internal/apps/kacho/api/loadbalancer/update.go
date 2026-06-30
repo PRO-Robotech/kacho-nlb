@@ -56,10 +56,13 @@ var knownUpdateFields = map[string]bool{
 
 // immutableUpdateFields — hard-immutable; в mask → InvalidArgument с фиксированным текстом.
 var immutableUpdateFields = map[string]string{
-	"type":       "type is immutable after NetworkLoadBalancer.Create",
-	"region_id":  "region_id is immutable after NetworkLoadBalancer.Create",
-	"project_id": "project_id is immutable; use NetworkLoadBalancerService.Move",
-	"network_id": "network_id is immutable after NetworkLoadBalancer.Create",
+	"type":          "type is immutable after NetworkLoadBalancer.Create",
+	"region_id":     "region_id is immutable after NetworkLoadBalancer.Create",
+	"project_id":    "project_id is immutable; use NetworkLoadBalancerService.Move",
+	"network_id":    "network_id is immutable after NetworkLoadBalancer.Create",
+	"address_id_v4": "address_id_v4 is immutable after NetworkLoadBalancer.Create",
+	"address_id_v6": "address_id_v6 is immutable after NetworkLoadBalancer.Create",
+	"ip_families":   "ip_families is immutable after NetworkLoadBalancer.Create",
 }
 
 // Execute — sync mask validation + read existing → apply diff → ops insert →

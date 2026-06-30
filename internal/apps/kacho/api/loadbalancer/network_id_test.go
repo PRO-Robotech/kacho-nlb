@@ -20,41 +20,32 @@ import (
 	"github.com/PRO-Robotech/kacho-nlb/internal/domain"
 )
 
-// newCreateUCNet — Create UC c подменяемым NetworkClient (project/region — OK-фейки).
+// newCreateUCNet — Create UC c подменяемым NetworkClient (project/region/anycast — OK-фейки).
 func newCreateUCNet(repo *fakeRepo, opsRepo *fakeOpsRepo, nc NetworkClient) *CreateLoadBalancerUseCase {
-	return NewCreateLoadBalancerUseCase(repo, opsRepo, &fakeProjectClient{}, &fakeRegionClient{}, nc, &fakeSecurityGroupClient{}, slog.Default())
+	return NewCreateLoadBalancerUseCase(repo, opsRepo, &fakeProjectClient{}, &fakeRegionClient{}, nc, &fakeSecurityGroupClient{}, &fakeAnycastClient{}, slog.Default())
+}
+
+// internalNetReq — INTERNAL Create-request с auto v4 address_spec и заданным network_id.
+func internalNetReq(name, networkID string) *lbv1.CreateNetworkLoadBalancerRequest {
+	return &lbv1.CreateNetworkLoadBalancerRequest{
+		ProjectId: "prj-a", RegionId: "ru-central1",
+		Name: name, Type: lbv1.NetworkLoadBalancer_INTERNAL,
+		NetworkId:   networkID,
+		AddressSpec: autoV4Spec("aap-1"),
+	}
 }
 
 // TestCreateLoadBalancer_InternalRequiresNetworkID — INTERNAL без network_id
-// отвергается sync (cross-field инвариант, design §0 #7).
+// отвергается sync (cross-field инвариант). address_spec валиден — отказ именно
+// на network_id (не на отсутствии семейства).
 func TestCreateLoadBalancer_InternalRequiresNetworkID(t *testing.T) {
 	t.Parallel()
 	repo := newFakeRepo()
 	uc := newCreateUCNet(repo, newFakeOpsRepo(), &fakeNetworkClient{})
-	_, err := uc.Execute(context.Background(), &lbv1.CreateNetworkLoadBalancerRequest{
-		ProjectId: "prj-a", RegionId: "ru-central1",
-		Name: "internal-lb", Type: lbv1.NetworkLoadBalancer_INTERNAL,
-	})
+	_, err := uc.Execute(context.Background(), internalNetReq("internal-lb", ""))
 	require.Equal(t, codes.InvalidArgument, status.Code(err))
 	require.Contains(t, lbFieldViolations(err),
 		"network_id: network_id is required for INTERNAL load balancer")
-	require.Empty(t, repo.lbs, "LB must not be persisted")
-}
-
-// TestCreateLoadBalancer_ExternalRejectsNetworkID — EXTERNAL с network_id
-// отвергается sync (публичный VIP не из сети).
-func TestCreateLoadBalancer_ExternalRejectsNetworkID(t *testing.T) {
-	t.Parallel()
-	repo := newFakeRepo()
-	uc := newCreateUCNet(repo, newFakeOpsRepo(), &fakeNetworkClient{})
-	_, err := uc.Execute(context.Background(), &lbv1.CreateNetworkLoadBalancerRequest{
-		ProjectId: "prj-a", RegionId: "ru-central1",
-		Name: "edge", Type: lbv1.NetworkLoadBalancer_EXTERNAL,
-		NetworkId: "enp-1",
-	})
-	require.Equal(t, codes.InvalidArgument, status.Code(err))
-	require.Contains(t, lbFieldViolations(err),
-		"network_id: network_id is only valid for INTERNAL load balancer")
 	require.Empty(t, repo.lbs, "LB must not be persisted")
 }
 
@@ -67,11 +58,7 @@ func TestCreateLoadBalancer_InternalNetworkNotFound(t *testing.T) {
 		return nil, fmt.Errorf("%w: Network %s not found", domain.ErrInvalidArg, networkID)
 	}}
 	uc := newCreateUCNet(repo, newFakeOpsRepo(), nc)
-	_, err := uc.Execute(context.Background(), &lbv1.CreateNetworkLoadBalancerRequest{
-		ProjectId: "prj-a", RegionId: "ru-central1",
-		Name: "internal-lb", Type: lbv1.NetworkLoadBalancer_INTERNAL,
-		NetworkId: "enp-missing",
-	})
+	_, err := uc.Execute(context.Background(), internalNetReq("internal-lb", "enp-missing"))
 	require.Equal(t, codes.InvalidArgument, status.Code(err))
 	require.Equal(t, "network enp-missing not found", status.Convert(err).Message())
 	require.Empty(t, repo.lbs, "LB must not be persisted")
@@ -86,11 +73,7 @@ func TestCreateLoadBalancer_InternalVPCUnavailable(t *testing.T) {
 		return nil, fmt.Errorf("%w: dial", domain.ErrUnavailable)
 	}}
 	uc := newCreateUCNet(repo, newFakeOpsRepo(), nc)
-	_, err := uc.Execute(context.Background(), &lbv1.CreateNetworkLoadBalancerRequest{
-		ProjectId: "prj-a", RegionId: "ru-central1",
-		Name: "internal-lb", Type: lbv1.NetworkLoadBalancer_INTERNAL,
-		NetworkId: "enp-1",
-	})
+	_, err := uc.Execute(context.Background(), internalNetReq("internal-lb", "enp-1"))
 	require.Equal(t, codes.Unavailable, status.Code(err))
 	require.Empty(t, repo.lbs, "LB must not be persisted")
 }
@@ -102,11 +85,7 @@ func TestCreateLoadBalancer_InternalHappyPath(t *testing.T) {
 	repo := newFakeRepo()
 	opsRepo := newFakeOpsRepo()
 	uc := newCreateUCNet(repo, opsRepo, &fakeNetworkClient{})
-	op, err := uc.Execute(context.Background(), &lbv1.CreateNetworkLoadBalancerRequest{
-		ProjectId: "prj-a", RegionId: "ru-central1",
-		Name: "internal-lb", Type: lbv1.NetworkLoadBalancer_INTERNAL,
-		NetworkId: "enp-1",
-	})
+	op, err := uc.Execute(context.Background(), internalNetReq("internal-lb", "enp-1"))
 	require.NoError(t, err)
 	require.Nil(t, awaitOpDone(t, opsRepo, op.ID).Error)
 	got := onlyLB(t, repo)

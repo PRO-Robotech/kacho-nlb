@@ -33,6 +33,13 @@ func (networkLoadBalancer) toPb(rec kachorepo.LoadBalancerRecord) (*lbv1.Network
 	if err != nil {
 		return nil, err
 	}
+	ipFamilies, err := ipFamiliesToPb(rec.IPFamilies)
+	if err != nil {
+		return nil, err
+	}
+	// Lean-проекция: anycast-VIP (address_v4/v6) + binding (address_id_v4/v6) +
+	// заявленные семейства. vip_origin_v4/v6 — DB-only, в proto не выходят;
+	// announce/route/VRF/per-zone — отдельная Internal-проекция (:9091).
 	return &lbv1.NetworkLoadBalancer{
 		Id:                 string(rec.ID),
 		ProjectId:          string(rec.ProjectID),
@@ -48,7 +55,29 @@ func (networkLoadBalancer) toPb(rec kachorepo.LoadBalancerRecord) (*lbv1.Network
 		SessionAffinity:    affinityPb,
 		CrossZoneEnabled:   rec.CrossZoneEnabled,
 		DeletionProtection: rec.DeletionProtection,
+		AddressV4:          string(rec.AddressV4),
+		AddressV6:          string(rec.AddressV6),
+		AddressIdV4:        string(rec.AddressIDV4),
+		AddressIdV6:        string(rec.AddressIDV6),
+		IpFamilies:         ipFamilies,
 	}, nil
+}
+
+// ipFamiliesToPb — []domain.IPVersion → []lbv1.IpVersion. Пустые/неизвестные
+// токены — ошибка (repo читает только валидные значения из text[]-колонки).
+func ipFamiliesToPb(fams []domain.IPVersion) ([]lbv1.IpVersion, error) {
+	if len(fams) == 0 {
+		return nil, nil
+	}
+	out := make([]lbv1.IpVersion, 0, len(fams))
+	for _, f := range fams {
+		pb, err := ipVersionToPb(f)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, pb)
+	}
+	return out, nil
 }
 
 // lbStatusToPb — domain LBStatus → proto enum NetworkLoadBalancer_Status.

@@ -15,8 +15,10 @@ import (
 
 	"github.com/PRO-Robotech/kacho-corelib/ids"
 	"github.com/PRO-Robotech/kacho-corelib/operations"
+	corevalidate "github.com/PRO-Robotech/kacho-corelib/validate"
 	lbv1 "github.com/PRO-Robotech/kacho-nlb/proto/gen/go/kacho/cloud/loadbalancer/v1"
 
+	vpcclient "github.com/PRO-Robotech/kacho-nlb/internal/clients/vpc"
 	"github.com/PRO-Robotech/kacho-nlb/internal/domain"
 	kachorepo "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho"
 	kachopg "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho/pg"
@@ -45,6 +47,7 @@ type CreateLoadBalancerUseCase struct {
 	regionClient        RegionClient
 	networkClient       NetworkClient
 	securityGroupClient SecurityGroupClient
+	anycastClient       AnycastAddressClient
 	logger              *slog.Logger
 }
 
@@ -52,6 +55,7 @@ type CreateLoadBalancerUseCase struct {
 func NewCreateLoadBalancerUseCase(
 	repo Repo, opsRepo operations.Repo,
 	pc ProjectClient, rc RegionClient, nc NetworkClient, sgc SecurityGroupClient,
+	ac AnycastAddressClient,
 	logger *slog.Logger,
 ) *CreateLoadBalancerUseCase {
 	if logger == nil {
@@ -60,7 +64,8 @@ func NewCreateLoadBalancerUseCase(
 	return &CreateLoadBalancerUseCase{
 		repo: repo, opsRepo: opsRepo,
 		projectClient: pc, regionClient: rc, networkClient: nc, securityGroupClient: sgc,
-		logger: logger,
+		anycastClient: ac,
+		logger:        logger,
 	}
 }
 
@@ -79,6 +84,19 @@ func (u *CreateLoadBalancerUseCase) Execute(
 	}
 
 	lbType, err := lbTypeFromPb(req.GetType())
+	if err != nil {
+		return nil, err
+	}
+	// INTERNAL-only: EXTERNAL anycast — следующая фаза. Reject синхронно (LB не
+	// создаётся), generic-текст по конвенции Kachō.
+	if lbType != domain.LBTypeInternal {
+		return nil, status.Error(codes.InvalidArgument, "Illegal argument type: only INTERNAL is supported")
+	}
+
+	// address_spec → семейства VIP + per-family источник (auto/byo). Присутствие
+	// семейства задаёт его в ip_families (dualstack = оба). ≥1 семейство обязательно;
+	// malformed BYO addressId ловится синхронно первым стейтментом.
+	specs, err := resolveAddressSpec(req.GetAddressSpec())
 	if err != nil {
 		return nil, err
 	}
@@ -116,6 +134,10 @@ func (u *CreateLoadBalancerUseCase) Execute(
 	if req.CrossZoneEnabled != nil {
 		lb.CrossZoneEnabled = req.GetCrossZoneEnabled()
 	}
+	// ip_families — заявленные семейства anycast-VIP (точные токены IPV4/IPV6).
+	// КРИТИЧНО: проставляются ДО Insert-handle, т.к. status-aware CHECK требует
+	// семейство в ip_families прежде чем persist-VIP запишет непустой address.
+	lb.IPFamilies = familiesFromSpecs(specs)
 	if err := lb.Validate(); err != nil {
 		// Validate возвращает coreerrors.InvalidArgument (gRPC-shaped). mapDomainErr
 		// сохранит её as-is.
@@ -165,65 +187,78 @@ func (u *CreateLoadBalancerUseCase) Execute(
 
 	// ---- Spawn worker ----
 	operations.Run(ctx, u.opsRepo, op.ID, func(workerCtx context.Context) (*anypb.Any, error) {
-		return u.doCreate(workerCtx, lb, principal)
+		return u.doCreate(workerCtx, lb, principal, specs)
 	})
 
 	return &op, nil
 }
 
-// doCreate — async worker. Возвращает anypb.Any(NetworkLoadBalancer) при
-// успехе либо gRPC-status error при failure (operations.runOn маппит его в
-// Operation.Error).
+// doCreate — async worker: durable-handle сага с per-family VIP fan-out.
+//
+//	peer-check project_id / region_id (до Insert — отказ компенсировать нечего);
+//	TX-1: INSERT durable-handle (status='CREATING', ip_families заполнен, address_*='');
+//	per-family (v4 затем v6): acquire VIP (auto AllocateAnycast / BYO AttachAnycastBYO)
+//	  → persist CAS-attach (address_<fam>/address_id_<fam>/vip_origin_<fam>);
+//	finalize: CAS CREATING→INACTIVE + outbox CREATED + FGA-register.
+//
+// Compensation (defer-guard, активна после Insert-handle и до finalize):
+// освобождает VIP по КАЖДОМУ непустому address_id (auto → FreeIP, byo →
+// ClearReference) и удаляет handle (best-effort; краш раньше → free_ip_runner).
+// Возвращает anypb.Any(NetworkLoadBalancer) при успехе либо gRPC-status при ошибке.
 func (u *CreateLoadBalancerUseCase) doCreate(
-	ctx context.Context, lb domain.LoadBalancer, principal operations.Principal,
+	ctx context.Context, lb domain.LoadBalancer, principal operations.Principal, specs []familyVIPSpec,
 ) (*anypb.Any, error) {
-	// 1. Peer-check `project_id`.
+	// Peer-check `project_id` / `region_id` ДО Insert-handle. Отказ здесь —
+	// компенсировать нечего (handle не вставлен, VIP не аллоцирован).
 	if u.projectClient != nil {
 		if _, err := u.projectClient.Get(ctx, string(lb.ProjectID)); err != nil {
 			return nil, peerErrToStatus(err, "project", string(lb.ProjectID))
 		}
 	}
-	// 2. Peer-check `region_id`.
 	if u.regionClient != nil {
 		if _, err := u.regionClient.Get(ctx, string(lb.RegionID)); err != nil {
 			return nil, peerErrToStatus(err, "region", string(lb.RegionID))
 		}
 	}
 
-	// 3. Writer-TX: Insert + outbox-emit + Commit.
-	w, err := u.repo.Writer(ctx)
+	// TX-1: durable-handle (status='CREATING'). ip_families заполнен; address_*=''
+	// — status-aware CHECK пропускает INSERT с пустым address.
+	lb.Status = domain.LBStatusCreating
+	if err := u.insertHandle(ctx, &lb); err != nil {
+		return nil, mapDomainErr(err)
+	}
+
+	// Compensation guard (до finalize): release каждого аллоцированного VIP +
+	// delete handle. best-effort; ошибка compensation не маскирует исходную.
+	finalized := false
+	allocated := map[domain.IPVersion]vipAllocResult{}
+	defer func() {
+		if finalized {
+			return
+		}
+		u.compensateCreate(ctx, string(lb.ID), allocated)
+	}()
+
+	// per-family fan-out: acquire → persist для каждого заявленного семейства.
+	for _, fs := range specs {
+		alloc, err := u.acquireFamilyVIP(ctx, lb, fs)
+		if err != nil {
+			return nil, mapDomainErr(err)
+		}
+		allocated[fs.family] = alloc
+		if _, err := u.persistVIP(ctx, string(lb.ID), fs.family, alloc.address, alloc.addressID, alloc.origin); err != nil {
+			return nil, mapDomainErr(err)
+		}
+	}
+
+	// Finalize: CREATING→INACTIVE (терминальное Create-состояние VIP-only LB) +
+	// outbox CREATED + FGA-register, атомарно одним commit'ом.
+	created, err := u.finalizeCreate(ctx, lb, principal)
 	if err != nil {
 		return nil, mapDomainErr(err)
 	}
-	defer w.Abort()
+	finalized = true
 
-	// Set Status to INACTIVE (trigger lb_status_recompute will adjust
-	// to ACTIVE if listeners + attached TG arrive; default CREATING from builder
-	// would block Start preconditions). Use INACTIVE as terminal Create state.
-	lb.Status = domain.LBStatusInactive
-
-	created, err := w.LoadBalancers().Insert(ctx, &lb)
-	if err != nil {
-		return nil, mapDomainErr(err)
-	}
-	if err := w.Outbox().Emit(ctx,
-		kachopg.OutboxResourceLoadBalancer, string(created.ID), string(created.ProjectID),
-		kachopg.OutboxActionCreated, lbOutboxPayload(created),
-	); err != nil {
-		return nil, mapDomainErr(err)
-	}
-	// FGA-register-intent (project-hierarchy + creator) in the SAME tx as
-	// the Insert — durable, applied async by the register-drainer (
-	// Вариант A; replaces the former best-effort post-commit fgawrite, Issue N5).
-	if err := w.FGARegisterOutbox().Emit(ctx, domain.FGAEventRegister,
-		lbRegisterIntent(created, principal)); err != nil {
-		return nil, mapDomainErr(err)
-	}
-	if err := w.Commit(); err != nil {
-		return nil, mapDomainErr(err)
-	}
-
-	// 4. Marshal response.
 	pb, err := lbRecordToProto(created)
 	if err != nil {
 		return nil, err
@@ -234,6 +269,275 @@ func (u *CreateLoadBalancerUseCase) doCreate(
 	}
 	return out, nil
 }
+
+// vipAllocResult — outcome acquire-ветки одного семейства.
+type vipAllocResult struct {
+	addressID string
+	address   string
+	origin    domain.VipOrigin // auto → FreeIP; byo → ClearReference (release-ветка)
+}
+
+// acquireFamilyVIP — внешний side-effect одного семейства: auto-аллокация anycast
+// из пула либо BYO-привязка с server-side ownership/family CAS-guard.
+func (u *CreateLoadBalancerUseCase) acquireFamilyVIP(
+	ctx context.Context, lb domain.LoadBalancer, fs familyVIPSpec,
+) (vipAllocResult, error) {
+	if u.anycastClient == nil {
+		return vipAllocResult{}, status.Error(codes.Unavailable, "vpc anycast address client not configured")
+	}
+	owner := lbAddressOwner(string(lb.ID))
+	if fs.byo {
+		resp, err := u.anycastClient.AttachAnycastBYO(ctx, vpcclient.AttachAnycastBYORequest{
+			AddressID:       fs.addressID,
+			Owner:           owner,
+			ExpectProjectID: string(lb.ProjectID),
+			ExpectFamily:    vpcFamily(fs.family),
+		})
+		if err != nil {
+			return vipAllocResult{}, err
+		}
+		return vipAllocResult{addressID: resp.AddressID, address: resp.Value, origin: domain.VipOriginBYO}, nil
+	}
+	resp, err := u.anycastClient.AllocateAnycast(ctx, vpcclient.AllocateAnycastRequest{
+		ProjectID:     string(lb.ProjectID),
+		Name:          domain.LBAnycastAddressName(lb.ID, fs.family),
+		NetworkID:     string(lb.NetworkID),
+		Family:        vpcFamily(fs.family),
+		AnycastPoolID: fs.anycastPoolID,
+		Owner:         owner,
+	})
+	if err != nil {
+		return vipAllocResult{}, err
+	}
+	return vipAllocResult{addressID: resp.AddressID, address: resp.Value, origin: domain.VipOriginAuto}, nil
+}
+
+// insertHandle — TX-1: INSERT durable-handle строки LB (status='CREATING').
+func (u *CreateLoadBalancerUseCase) insertHandle(ctx context.Context, lb *domain.LoadBalancer) error {
+	w, err := u.repo.Writer(ctx)
+	if err != nil {
+		return err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			w.Abort()
+		}
+	}()
+	if _, err := w.LoadBalancers().Insert(ctx, lb); err != nil {
+		return err
+	}
+	if err := w.Commit(); err != nil {
+		return err
+	}
+	committed = true
+	return nil
+}
+
+// persistVIP — отдельный commit CAS-attach VIP одного семейства в CREATING-handle.
+func (u *CreateLoadBalancerUseCase) persistVIP(
+	ctx context.Context, id string, family domain.IPVersion, address, addressID string, origin domain.VipOrigin,
+) (*kachorepo.LoadBalancerRecord, error) {
+	w, err := u.repo.Writer(ctx)
+	if err != nil {
+		return nil, err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			w.Abort()
+		}
+	}()
+	rec, err := w.LoadBalancers().AttachVIP(ctx, id, family, address, addressID, origin)
+	if err != nil {
+		return nil, err
+	}
+	if err := w.Commit(); err != nil {
+		return nil, err
+	}
+	committed = true
+	return rec, nil
+}
+
+// finalizeCreate — финальный commit: CAS CREATING→INACTIVE + outbox CREATED +
+// FGA-register-intent (project-hierarchy + creator) в одной writer-TX.
+func (u *CreateLoadBalancerUseCase) finalizeCreate(
+	ctx context.Context, lb domain.LoadBalancer, principal operations.Principal,
+) (*kachorepo.LoadBalancerRecord, error) {
+	w, err := u.repo.Writer(ctx)
+	if err != nil {
+		return nil, err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			w.Abort()
+		}
+	}()
+	created, err := w.LoadBalancers().SetStatusCAS(ctx, string(lb.ID),
+		domain.LBStatusCreating, domain.LBStatusInactive)
+	if err != nil {
+		return nil, err
+	}
+	if err := w.Outbox().Emit(ctx,
+		kachopg.OutboxResourceLoadBalancer, string(created.ID), string(created.ProjectID),
+		kachopg.OutboxActionCreated, lbOutboxPayload(created),
+	); err != nil {
+		return nil, err
+	}
+	if err := w.FGARegisterOutbox().Emit(ctx, domain.FGAEventRegister,
+		lbRegisterIntent(created, principal)); err != nil {
+		return nil, err
+	}
+	if err := w.Commit(); err != nil {
+		return nil, err
+	}
+	committed = true
+	return created, nil
+}
+
+// compensateCreate — best-effort откат до finalize: освобождает каждый
+// аллоцированный VIP (auto → FreeIP, byo → ClearReference) и удаляет handle.
+// Ошибки логируются, не пробрасываются (worker уже вернул исходную ошибку);
+// краш раньше — handle добивает free_ip_runner.
+func (u *CreateLoadBalancerUseCase) compensateCreate(ctx context.Context, lbID string, allocated map[domain.IPVersion]vipAllocResult) {
+	logger := u.logger
+	if logger == nil {
+		logger = slog.Default()
+	}
+	logger = logger.With("load_balancer_id", lbID)
+
+	owner := lbAddressOwner(lbID)
+	if u.anycastClient != nil {
+		for family, alloc := range allocated {
+			if alloc.addressID == "" {
+				continue
+			}
+			var rerr error
+			if alloc.origin == domain.VipOriginBYO {
+				rerr = u.anycastClient.ClearReference(ctx, alloc.addressID, owner)
+			} else {
+				rerr = u.anycastClient.FreeIP(ctx, alloc.addressID, owner)
+			}
+			if rerr != nil {
+				logger.Warn("LoadBalancer.Create compensation release failed",
+					"err", rerr, "address_id", alloc.addressID, "family", string(family))
+			}
+		}
+	}
+	if err := u.deleteHandle(ctx, lbID); err != nil {
+		logger.Warn("LoadBalancer.Create compensation delete handle failed; free_ip_runner will reconcile", "err", err)
+	}
+}
+
+// deleteHandle — best-effort DELETE durable-handle строки LB в собственной TX.
+func (u *CreateLoadBalancerUseCase) deleteHandle(ctx context.Context, id string) error {
+	w, err := u.repo.Writer(ctx)
+	if err != nil {
+		return err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			w.Abort()
+		}
+	}()
+	if err := w.LoadBalancers().Delete(ctx, id); err != nil {
+		if errors.Is(err, domain.ErrNotFound) {
+			return nil
+		}
+		return err
+	}
+	if err := w.Commit(); err != nil {
+		return err
+	}
+	committed = true
+	return nil
+}
+
+// familyVIPSpec — разобранный per-family источник VIP (auto/byo) из address_spec.
+type familyVIPSpec struct {
+	family        domain.IPVersion // IPV4 / IPV6
+	byo           bool             // true → BYO addressID, false → auto-alloc
+	addressID     string           // BYO
+	anycastPoolID string           // auto (опционально; пусто → is_default-пул сети)
+}
+
+// resolveAddressSpec — разбирает NetworkLoadBalancerAddressSpec в упорядоченный
+// (v4, затем v6) набор familyVIPSpec. ≥1 семейство обязательно; malformed BYO
+// addressId ловится синхронно. Источник без auto/byo → InvalidArgument.
+func resolveAddressSpec(spec *lbv1.NetworkLoadBalancerAddressSpec) ([]familyVIPSpec, error) {
+	var out []familyVIPSpec
+	add := func(family domain.IPVersion, fam *lbv1.FamilyAddressSpec) error {
+		if fam == nil {
+			return nil
+		}
+		fs := familyVIPSpec{family: family}
+		switch {
+		case fam.GetByo() != nil:
+			addressID := fam.GetByo().GetAddressId()
+			if err := corevalidate.ResourceID("address", ids.PrefixAddress, addressID); err != nil {
+				return err
+			}
+			fs.byo = true
+			fs.addressID = addressID
+		case fam.GetAuto() != nil:
+			fs.anycastPoolID = fam.GetAuto().GetAnycastPoolId()
+		default:
+			return status.Errorf(codes.InvalidArgument,
+				"address_spec.%s.source is not set", familyTag(family))
+		}
+		out = append(out, fs)
+		return nil
+	}
+	if spec != nil {
+		if err := add(domain.IPVersionV4, spec.GetV4()); err != nil {
+			return nil, err
+		}
+		if err := add(domain.IPVersionV6, spec.GetV6()); err != nil {
+			return nil, err
+		}
+	}
+	if len(out) == 0 {
+		return nil, status.Error(codes.InvalidArgument,
+			"address_spec must declare at least one ip family for INTERNAL load balancer")
+	}
+	return out, nil
+}
+
+// familiesFromSpecs — список заявленных семейств (точные токены IPV4/IPV6) для
+// ip_families в порядке fan-out.
+func familiesFromSpecs(specs []familyVIPSpec) []domain.IPVersion {
+	out := make([]domain.IPVersion, 0, len(specs))
+	for _, fs := range specs {
+		out = append(out, fs.family)
+	}
+	return out
+}
+
+// familyTag — короткий тег семейства для error-текста ("v4"/"v6").
+func familyTag(family domain.IPVersion) string {
+	if family == domain.IPVersionV6 {
+		return "v6"
+	}
+	return "v4"
+}
+
+// vpcFamily — domain.IPVersion → vpc-client family-токен.
+func vpcFamily(family domain.IPVersion) string {
+	if family == domain.IPVersionV6 {
+		return vpcclient.AddressFamilyIPv6
+	}
+	return vpcclient.AddressFamilyIPv4
+}
+
+// lbAddressOwner — owner-tuple для vpc.Address used_by ("nlb_load_balancer:<id>").
+func lbAddressOwner(lbID string) vpcclient.AddressOwner {
+	return vpcclient.AddressOwner{Kind: lbAddressOwnerKind, ID: lbID}
+}
+
+// lbAddressOwnerKind — Reference.kind для NLB LoadBalancer в vpc.Address used_by.
+const lbAddressOwnerKind = "nlb_load_balancer"
 
 // assertNameUnique — sync precheck дубликата (project_id, name). UNIQUE-violation
 // в Insert — атомарный backstop, но sync-fail-fast → "лучше UX" (operation не

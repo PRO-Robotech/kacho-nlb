@@ -25,31 +25,21 @@ func (listener) toPb(rec kachorepo.ListenerRecord) (*lbv1.Listener, error) {
 	if err != nil {
 		return nil, err
 	}
-	ipVerPb, err := ipVersionToPb(rec.IPVersion)
-	if err != nil {
-		return nil, err
-	}
 	statusPb, err := listenerStatusToPb(rec.Status)
 	if err != nil {
 		return nil, err
-	}
-	addressID := ""
-	if v, ok := rec.AddressID.Maybe(); ok {
-		addressID = string(v)
-	}
-	subnetID := ""
-	if v, ok := rec.SubnetID.Maybe(); ok {
-		subnetID = string(v)
 	}
 	defaultTGID := ""
 	if v, ok := rec.DefaultTargetGroupID.Maybe(); ok {
 		defaultTGID = string(v)
 	}
+	// VIP консолидирован на LoadBalancer: листенер = «порт на VIP LB» и собственных
+	// address-полей больше не несёт (region_id/ip_version/address_id/allocated_address/
+	// subnet_id сняты с proto). VIP сервиса берётся с родительского LB.address_v4/v6.
 	return &lbv1.Listener{
 		Id:                   string(rec.ID),
 		ProjectId:            string(rec.ProjectID),
 		LoadBalancerId:       string(rec.LoadBalancerID),
-		RegionId:             string(rec.RegionID),
 		CreatedAt:            ts,
 		Name:                 string(rec.Name),
 		Description:          string(rec.Description),
@@ -57,10 +47,6 @@ func (listener) toPb(rec kachorepo.ListenerRecord) (*lbv1.Listener, error) {
 		Protocol:             protoPb,
 		Port:                 int64(rec.Port),
 		TargetPort:           int64(rec.TargetPort),
-		IpVersion:            ipVerPb,
-		AddressId:            addressID,
-		AllocatedAddress:     string(rec.AllocatedAddress),
-		SubnetId:             subnetID,
 		ProxyProtocolV2:      rec.ProxyProtocolV2,
 		DefaultTargetGroupId: defaultTGID,
 		Status:               statusPb,

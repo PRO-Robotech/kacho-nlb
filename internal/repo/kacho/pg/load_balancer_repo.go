@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/PRO-Robotech/kacho-nlb/internal/domain"
 	"github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho"
@@ -20,7 +21,9 @@ import (
 const loadBalancerCols = `
     id, project_id, region_id, created_at, updated_at,
     name, description, labels, type, status, session_affinity,
-    cross_zone_enabled, deletion_protection, network_id, security_group_ids`
+    cross_zone_enabled, deletion_protection, network_id, security_group_ids,
+    ip_families, address_v4, address_v6, address_id_v4, address_id_v6,
+    vip_origin_v4, vip_origin_v6`
 
 // loadBalancerReader — Get/List поверх произвольной pgx.Tx (read-only или RW).
 type loadBalancerReader struct {
@@ -42,11 +45,20 @@ func scanLB(row pgx.Row) (*kacho.LoadBalancerRecord, error) {
 		idStr        string
 		networkIDStr string
 		sgIDs        []string
+		ipFamilies   []string
+		addrV4       string
+		addrV6       string
+		addrIDV4     string
+		addrIDV6     string
+		vipOriginV4  string
+		vipOriginV6  string
 	)
 	if err := row.Scan(
 		&idStr, &projectIDs, &regionIDs, &rec.CreatedAt, &rec.UpdatedAt,
 		&nameStr, &descStr, &labelsRaw, &typeStr, &statusStr, &affinStr,
 		&rec.CrossZoneEnabled, &rec.DeletionProtection, &networkIDStr, &sgIDs,
+		&ipFamilies, &addrV4, &addrV6, &addrIDV4, &addrIDV6,
+		&vipOriginV4, &vipOriginV6,
 	); err != nil {
 		return nil, err
 	}
@@ -55,6 +67,13 @@ func scanLB(row pgx.Row) (*kacho.LoadBalancerRecord, error) {
 	rec.RegionID = domain.RegionID(regionIDs)
 	rec.NetworkID = domain.NetworkID(networkIDStr)
 	rec.SecurityGroupIDs = domain.SecurityGroupIDsFromStrings(sgIDs)
+	rec.IPFamilies = ipVersionsFromStrings(ipFamilies)
+	rec.AddressV4 = domain.IPAddress(addrV4)
+	rec.AddressV6 = domain.IPAddress(addrV6)
+	rec.AddressIDV4 = domain.AddressID(addrIDV4)
+	rec.AddressIDV6 = domain.AddressID(addrIDV6)
+	rec.VipOriginV4 = domain.VipOrigin(vipOriginV4)
+	rec.VipOriginV6 = domain.VipOrigin(vipOriginV6)
 	rec.Name = domain.LbName(nameStr)
 	rec.Description = domain.LbDescription(descStr)
 	rec.Type = domain.LBType(typeStr)
@@ -201,21 +220,110 @@ func (w *loadBalancerWriter) Insert(ctx context.Context, lb *domain.LoadBalancer
         INSERT INTO kacho_nlb.load_balancers
             (id, project_id, region_id, name, description, labels,
              type, status, session_affinity, cross_zone_enabled, deletion_protection,
-             network_id, security_group_ids)
-        VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9, $10, $11, $12, $13)
+             network_id, security_group_ids, ip_families,
+             address_v4, address_v6, address_id_v4, address_id_v6,
+             vip_origin_v4, vip_origin_v6)
+        VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9, $10, $11, $12, $13, $14,
+                $15, $16, $17, $18, $19, $20)
         RETURNING %s`, loadBalancerCols)
 	row := w.tx.QueryRow(ctx, q,
 		string(lb.ID), string(lb.ProjectID), string(lb.RegionID),
 		string(lb.Name), string(lb.Description), labelsJSON,
 		string(lb.Type), string(lb.Status), string(lb.SessionAffinity),
 		lb.CrossZoneEnabled, lb.DeletionProtection,
-		string(lb.NetworkID), sgIDsParam(lb.SecurityGroupIDs),
+		string(lb.NetworkID), sgIDsParam(lb.SecurityGroupIDs), ipFamiliesParam(lb.IPFamilies),
+		string(lb.AddressV4), string(lb.AddressV6), string(lb.AddressIDV4), string(lb.AddressIDV6),
+		string(lb.VipOriginV4), string(lb.VipOriginV6),
 	)
 	rec, err := scanLB(row)
 	if err != nil {
 		return nil, mapPgErr(err, "NetworkLoadBalancer", string(lb.ID))
 	}
 	return rec, nil
+}
+
+// AttachVIP — атомарный CAS-attach anycast-VIP одного семейства к LB-строке
+// (ban #10: single-VIP-per-LB через кардинальность строки + CAS, не TOCTOU).
+//
+//	UPDATE … SET address_v4=$, address_id_v4=$, vip_origin_v4=$
+//	 WHERE id=$ AND (address_v4='' OR address_v4=$new) RETURNING …
+//
+// 0 rows → FailedPrecondition "load balancer already has an address for this
+// family" (семейство уже несёт другой адрес; повтор того же адреса — no-op,
+// идемпотентность retry). per-region UNIQUE (23505) → generic FailedPrecondition
+// "could not assign anycast address to load balancer" (анти-oracle: не раскрываем
+// чей именно адрес). status-aware CHECK (23514) → InvalidArgument — означает, что
+// семейство не объявлено в ip_families ДО persist (sequencing-баг саги).
+func (w *loadBalancerWriter) AttachVIP(
+	ctx context.Context, id string, family domain.IPVersion, address, addressID string, origin domain.VipOrigin,
+) (*kacho.LoadBalancerRecord, error) {
+	addrCol, addrIDCol, originCol, err := vipColumnsForFamily(family)
+	if err != nil {
+		return nil, err
+	}
+	q := fmt.Sprintf(`
+        UPDATE kacho_nlb.load_balancers
+           SET %[1]s = $2, %[2]s = $3, %[3]s = $4, updated_at = now()
+         WHERE id = $1 AND (%[1]s = '' OR %[1]s = $2)
+        RETURNING %[4]s`, addrCol, addrIDCol, originCol, loadBalancerCols)
+	row := w.tx.QueryRow(ctx, q, id, address, addressID, string(origin))
+	rec, err := scanLB(row)
+	if err != nil {
+		if pgxIsNoRows(err) {
+			return nil, fmt.Errorf("%w: load balancer already has an address for this family", kacho.ErrFailedPrecondition)
+		}
+		return nil, mapAttachVIPErr(err)
+	}
+	return rec, nil
+}
+
+// mapAttachVIPErr — SQLSTATE→sentinel для CAS-attach VIP. per-region UNIQUE
+// 23505 → generic FailedPrecondition (анти-oracle); status-aware CHECK 23514 →
+// InvalidArgument (sequencing: семейство не в ip_families до persist).
+func mapAttachVIPErr(err error) error {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		switch pgErr.Code {
+		case "23505":
+			return fmt.Errorf("%w: could not assign anycast address to load balancer", kacho.ErrFailedPrecondition)
+		case "23514":
+			return fmt.Errorf("%w: load balancer violates address constraint", kacho.ErrInvalidArg)
+		}
+	}
+	return mapPgErr(err, "NetworkLoadBalancer", "")
+}
+
+// vipColumnsForFamily → имена per-family колонок (address/address_id/vip_origin).
+func vipColumnsForFamily(family domain.IPVersion) (addrCol, addrIDCol, originCol string, err error) {
+	switch family {
+	case domain.IPVersionV4:
+		return "address_v4", "address_id_v4", "vip_origin_v4", nil
+	case domain.IPVersionV6:
+		return "address_v6", "address_id_v6", "vip_origin_v6", nil
+	}
+	return "", "", "", fmt.Errorf("%w: unsupported ip family %q", kacho.ErrInvalidArg, family)
+}
+
+// ipFamiliesParam — кодирует набор семейств в NOT NULL text[] (nil → пустой
+// non-nil slice, иначе нарушил бы NOT NULL); значения — точные токены 'IPV4'/'IPV6'.
+func ipFamiliesParam(fams []domain.IPVersion) []string {
+	out := make([]string, len(fams))
+	for i, f := range fams {
+		out[i] = string(f)
+	}
+	return out
+}
+
+// ipVersionsFromStrings — обратное преобразование text[] → []domain.IPVersion.
+func ipVersionsFromStrings(raw []string) []domain.IPVersion {
+	if len(raw) == 0 {
+		return nil
+	}
+	out := make([]domain.IPVersion, len(raw))
+	for i, s := range raw {
+		out[i] = domain.IPVersion(s)
+	}
+	return out
 }
 
 // Update — мутирует name/description/labels/session_affinity/cross_zone_enabled/

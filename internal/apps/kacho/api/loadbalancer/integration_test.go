@@ -6,10 +6,12 @@ package loadbalancer_test
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"log/slog"
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -29,6 +31,7 @@ import (
 	lbv1 "github.com/PRO-Robotech/kacho-nlb/proto/gen/go/kacho/cloud/loadbalancer/v1"
 
 	"github.com/PRO-Robotech/kacho-nlb/internal/apps/kacho/api/loadbalancer"
+	vpcclient "github.com/PRO-Robotech/kacho-nlb/internal/clients/vpc"
 	"github.com/PRO-Robotech/kacho-nlb/internal/domain"
 	_ "github.com/PRO-Robotech/kacho-nlb/internal/dto/type2pb"
 	"github.com/PRO-Robotech/kacho-nlb/internal/migrations"
@@ -114,7 +117,49 @@ func pollOpDone(t *testing.T, opsRepo operations.Repo, opID string) *operations.
 func makeHandler(t *testing.T, repo *kachopg.Repository, opsRepo operations.Repo) *loadbalancer.Handler {
 	t.Helper()
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
-	return loadbalancer.NewHandler(repo, opsRepo, nil, nil, nil, nil, nil, logger)
+	// vpc недоступен в testcontainers-стенде — anycast-аллокация заглушается
+	// stub'ом, возвращающим уникальный адрес на вызов (DB-сторона саги — реальная).
+	return loadbalancer.NewHandler(repo, opsRepo, nil, nil, nil, nil, &stubAnycastClient{}, nil, logger)
+}
+
+// stubAnycastClient — заглушка vpc.AnycastAddressClient для integration-стенда
+// (без реального vpc). AllocateAnycast возвращает уникальный адрес/id на вызов;
+// release — no-op.
+type stubAnycastClient struct{ seq int64 }
+
+func (s *stubAnycastClient) AllocateAnycast(_ context.Context, req vpcclient.AllocateAnycastRequest) (*vpcclient.AllocateResponse, error) {
+	n := atomic.AddInt64(&s.seq, 1)
+	prefix := "100.64.0."
+	if req.Family == vpcclient.AddressFamilyIPv6 {
+		prefix = "fd00::"
+	}
+	return &vpcclient.AllocateResponse{
+		AddressID: fmt.Sprintf("adr%017d", n),
+		Value:     fmt.Sprintf("%s%d", prefix, n),
+	}, nil
+}
+
+func (s *stubAnycastClient) AttachAnycastBYO(_ context.Context, req vpcclient.AttachAnycastBYORequest) (*vpcclient.AllocateResponse, error) {
+	n := atomic.AddInt64(&s.seq, 1)
+	return &vpcclient.AllocateResponse{AddressID: req.AddressID, Value: fmt.Sprintf("100.64.9.%d", n)}, nil
+}
+
+func (s *stubAnycastClient) FreeIP(context.Context, string, vpcclient.AddressOwner) error { return nil }
+func (s *stubAnycastClient) ClearReference(context.Context, string, vpcclient.AddressOwner) error {
+	return nil
+}
+
+// internalAutoReq — INTERNAL Create-request (auto v4) для integration e2e.
+func internalAutoReq(projectID, name string) *lbv1.CreateNetworkLoadBalancerRequest {
+	return &lbv1.CreateNetworkLoadBalancerRequest{
+		ProjectId: projectID, RegionId: "ru-central1", Name: name,
+		Type: lbv1.NetworkLoadBalancer_INTERNAL, NetworkId: "net-1",
+		AddressSpec: &lbv1.NetworkLoadBalancerAddressSpec{
+			V4: &lbv1.FamilyAddressSpec{Source: &lbv1.FamilyAddressSpec_Auto{
+				Auto: &lbv1.FamilyAddressSpec_AnycastAllocate{},
+			}},
+		},
+	}
 }
 
 // ---- Tests -----------------------------------------------------------------
@@ -125,13 +170,7 @@ func TestIntegration_CreateLoadBalancer_EndToEnd(t *testing.T) {
 	opsRepo := newOpsRepo(t, pool)
 	h := makeHandler(t, repo, opsRepo)
 
-	op, err := h.Create(context.Background(), &lbv1.CreateNetworkLoadBalancerRequest{
-		ProjectId: "prj-acme-test",
-		RegionId:  "ru-central1",
-		Name:      "edge-public",
-		Type:      lbv1.NetworkLoadBalancer_EXTERNAL,
-		Labels:    map[string]string{"env": "prod"},
-	})
+	op, err := h.Create(context.Background(), internalAutoReq("prj-acme-test", "edge-public"))
 	require.NoError(t, err)
 	require.False(t, op.GetDone())
 	require.NotEmpty(t, op.GetId())
@@ -430,10 +469,7 @@ func TestIntegration_ListOperations_FilterByResourceID(t *testing.T) {
 	opsRepo := newOpsRepo(t, pool)
 	h := makeHandler(t, repo, opsRepo)
 
-	op, err := h.Create(context.Background(), &lbv1.CreateNetworkLoadBalancerRequest{
-		ProjectId: "prj-ops", RegionId: "ru-central1",
-		Name: "edge", Type: lbv1.NetworkLoadBalancer_EXTERNAL,
-	})
+	op, err := h.Create(context.Background(), internalAutoReq("prj-ops", "edge"))
 	require.NoError(t, err)
 	final := pollOpDone(t, opsRepo, op.GetId())
 	require.Nilf(t, final.Error, "op err: %v", final.Error)
@@ -499,12 +535,10 @@ func TestIntegration_SessionAffinityAndCrossZone_RoundTrip(t *testing.T) {
 	ctx := context.Background()
 
 	// Create with explicit non-default values.
-	op, err := h.Create(ctx, &lbv1.CreateNetworkLoadBalancerRequest{
-		ProjectId: "prj-sa", RegionId: "ru-central1", Name: "edge-sa",
-		Type:             lbv1.NetworkLoadBalancer_EXTERNAL,
-		SessionAffinity:  lbv1.NetworkLoadBalancer_CLIENT_IP_ONLY,
-		CrossZoneEnabled: proto.Bool(false),
-	})
+	saReq := internalAutoReq("prj-sa", "edge-sa")
+	saReq.SessionAffinity = lbv1.NetworkLoadBalancer_CLIENT_IP_ONLY
+	saReq.CrossZoneEnabled = proto.Bool(false)
+	op, err := h.Create(ctx, saReq)
 	require.NoError(t, err)
 	final := pollOpDone(t, opsRepo, op.GetId())
 	require.Nilf(t, final.Error, "create error: %v", final.Error)
@@ -520,10 +554,7 @@ func TestIntegration_SessionAffinityAndCrossZone_RoundTrip(t *testing.T) {
 	require.False(t, lbs[0].CrossZoneEnabled)
 
 	// Create without cross_zone_enabled → DB default true.
-	op2, err := h.Create(ctx, &lbv1.CreateNetworkLoadBalancerRequest{
-		ProjectId: "prj-sa", RegionId: "ru-central1", Name: "edge-default",
-		Type: lbv1.NetworkLoadBalancer_EXTERNAL,
-	})
+	op2, err := h.Create(ctx, internalAutoReq("prj-sa", "edge-default"))
 	require.NoError(t, err)
 	require.Nil(t, pollOpDone(t, opsRepo, op2.GetId()).Error)
 	rd2, err := repo.Reader(ctx)

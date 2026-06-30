@@ -24,7 +24,18 @@ import (
 // network — OK-фейки; network отдаёт "enp-1").
 func newCreateUCSG(repo *fakeRepo, opsRepo *fakeOpsRepo, sgc SecurityGroupClient) *CreateLoadBalancerUseCase {
 	return NewCreateLoadBalancerUseCase(repo, opsRepo,
-		&fakeProjectClient{}, &fakeRegionClient{}, &fakeNetworkClient{}, sgc, slog.Default())
+		&fakeProjectClient{}, &fakeRegionClient{}, &fakeNetworkClient{}, sgc, &fakeAnycastClient{}, slog.Default())
+}
+
+// internalSGReq — INTERNAL Create-request (auto v4) на enp-1 с заданным набором SG.
+func internalSGReq(name string, sgs ...string) *lbv1.CreateNetworkLoadBalancerRequest {
+	return &lbv1.CreateNetworkLoadBalancerRequest{
+		ProjectId: "prj-a", RegionId: "ru-central1",
+		Name: name, Type: lbv1.NetworkLoadBalancer_INTERNAL,
+		NetworkId:        "enp-1",
+		AddressSpec:      autoV4Spec("aap-1"),
+		SecurityGroupIds: sgs,
+	}
 }
 
 // seedInternalLBWithSG — INTERNAL LB на network enp-1 с заданным набором SG.
@@ -47,12 +58,7 @@ func TestCreateLoadBalancer_SecurityGroupNotFound(t *testing.T) {
 		return nil, fmt.Errorf("%w: SecurityGroup %s not found", domain.ErrInvalidArg, sgID)
 	}}
 	uc := newCreateUCSG(repo, newFakeOpsRepo(), sgc)
-	_, err := uc.Execute(context.Background(), &lbv1.CreateNetworkLoadBalancerRequest{
-		ProjectId: "prj-a", RegionId: "ru-central1",
-		Name: "internal-lb", Type: lbv1.NetworkLoadBalancer_INTERNAL,
-		NetworkId:        "enp-1",
-		SecurityGroupIds: []string{"sgp-missing"},
-	})
+	_, err := uc.Execute(context.Background(), internalSGReq("internal-lb", "sgp-missing"))
 	require.Equal(t, codes.InvalidArgument, status.Code(err))
 	require.Equal(t, "security group sgp-missing not found", status.Convert(err).Message())
 	require.Empty(t, repo.lbs, "LB must not be persisted")
@@ -67,12 +73,7 @@ func TestCreateLoadBalancer_SecurityGroupOtherNetwork(t *testing.T) {
 		return &vpcclient.SecurityGroup{ID: sgID, ProjectID: "prj-a", NetworkID: "enp-2", Name: "other-sg"}, nil
 	}}
 	uc := newCreateUCSG(repo, newFakeOpsRepo(), sgc)
-	_, err := uc.Execute(context.Background(), &lbv1.CreateNetworkLoadBalancerRequest{
-		ProjectId: "prj-a", RegionId: "ru-central1",
-		Name: "internal-lb", Type: lbv1.NetworkLoadBalancer_INTERNAL,
-		NetworkId:        "enp-1",
-		SecurityGroupIds: []string{"sgp-other"},
-	})
+	_, err := uc.Execute(context.Background(), internalSGReq("internal-lb", "sgp-other"))
 	require.Equal(t, codes.InvalidArgument, status.Code(err))
 	require.Equal(t, "security group sgp-other does not belong to network enp-1",
 		status.Convert(err).Message())
@@ -88,12 +89,7 @@ func TestCreateLoadBalancer_SecurityGroupVPCUnavailable(t *testing.T) {
 		return nil, fmt.Errorf("%w: dial", domain.ErrUnavailable)
 	}}
 	uc := newCreateUCSG(repo, newFakeOpsRepo(), sgc)
-	_, err := uc.Execute(context.Background(), &lbv1.CreateNetworkLoadBalancerRequest{
-		ProjectId: "prj-a", RegionId: "ru-central1",
-		Name: "internal-lb", Type: lbv1.NetworkLoadBalancer_INTERNAL,
-		NetworkId:        "enp-1",
-		SecurityGroupIds: []string{"sgp-1"},
-	})
+	_, err := uc.Execute(context.Background(), internalSGReq("internal-lb", "sgp-1"))
 	require.Equal(t, codes.Unavailable, status.Code(err))
 	require.Empty(t, repo.lbs, "LB must not be persisted")
 }
@@ -105,33 +101,11 @@ func TestCreateLoadBalancer_SecurityGroupHappyPath(t *testing.T) {
 	repo := newFakeRepo()
 	opsRepo := newFakeOpsRepo()
 	uc := newCreateUCSG(repo, opsRepo, &fakeSecurityGroupClient{})
-	op, err := uc.Execute(context.Background(), &lbv1.CreateNetworkLoadBalancerRequest{
-		ProjectId: "prj-a", RegionId: "ru-central1",
-		Name: "internal-lb", Type: lbv1.NetworkLoadBalancer_INTERNAL,
-		NetworkId:        "enp-1",
-		SecurityGroupIds: []string{"sgp-1", "sgp-2"},
-	})
+	op, err := uc.Execute(context.Background(), internalSGReq("internal-lb", "sgp-1", "sgp-2"))
 	require.NoError(t, err)
 	require.Nil(t, awaitOpDone(t, opsRepo, op.ID).Error)
 	got := onlyLB(t, repo)
 	require.Equal(t, []domain.SecurityGroupID{"sgp-1", "sgp-2"}, got.SecurityGroupIDs)
-}
-
-// TestCreateLoadBalancer_SecurityGroupOnExternalRejected — EXTERNAL + SG → sync
-// InvalidArgument (SG живут в сети, EXTERNAL сети не имеет).
-func TestCreateLoadBalancer_SecurityGroupOnExternalRejected(t *testing.T) {
-	t.Parallel()
-	repo := newFakeRepo()
-	uc := newCreateUCSG(repo, newFakeOpsRepo(), &fakeSecurityGroupClient{})
-	_, err := uc.Execute(context.Background(), &lbv1.CreateNetworkLoadBalancerRequest{
-		ProjectId: "prj-a", RegionId: "ru-central1",
-		Name: "edge", Type: lbv1.NetworkLoadBalancer_EXTERNAL,
-		SecurityGroupIds: []string{"sgp-1"},
-	})
-	require.Equal(t, codes.InvalidArgument, status.Code(err))
-	require.Contains(t, lbFieldViolations(err),
-		"security_group_ids: security_group_ids is only valid for INTERNAL load balancer")
-	require.Empty(t, repo.lbs, "LB must not be persisted")
 }
 
 // TestUpdateLoadBalancer_SecurityGroupReplace — Update заменяет набор SG целиком

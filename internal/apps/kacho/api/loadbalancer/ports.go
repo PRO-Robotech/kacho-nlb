@@ -38,6 +38,12 @@ type RegionClient = geoclient.RegionClient
 // недоступен → `Unavailable` (fail-closed для мутации).
 type NetworkClient = vpcclient.NetworkClient
 
+// AnycastAddressClient — vpc anycast-VIP lifecycle: AllocateAnycast (auto из
+// AnycastAddressPool), AttachAnycastBYO (BYO с server-side ownership/family
+// CAS-guard), FreeIP/ClearReference (release в compensation/Delete). Используется
+// per-family fan-out сагой Create и Delete.
+type AnycastAddressClient = vpcclient.AnycastAddressClient
+
 // SecurityGroupClient — Get(sgID) → *vpcclient.SecurityGroup. Используется
 // sync-precheck в Create/Update use-case'ах для валидации `security_group_ids`
 // INTERNAL-LB через vpc.SecurityGroupService.Get (ребро nlb→vpc): not-found или

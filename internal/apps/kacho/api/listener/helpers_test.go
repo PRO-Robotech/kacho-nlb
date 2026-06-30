@@ -17,7 +17,6 @@ import (
 
 	"github.com/PRO-Robotech/kacho-corelib/operations"
 
-	vpcclient "github.com/PRO-Robotech/kacho-nlb/internal/clients/vpc"
 	"github.com/PRO-Robotech/kacho-nlb/internal/domain"
 )
 
@@ -115,22 +114,4 @@ func TestLoggerOrDiscard_Default(t *testing.T) {
 	require.Same(t, slog.Default(), loggerOrDiscard(nil))
 	custom := slog.New(slog.Default().Handler())
 	require.Same(t, custom, loggerOrDiscard(custom))
-}
-
-// TestFamilyForIPVersion — covers both branches.
-func TestFamilyForIPVersion(t *testing.T) {
-	t.Parallel()
-	require.Equal(t, vpcclient.AddressFamilyIPv4, familyForIPVersion(domain.IPVersionV4))
-	require.Equal(t, vpcclient.AddressFamilyIPv6, familyForIPVersion(domain.IPVersionV6))
-	// Unknown → defaults to v4 (safe-by-default).
-	require.Equal(t, vpcclient.AddressFamilyIPv4, familyForIPVersion(domain.IPVersion("WEIRD")))
-}
-
-// TestOwnerMatches — same kind+id matches; difference does not.
-func TestOwnerMatches(t *testing.T) {
-	t.Parallel()
-	a := vpcclient.AddressOwner{Kind: "nlb_listener", ID: "lst1"}
-	require.True(t, ownerMatches(a, a))
-	require.False(t, ownerMatches(a, vpcclient.AddressOwner{Kind: "nlb_listener", ID: "lst2"}))
-	require.False(t, ownerMatches(a, vpcclient.AddressOwner{Kind: "compute_instance", ID: "lst1"}))
 }

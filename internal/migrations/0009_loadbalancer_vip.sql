@@ -18,7 +18,7 @@
 --   * per-region UNIQUE — двойная claim одного IP в регионе ловится partial
 --     UNIQUE-индексом (region_id, address_*) WHERE addr<>''. Для UNIQUE-индекса
 --     опции NOT VALID нет, поэтому на живой таблице строится CONCURRENTLY (вне
---     транзакции) — отсюда `-- +goose NO TRANSACTION` на весь файл.
+--     транзакции) — отсюда директива NO TRANSACTION на весь файл.
 --   * status-aware CHECK — однонаправленный: непустой address ⟹ scheme/family,
 --     но НЕ наоборот (durable-handle INSERT с пустым address в CREATING обязан
 --     проходить).

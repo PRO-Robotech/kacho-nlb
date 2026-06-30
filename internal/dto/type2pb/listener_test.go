@@ -19,6 +19,10 @@ import (
 )
 
 func TestListener_Transfer(t *testing.T) {
+	// VIP консолидирован на LoadBalancer: листенер больше не несёт address-полей
+	// (region_id/ip_version/address_id/allocated_address/subnet_id сняты с proto).
+	// DB-колонки ещё существуют (удаляются поздней миграцией) — repo их читает, но
+	// в proto-проекцию они не выходят.
 	rec := kachorepo.ListenerRecord{
 		Listener: domain.Listener{
 			ID:               "lst01ABCDEF1234567xx",
@@ -48,10 +52,6 @@ func TestListener_Transfer(t *testing.T) {
 	assert.Equal(t, lbv1.Listener_TCP, pb.Protocol)
 	assert.Equal(t, int64(443), pb.Port)
 	assert.Equal(t, int64(8443), pb.TargetPort)
-	assert.Equal(t, lbv1.IpVersion_IPV4, pb.IpVersion)
-	assert.Equal(t, "e9b01ADDRESS", pb.AddressId)
-	assert.Equal(t, "203.0.113.10", pb.AllocatedAddress)
-	assert.Empty(t, pb.SubnetId, "SubnetID None → empty string in proto")
 	assert.True(t, pb.ProxyProtocolV2)
 	assert.Equal(t, lbv1.Listener_ACTIVE, pb.Status)
 }

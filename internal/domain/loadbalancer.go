@@ -27,7 +27,26 @@ type LoadBalancer struct {
 	// Mutable: Update заменяет набор целиком (full-replace через update_mask).
 	// Cross-service refs на kacho-vpc SecurityGroup (без FK); существование +
 	// same-network валидируются peer-API на request-path.
-	SecurityGroupIDs   []SecurityGroupID
+	SecurityGroupIDs []SecurityGroupID
+	// IPFamilies — заявленные при Create семейства anycast-VIP (IPV4/IPV6 или
+	// оба для dualstack). Источник истины для status-aware DB-CHECK: непустой
+	// address_v4/v6 допустим только если соответствующее семейство объявлено
+	// здесь. Immutable после Create.
+	IPFamilies []IPVersion
+	// AddressV4/AddressV6 — единый tenant-facing anycast-VIP на семейство
+	// (output-only; пуст пока status=CREATING, заполняется worker'ом после
+	// аллокации из vpc AnycastAddressPool).
+	AddressV4 IPAddress
+	AddressV6 IPAddress
+	// AddressIDV4/AddressIDV6 — binding на vpc Address (auto-allocated либо BYO),
+	// per-family. Immutable после Create; release-ключ для compensation/runner.
+	AddressIDV4 AddressID
+	AddressIDV6 AddressID
+	// VipOriginV4/VipOriginV6 — DB-only дискриминатор источника VIP (auto/byo),
+	// per-family. Управляет release-веткой: auto → FreeIP, byo → ClearReference.
+	// В публичную proto-проекцию не выходит.
+	VipOriginV4        VipOrigin
+	VipOriginV6        VipOrigin
 	Name               LbName
 	Description        LbDescription
 	Labels             LbLabels
@@ -114,6 +133,13 @@ func (lb LoadBalancer) Equal(other LoadBalancer) bool {
 		lb.RegionID == other.RegionID &&
 		lb.NetworkID == other.NetworkID &&
 		SecurityGroupIDsEqual(lb.SecurityGroupIDs, other.SecurityGroupIDs) &&
+		ipVersionsEqual(lb.IPFamilies, other.IPFamilies) &&
+		lb.AddressV4 == other.AddressV4 &&
+		lb.AddressV6 == other.AddressV6 &&
+		lb.AddressIDV4 == other.AddressIDV4 &&
+		lb.AddressIDV6 == other.AddressIDV6 &&
+		lb.VipOriginV4 == other.VipOriginV4 &&
+		lb.VipOriginV6 == other.VipOriginV6 &&
 		lb.Name == other.Name &&
 		lb.Description == other.Description &&
 		LabelsEqual(lb.Labels, other.Labels) &&
@@ -122,4 +148,25 @@ func (lb LoadBalancer) Equal(other LoadBalancer) bool {
 		lb.SessionAffinity == other.SessionAffinity &&
 		lb.CrossZoneEnabled == other.CrossZoneEnabled &&
 		lb.DeletionProtection == other.DeletionProtection
+}
+
+// ipVersionsEqual — order-insensitive equality двух наборов IPVersion (семейства
+// VIP). Наборы маленькие (≤2), поэтому простое сравнение по членству.
+func ipVersionsEqual(a, b []IPVersion) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for _, x := range a {
+		found := false
+		for _, y := range b {
+			if x == y {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
 }
