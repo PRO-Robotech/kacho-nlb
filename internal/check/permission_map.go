@@ -80,6 +80,14 @@ const (
 	relationVUpdate = "v_update"
 	relationVDelete = "v_delete"
 
+	// relationAnnounceWriter — least-priv writer-relation для inbound announce-state
+	// write (ReportAnnounceState). Единственный носитель — data plane (новое
+	// одностороннее runtime-ребро kacho-vpc-implement → kacho-nlb). object-scoped на
+	// `lb_network_load_balancer:<id>`: viewer/tenant НЕ несут её → PermissionDenied.
+	// Материализация relation'а в FGA-модели — часть iam-стороны интеграции; тут —
+	// backend view-only имя для per-RPC Check.
+	relationAnnounceWriter = "announce_writer"
+
 	// relationSystemViewer — cluster-scoped read relation (`cluster.system_viewer`
 	// = [user, service_account] в FGA-модели). Floor для internal read/stream RPC,
 	// который не имеет project/resource-scope (InternalResourceLifecycleService.
@@ -444,6 +452,35 @@ func PermissionMap() authz.RPCMap {
 		"/kacho.cloud.loadbalancer.v1.InternalResourceLifecycleService/Subscribe": {
 			Relation: relationSystemViewer,
 			Extract:  staticClusterFloor(),
+		},
+
+		// =========================
+		// InternalLoadBalancerAnnounceService (cluster-internal :9091).
+		//
+		// Наблюдаемая per-zone announce-state anycast-VIP (data-plane feedback).
+		// Internal-листенер гоняет ТОТ ЖЕ per-RPC Check, что и public (security.md
+		// «authN+authZ на ОБОИХ listener'ах»; «Internal = trusted» — запрещённое
+		// допущение): оба RPC замаплены с реальным object-scoped Relation, НЕ Public.
+		//
+		// Scope — `lb_network_load_balancer:<network_load_balancer_id>` (из request):
+		//   - GetAnnounceState  — read, viewer-tier verb-bearing `v_get` (как Get LB);
+		//   - ReportAnnounceState — inbound write, least-priv `announce_writer`
+		//     (единственный носитель = data plane; viewer/tenant → PermissionDenied).
+		//
+		// Permission намеренно пустой: announce — internal RPC, gate чисто
+		// relation-based; в 30-string tenant-каталог `loadbalancer.*` он не входит
+		// (каталогизация announce-permission на iam-стороне — отдельная задача).
+		"/kacho.cloud.loadbalancer.v1.InternalLoadBalancerAnnounceService/GetAnnounceState": {
+			Relation: relationVGet,
+			Extract: authz.StaticExtractor(objectTypeLoadBalancer, func(req any) (string, error) {
+				return req.(*lbv1.GetLoadBalancerAnnounceStateRequest).GetNetworkLoadBalancerId(), nil
+			}),
+		},
+		"/kacho.cloud.loadbalancer.v1.InternalLoadBalancerAnnounceService/ReportAnnounceState": {
+			Relation: relationAnnounceWriter,
+			Extract: authz.StaticExtractor(objectTypeLoadBalancer, func(req any) (string, error) {
+				return req.(*lbv1.ReportLoadBalancerAnnounceStateRequest).GetNetworkLoadBalancerId(), nil
+			}),
 		},
 	}
 }

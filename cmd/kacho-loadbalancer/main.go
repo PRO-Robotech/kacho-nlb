@@ -46,6 +46,7 @@ import (
 	operationpb "github.com/PRO-Robotech/kacho-corelib/proto/gen/go/kacho/cloud/operation"
 	lbv1 "github.com/PRO-Robotech/kacho-nlb/proto/gen/go/kacho/cloud/loadbalancer/v1"
 
+	announceapi "github.com/PRO-Robotech/kacho-nlb/internal/apps/kacho/api/announce"
 	internallifecycle "github.com/PRO-Robotech/kacho-nlb/internal/apps/kacho/api/internal_lifecycle"
 	"github.com/PRO-Robotech/kacho-nlb/internal/apps/kacho/api/listener"
 	lbhandler "github.com/PRO-Robotech/kacho-nlb/internal/apps/kacho/api/loadbalancer"
@@ -387,6 +388,16 @@ func runServe(configPath string) error {
 		logger,
 	)
 	lbv1.RegisterInternalResourceLifecycleServiceServer(internalSrv, lifecycleHandler)
+
+	// InternalLoadBalancerAnnounceService. Наблюдаемая per-zone announce-state
+	// anycast-VIP (control-plane сторона feedback-петли data plane → nlb): read
+	// viewer-gated (v_get), inbound write least-priv (announce_writer). Зарегистрирован
+	// ТОЛЬКО на internalSrv (:9091) — инфра-чувствительные данные (BGP/route/VRF/
+	// kernel/infra-id) не выходят на external endpoint; per-RPC Check энфорсится тем
+	// же authzIntr, что и на public (НЕ exempt). announce-store — standalone поверх
+	// master-pool'а (не CQRS-ресурс: data-plane feedback, idempotent upsert без outbox).
+	announceHandler := announceapi.NewHandler(kachopg.NewAnnounceStore(pool), logger)
+	lbv1.RegisterInternalLoadBalancerAnnounceServiceServer(internalSrv, announceHandler)
 
 	publicListener, err := listenEndpoint(cfg.APIServer.Endpoint)
 	if err != nil {
