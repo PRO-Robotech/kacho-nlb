@@ -4,6 +4,8 @@
 package loadbalancer
 
 import (
+	"context"
+
 	geoclient "github.com/PRO-Robotech/kacho-nlb/internal/clients/geo"
 	iamclient "github.com/PRO-Robotech/kacho-nlb/internal/clients/iam"
 	vpcclient "github.com/PRO-Robotech/kacho-nlb/internal/clients/vpc"
@@ -38,11 +40,33 @@ type RegionClient = geoclient.RegionClient
 // недоступен → `Unavailable` (fail-closed для мутации).
 type NetworkClient = vpcclient.NetworkClient
 
-// AnycastAddressClient — vpc anycast-VIP lifecycle: AllocateAnycast (auto из
-// AnycastAddressPool), AttachAnycastBYO (BYO с server-side ownership/family
-// CAS-guard), FreeIP/ClearReference (release в compensation/Delete). Используется
-// per-family fan-out сагой Create и Delete.
-type AnycastAddressClient = vpcclient.AnycastAddressClient
+// InternalAddressClient — узкий VIP-lifecycle port над vpc InternalAddressService:
+// per-family auto-аллокация internal VIP из REGIONAL-подсети (AllocateInternalIP /
+// AllocateInternalIPv6), BYO-привязка принесённого Address (AttachExisting) и
+// release (FreeIP/ClearReference) в compensation/Delete. Используется per-family
+// fan-out сагой Create и Delete. Concrete `*vpcclient.internalAddressClient`
+// удовлетворяет этот интерфейс структурно.
+type InternalAddressClient interface {
+	AllocateInternalIP(ctx context.Context, req vpcclient.AllocateInternalIPRequest) (*vpcclient.AllocateResponse, error)
+	AllocateInternalIPv6(ctx context.Context, req vpcclient.AllocateInternalIPRequest) (*vpcclient.AllocateResponse, error)
+	AttachExisting(ctx context.Context, req vpcclient.AttachExistingRequest) (*vpcclient.AllocateResponse, error)
+	FreeIP(ctx context.Context, addressID string, owner vpcclient.AddressOwner) error
+	ClearReference(ctx context.Context, addressID string, owner vpcclient.AddressOwner) error
+}
+
+// SubnetClient — Get(subnetID) → *vpcclient.Subnet. Используется sync-precheck в
+// Create use-case'е: VIP LoadBalancer'а аллоцируется только из REGIONAL-подсети
+// (placement_type=REGIONAL). not-found → `InvalidArgument`, ZONAL-подсеть →
+// `InvalidArgument`, peer недоступен → `Unavailable` (fail-closed для мутации).
+type SubnetClient = vpcclient.SubnetClient
+
+// AddressClient — Get(addressID) → *vpcclient.Address (публичный vpc
+// AddressService.Get, authz-gated `v_get`). Используется sync-precheck BYO-VIP в
+// Create use-case'е: адрес резолвится под tenant-identity (auth.PropagateOutgoing),
+// проверяется принадлежность проекту LB и совпадение семейства. Cross-domain
+// ownership-валидация через owner-read API (data-integrity §2): восстанавливает
+// project/family-guard, которого больше нет server-side у vpc.SetAddressReference.
+type AddressClient = vpcclient.AddressClient
 
 // SecurityGroupClient — Get(sgID) → *vpcclient.SecurityGroup. Используется
 // sync-precheck в Create/Update use-case'ах для валидации `security_group_ids`

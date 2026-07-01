@@ -47,16 +47,16 @@ func lbUnregisterIntent(id, projectID string) domain.FGARegisterIntent {
 type DeleteLoadBalancerUseCase struct {
 	repo          Repo
 	opsRepo       operations.Repo
-	anycastClient AnycastAddressClient
+	addressClient InternalAddressClient
 	logger        *slog.Logger
 }
 
 // NewDeleteLoadBalancerUseCase конструктор.
-func NewDeleteLoadBalancerUseCase(repo Repo, opsRepo operations.Repo, ac AnycastAddressClient, logger *slog.Logger) *DeleteLoadBalancerUseCase {
+func NewDeleteLoadBalancerUseCase(repo Repo, opsRepo operations.Repo, ac InternalAddressClient, logger *slog.Logger) *DeleteLoadBalancerUseCase {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &DeleteLoadBalancerUseCase{repo: repo, opsRepo: opsRepo, anycastClient: ac, logger: logger}
+	return &DeleteLoadBalancerUseCase{repo: repo, opsRepo: opsRepo, addressClient: ac, logger: logger}
 }
 
 // Execute — sync prechecks + ops insert + spawn worker.
@@ -197,12 +197,12 @@ func (u *DeleteLoadBalancerUseCase) releaseVIP(ctx context.Context, lbID, addres
 	if addressID == "" {
 		return nil
 	}
-	if u.anycastClient == nil {
-		return status.Error(codes.Unavailable, "vpc anycast address client not configured")
+	if u.addressClient == nil {
+		return status.Error(codes.Unavailable, "vpc internal address client not configured")
 	}
 	owner := lbAddressOwner(lbID)
 	if origin == domain.VipOriginBYO {
-		return u.anycastClient.ClearReference(ctx, addressID, owner)
+		return u.addressClient.ClearReference(ctx, addressID, owner)
 	}
-	return u.anycastClient.FreeIP(ctx, addressID, owner)
+	return u.addressClient.FreeIP(ctx, addressID, owner)
 }

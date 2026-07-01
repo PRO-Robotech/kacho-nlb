@@ -51,6 +51,15 @@ type AllocateResponse struct {
 	PoolID    string // pool_id для external (пусто для internal)
 }
 
+// AttachExistingRequest — параметры BYO-привязки принесённого tenant'ом Address к
+// owner-ресурсу (LoadBalancer VIP). Server-side привязка идёт через
+// InternalAddressService.SetAddressReference (атомарный CAS в vpc); mismatch /
+// not-found мапится в generic InvalidArgument (анти-oracle).
+type AttachExistingRequest struct {
+	AddressID string
+	Owner     AddressOwner
+}
+
 // InternalAddressClient — port-интерфейс для service-слоя.
 // Каждый метод выполняет атомарную операцию VPC IPAM и устанавливает
 // referrer на новосозданном/изменённом Address-ресурсе.
@@ -74,6 +83,16 @@ type InternalAddressClient interface {
 	// AllocateInternalIPv6 — как AllocateInternalIP, но аллоцирует внутренний
 	// IPv6-VIP из subnet.v6_cidr_blocks. Контракт идентичен AllocateInternalIP.
 	AllocateInternalIPv6(ctx context.Context, req AllocateInternalIPRequest) (*AllocateResponse, error)
+
+	// AttachExisting привязывает принесённый tenant'ом Address к owner-ресурсу
+	// через InternalAddressService.SetAddressReference. Семантика ошибок
+	// (анти-oracle: не подтверждаем чужой ownership/семейство/существование):
+	//   - AlreadyExists (address занят другим referrer)  → domain.ErrFailedPrecondition
+	//   - NotFound / InvalidArgument / PermissionDenied  → generic domain.ErrInvalidArg
+	//                                                       "Illegal argument addressId"
+	//   - Unavailable/DeadlineExceeded                   → domain.ErrUnavailable
+	// Возвращает resolved-значение привязанного Address (Get после успеха).
+	AttachExisting(ctx context.Context, req AttachExistingRequest) (*AllocateResponse, error)
 
 	// FreeIP освобождает Address (idempotent через AddressService.Delete →
 	// NotFound трактуется как успех). ClearReference вызывается автоматически
@@ -371,6 +390,77 @@ func (c *internalAddressClient) ClearReference(
 			return fmt.Errorf("vpc clear address reference %q: %w", addressID, rerr)
 		}
 	})
+}
+
+// AttachExisting — см. контракт InternalAddressClient.AttachExisting.
+func (c *internalAddressClient) AttachExisting(
+	ctx context.Context, req AttachExistingRequest,
+) (*AllocateResponse, error) {
+	switch {
+	case req.AddressID == "":
+		return nil, fmt.Errorf("%w: address_id is empty", domain.ErrInvalidArg)
+	case req.Owner.Kind == "" || req.Owner.ID == "":
+		return nil, fmt.Errorf("%w: owner is empty", domain.ErrInvalidArg)
+	}
+
+	// Атомарный CAS-referrer в vpc (та же tx, что и запись used_by). Mismatch /
+	// not-found → generic InvalidArgument (анти-oracle: не раскрываем чужой
+	// ownership/семейство/несуществование адреса).
+	if err := retry.OnUnavailable(ctx, func(ctx context.Context) error {
+		_, rerr := c.internal.SetAddressReference(ctx, &vpcpb.SetAddressReferenceRequest{
+			AddressId:    req.AddressID,
+			ReferrerType: req.Owner.Kind,
+			ReferrerId:   req.Owner.ID,
+		})
+		if rerr == nil {
+			return nil
+		}
+		st, ok := status.FromError(rerr)
+		if !ok {
+			return fmt.Errorf("vpc set address reference %q: %w", req.AddressID, rerr)
+		}
+		switch st.Code() {
+		case codes.AlreadyExists:
+			return fmt.Errorf("%w: address %s already used by another resource", domain.ErrFailedPrecondition, req.AddressID)
+		case codes.NotFound, codes.InvalidArgument, codes.PermissionDenied:
+			return fmt.Errorf("%w: Illegal argument addressId", domain.ErrInvalidArg)
+		default:
+			return fmt.Errorf("vpc set address reference %q: %w", req.AddressID, rerr)
+		}
+	}); err != nil {
+		return nil, err
+	}
+
+	// Привязка прошла → адрес наш; читаем resolved-значение.
+	addr, err := c.resolveAddressValue(ctx, req.AddressID)
+	if err != nil {
+		return nil, err
+	}
+	return &AllocateResponse{AddressID: req.AddressID, Value: addr}, nil
+}
+
+// resolveAddressValue — Get Address + извлечение resolved IP-строки (любое
+// семейство). Используется после успешной BYO-привязки.
+func (c *internalAddressClient) resolveAddressValue(ctx context.Context, addressID string) (string, error) {
+	var resp *vpcpb.Address
+	if err := retry.OnUnavailable(ctx, func(ctx context.Context) error {
+		var rerr error
+		resp, rerr = c.addrs.Get(ctx, &vpcpb.GetAddressRequest{AddressId: addressID})
+		return rerr
+	}); err != nil {
+		return "", mapAllocErr(addressID, err)
+	}
+	switch {
+	case resp.GetInternalIpv4Address() != nil:
+		return resp.GetInternalIpv4Address().GetAddress(), nil
+	case resp.GetInternalIpv6Address() != nil:
+		return resp.GetInternalIpv6Address().GetAddress(), nil
+	case resp.GetExternalIpv4Address() != nil:
+		return resp.GetExternalIpv4Address().GetAddress(), nil
+	case resp.GetExternalIpv6Address() != nil:
+		return resp.GetExternalIpv6Address().GetAddress(), nil
+	}
+	return "", nil
 }
 
 // createAddressAndWait вызывает AddressService.Create + poll Operation до

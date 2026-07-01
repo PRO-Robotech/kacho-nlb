@@ -24,7 +24,7 @@ import (
 // network — OK-фейки; network отдаёт "enp-1").
 func newCreateUCSG(repo *fakeRepo, opsRepo *fakeOpsRepo, sgc SecurityGroupClient) *CreateLoadBalancerUseCase {
 	return NewCreateLoadBalancerUseCase(repo, opsRepo,
-		&fakeProjectClient{}, &fakeRegionClient{}, &fakeNetworkClient{}, sgc, &fakeAnycastClient{}, slog.Default())
+		&fakeProjectClient{}, &fakeRegionClient{}, &fakeNetworkClient{}, sgc, &fakeSubnetClient{}, &fakeAddressReader{}, &fakeAddressClient{}, slog.Default())
 }
 
 // internalSGReq — INTERNAL Create-request (auto v4) на enp-1 с заданным набором SG.
@@ -33,7 +33,7 @@ func internalSGReq(name string, sgs ...string) *lbv1.CreateNetworkLoadBalancerRe
 		ProjectId: "prj-a", RegionId: "ru-central1",
 		Name: name, Type: lbv1.NetworkLoadBalancer_INTERNAL,
 		NetworkId:        "enp-1",
-		AddressSpec:      autoV4Spec("aap-1"),
+		AddressSpec:      autoV4Spec(lbTestSubnetV4),
 		SecurityGroupIds: sgs,
 	}
 }

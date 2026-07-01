@@ -250,7 +250,7 @@ func (x *NetworkLoadBalancerAddressSpec) GetV6() *FamilyAddressSpec {
 }
 
 // FamilyAddressSpec — источник VIP одного семейства: auto-аллокация anycast VIP
-// из AnycastAddressPool kacho-vpc либо BYO заранее созданный anycast Address.
+// из REGIONAL-подсети kacho-vpc либо BYO заранее созданный anycast Address.
 type FamilyAddressSpec struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Types that are valid to be assigned to Source:
@@ -322,7 +322,7 @@ type isFamilyAddressSpec_Source interface {
 }
 
 type FamilyAddressSpec_Auto struct {
-	// Auto-аллокация anycast VIP из пула kacho-vpc.
+	// Auto-аллокация anycast VIP из REGIONAL-подсети kacho-vpc.
 	Auto *FamilyAddressSpec_AnycastAllocate `protobuf:"bytes,1,opt,name=auto,proto3,oneof"`
 }
 
@@ -361,7 +361,7 @@ type CreateNetworkLoadBalancerRequest struct {
 	// address_spec — per-family источник VIP (design §4.1). Присутствие v4/v6
 	// задаёт семейство в ip_families. Для INTERNAL обязательно хотя бы одно
 	// семейство. Результат (address_v4/v6 на ресурсе) — output-only, назначается
-	// worker'ом; здесь задаётся только origin (auto/byo + pool/address_id).
+	// worker'ом; здесь задаётся только origin (auto/byo + subnet_id/address_id).
 	AddressSpec *NetworkLoadBalancerAddressSpec `protobuf:"bytes,15,opt,name=address_spec,json=addressSpec,proto3" json:"address_spec,omitempty"`
 	// ip_families — заявленные семейства адресов VIP. Согласуется с присутствием
 	// v4/v6 в address_spec.
@@ -1518,10 +1518,11 @@ func (x *GetTargetStatesResponse) GetTargetStates() []*TargetState {
 
 type FamilyAddressSpec_AnycastAllocate struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// ID AnycastAddressPool, приаттаченного к network_id. Пусто → платформенный
-	// is_default-пул, приаттаченный к сети. INTERNAL anycast VIP network-scoped
-	// из пула, не из сабнета (потому subnet_id здесь нет).
-	AnycastPoolId string `protobuf:"bytes,1,opt,name=anycast_pool_id,json=anycastPoolId,proto3" json:"anycast_pool_id,omitempty"`
+	// ID REGIONAL-подсети kacho-vpc (placement_type=REGIONAL), из которой
+	// аллоцируется VIP. Обязателен для auto. VIP получается anycast именно
+	// потому, что подсеть region-scoped (анонсируется active-active из здоровых
+	// зон региона), а не привязана к одной зоне.
+	SubnetId      string `protobuf:"bytes,1,opt,name=subnet_id,json=subnetId,proto3" json:"subnet_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1556,9 +1557,9 @@ func (*FamilyAddressSpec_AnycastAllocate) Descriptor() ([]byte, []int) {
 	return file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_rawDescGZIP(), []int{4, 0}
 }
 
-func (x *FamilyAddressSpec_AnycastAllocate) GetAnycastPoolId() string {
+func (x *FamilyAddressSpec_AnycastAllocate) GetSubnetId() string {
 	if x != nil {
-		return x.AnycastPoolId
+		return x.SubnetId
 	}
 	return ""
 }
@@ -1631,12 +1632,12 @@ const file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_rawDe
 	"\x0fnext_page_token\x18\x02 \x01(\tR\rnextPageToken\"\xa0\x01\n" +
 	"\x1eNetworkLoadBalancerAddressSpec\x12>\n" +
 	"\x02v4\x18\x01 \x01(\v2..kacho.cloud.loadbalancer.v1.FamilyAddressSpecR\x02v4\x12>\n" +
-	"\x02v6\x18\x02 \x01(\v2..kacho.cloud.loadbalancer.v1.FamilyAddressSpecR\x02v6\"\xbe\x02\n" +
+	"\x02v6\x18\x02 \x01(\v2..kacho.cloud.loadbalancer.v1.FamilyAddressSpecR\x02v6\"\xb3\x02\n" +
 	"\x11FamilyAddressSpec\x12T\n" +
 	"\x04auto\x18\x01 \x01(\v2>.kacho.cloud.loadbalancer.v1.FamilyAddressSpec.AnycastAllocateH\x00R\x04auto\x12M\n" +
-	"\x03byo\x18\x02 \x01(\v29.kacho.cloud.loadbalancer.v1.FamilyAddressSpec.AnycastByoH\x00R\x03byo\x1aC\n" +
-	"\x0fAnycastAllocate\x120\n" +
-	"\x0fanycast_pool_id\x18\x01 \x01(\tB\b\x8a\xc81\x04<=50R\ranycastPoolId\x1a5\n" +
+	"\x03byo\x18\x02 \x01(\v29.kacho.cloud.loadbalancer.v1.FamilyAddressSpec.AnycastByoH\x00R\x03byo\x1a8\n" +
+	"\x0fAnycastAllocate\x12%\n" +
+	"\tsubnet_id\x18\x01 \x01(\tB\b\x8a\xc81\x04<=50R\bsubnetId\x1a5\n" +
 	"\n" +
 	"AnycastByo\x12'\n" +
 	"\n" +

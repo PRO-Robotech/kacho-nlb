@@ -683,32 +683,48 @@ func (f *fakeSecurityGroupClient) Get(ctx context.Context, sgID string) (*vpccli
 	return &vpcclient.SecurityGroup{ID: sgID, ProjectID: "prj-a", NetworkID: "enp-1", Name: "fake-sg"}, nil
 }
 
-// fakeAnycastClient — двойник vpc.AnycastAddressClient для per-family fan-out
-// саги. Дефолт: auto/byo возвращают детерминированный адрес; frees/clears
-// записываются для assert'ов compensation/Delete. getFunc-хуки подменяют под
-// negative-сценарии (пул исчерпан, BYO mismatch).
-type fakeAnycastClient struct {
+// recordedAlloc — запись одного auto-alloc вызова (с семейством, т.к. семейство
+// теперь задаётся выбором метода AllocateInternalIP/AllocateInternalIPv6, а не полем).
+type recordedAlloc struct {
+	req    vpcclient.AllocateInternalIPRequest
+	family string // vpcclient.AddressFamilyIPv4 | AddressFamilyIPv6
+}
+
+// fakeAddressClient — двойник vpc InternalAddressClient (узкий VIP-lifecycle port)
+// для per-family fan-out саги. Дефолт: auto (AllocateInternalIP/IPv6) и byo
+// (AttachExisting) возвращают детерминированный адрес; frees/clears записываются
+// для assert'ов compensation/Delete. allocFunc/byoFunc подменяют под negative-
+// сценарии (подсеть исчерпана, BYO mismatch).
+type fakeAddressClient struct {
 	mu        sync.Mutex
-	allocFunc func(ctx context.Context, req vpcclient.AllocateAnycastRequest) (*vpcclient.AllocateResponse, error)
-	byoFunc   func(ctx context.Context, req vpcclient.AttachAnycastBYORequest) (*vpcclient.AllocateResponse, error)
-	allocReqs []vpcclient.AllocateAnycastRequest
-	byoReqs   []vpcclient.AttachAnycastBYORequest
+	allocFunc func(ctx context.Context, req vpcclient.AllocateInternalIPRequest, family string) (*vpcclient.AllocateResponse, error)
+	byoFunc   func(ctx context.Context, req vpcclient.AttachExistingRequest) (*vpcclient.AllocateResponse, error)
+	allocReqs []recordedAlloc
+	byoReqs   []vpcclient.AttachExistingRequest
 	freed     []string
 	cleared   []string
 	seq       int
 }
 
-func (f *fakeAnycastClient) AllocateAnycast(ctx context.Context, req vpcclient.AllocateAnycastRequest) (*vpcclient.AllocateResponse, error) {
+func (f *fakeAddressClient) AllocateInternalIP(ctx context.Context, req vpcclient.AllocateInternalIPRequest) (*vpcclient.AllocateResponse, error) {
+	return f.alloc(ctx, req, vpcclient.AddressFamilyIPv4)
+}
+
+func (f *fakeAddressClient) AllocateInternalIPv6(ctx context.Context, req vpcclient.AllocateInternalIPRequest) (*vpcclient.AllocateResponse, error) {
+	return f.alloc(ctx, req, vpcclient.AddressFamilyIPv6)
+}
+
+func (f *fakeAddressClient) alloc(ctx context.Context, req vpcclient.AllocateInternalIPRequest, family string) (*vpcclient.AllocateResponse, error) {
 	f.mu.Lock()
-	f.allocReqs = append(f.allocReqs, req)
+	f.allocReqs = append(f.allocReqs, recordedAlloc{req: req, family: family})
 	f.seq++
 	seq := f.seq
 	f.mu.Unlock()
 	if f.allocFunc != nil {
-		return f.allocFunc(ctx, req)
+		return f.allocFunc(ctx, req, family)
 	}
 	prefix := "10.0.0."
-	if req.Family == vpcclient.AddressFamilyIPv6 {
+	if family == vpcclient.AddressFamilyIPv6 {
 		prefix = "fd00::"
 	}
 	return &vpcclient.AllocateResponse{
@@ -717,32 +733,72 @@ func (f *fakeAnycastClient) AllocateAnycast(ctx context.Context, req vpcclient.A
 	}, nil
 }
 
-func (f *fakeAnycastClient) AttachAnycastBYO(ctx context.Context, req vpcclient.AttachAnycastBYORequest) (*vpcclient.AllocateResponse, error) {
+func (f *fakeAddressClient) AttachExisting(ctx context.Context, req vpcclient.AttachExistingRequest) (*vpcclient.AllocateResponse, error) {
 	f.mu.Lock()
 	f.byoReqs = append(f.byoReqs, req)
 	f.mu.Unlock()
 	if f.byoFunc != nil {
 		return f.byoFunc(ctx, req)
 	}
-	val := "10.0.0.250"
-	if req.ExpectFamily == vpcclient.AddressFamilyIPv6 {
-		val = "fd00::250"
-	}
-	return &vpcclient.AllocateResponse{AddressID: req.AddressID, Value: val}, nil
+	return &vpcclient.AllocateResponse{AddressID: req.AddressID, Value: "10.0.0.250"}, nil
 }
 
-func (f *fakeAnycastClient) FreeIP(ctx context.Context, addressID string, _ vpcclient.AddressOwner) error {
+func (f *fakeAddressClient) FreeIP(ctx context.Context, addressID string, _ vpcclient.AddressOwner) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.freed = append(f.freed, addressID)
 	return nil
 }
 
-func (f *fakeAnycastClient) ClearReference(ctx context.Context, addressID string, _ vpcclient.AddressOwner) error {
+func (f *fakeAddressClient) ClearReference(ctx context.Context, addressID string, _ vpcclient.AddressOwner) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.cleared = append(f.cleared, addressID)
 	return nil
+}
+
+// fakeSubnetClient — двойник vpc.SubnetClient для sync-precheck REGIONAL-подсети.
+// Дефолт: подсеть найдена и REGIONAL; placement/getFunc подменяют под negative-
+// сценарии (ZONAL-подсеть / not-found / vpc-Unavailable).
+type fakeSubnetClient struct {
+	placement string // "" → REGIONAL по умолчанию
+	getFunc   func(ctx context.Context, subnetID string) (*vpcclient.Subnet, error)
+}
+
+func (f *fakeSubnetClient) Get(ctx context.Context, subnetID string) (*vpcclient.Subnet, error) {
+	if f.getFunc != nil {
+		return f.getFunc(ctx, subnetID)
+	}
+	pt := f.placement
+	if pt == "" {
+		pt = vpcclient.SubnetPlacementRegional
+	}
+	return &vpcclient.Subnet{ID: subnetID, ProjectID: "prj-a", NetworkID: "net-1", PlacementType: pt}, nil
+}
+
+// fakeAddressReader — двойник vpc.AddressClient (публичный AddressService.Get) для
+// BYO ownership-precheck. Дефолт: адрес принадлежит проекту "prj-a", семейство
+// IPV4 (совпадает с happy-path BYO v4). projectID/family/getFunc подменяют под
+// negative-сценарии (чужой проект, несовпадение семейства, not-found/vpc-Unavailable).
+type fakeAddressReader struct {
+	projectID string // "" → "prj-a"
+	family    string // "" → AddressFamilyIPv4
+	getFunc   func(ctx context.Context, addressID string) (*vpcclient.Address, error)
+}
+
+func (f *fakeAddressReader) Get(ctx context.Context, addressID string) (*vpcclient.Address, error) {
+	if f.getFunc != nil {
+		return f.getFunc(ctx, addressID)
+	}
+	pid := f.projectID
+	if pid == "" {
+		pid = "prj-a"
+	}
+	fam := f.family
+	if fam == "" {
+		fam = vpcclient.AddressFamilyIPv4
+	}
+	return &vpcclient.Address{ID: addressID, ProjectID: pid, Family: fam}, nil
 }
 
 // fakeFGARegisterOutbox records FGARegisterOutbox.Emit into the writer's
@@ -759,10 +815,12 @@ func (o *fakeFGARegisterOutbox) Emit(ctx context.Context, eventType string, inte
 
 // ensure interface conformance (compile-time).
 var (
-	_ kachorepo.Repository = (*fakeRepo)(nil)
-	_ ProjectClient        = (*fakeProjectClient)(nil)
-	_ RegionClient         = (*fakeRegionClient)(nil)
-	_ NetworkClient        = (*fakeNetworkClient)(nil)
-	_ SecurityGroupClient  = (*fakeSecurityGroupClient)(nil)
-	_ AnycastAddressClient = (*fakeAnycastClient)(nil)
+	_ kachorepo.Repository  = (*fakeRepo)(nil)
+	_ ProjectClient         = (*fakeProjectClient)(nil)
+	_ RegionClient          = (*fakeRegionClient)(nil)
+	_ NetworkClient         = (*fakeNetworkClient)(nil)
+	_ SecurityGroupClient   = (*fakeSecurityGroupClient)(nil)
+	_ SubnetClient          = (*fakeSubnetClient)(nil)
+	_ AddressClient         = (*fakeAddressReader)(nil)
+	_ InternalAddressClient = (*fakeAddressClient)(nil)
 )

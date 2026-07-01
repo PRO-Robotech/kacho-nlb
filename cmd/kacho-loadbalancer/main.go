@@ -93,8 +93,6 @@ type peerClients struct {
 	NetworkInterface vpcclient.NetworkInterfaceClient
 	Address          vpcclient.AddressClient
 	InternalAddress  vpcclient.InternalAddressClient
-	// Anycast — vpc anycast-VIP lifecycle (LoadBalancer Create/Delete fan-out).
-	Anycast vpcclient.AnycastAddressClient
 	// ListFilter — per-object filtered List (RBAC; iam
 	// AuthorizeService.ListObjects). nil → use-case'ы делают unfiltered passthrough.
 	ListFilter authzfilter.Filter
@@ -343,7 +341,8 @@ func runServe(configPath string) error {
 	// (Internal-vs-external инвариант: Internal.* живут на internalSrv).
 	lbHandler := lbhandler.NewHandler(
 		repo, opsRepo,
-		peers.Project, peers.Region, peers.Network, peers.SecurityGroup, peers.Anycast,
+		peers.Project, peers.Region, peers.Network, peers.SecurityGroup,
+		peers.Subnet, peers.Address, peers.InternalAddress,
 		peers.ListFilter,
 		logger,
 	)
@@ -873,7 +872,6 @@ func dialPeers(
 	}
 	if vpcPublicConn != nil && vpcInternalConn != nil {
 		peers.InternalAddress = vpcclient.NewInternalAddressClient(vpcPublicConn, vpcInternalConn)
-		peers.Anycast = vpcclient.NewAnycastAddressClient(vpcPublicConn, vpcInternalConn)
 	}
 
 	return conns, peers, nil

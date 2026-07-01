@@ -24,7 +24,7 @@ func TestDelete_HappyPath(t *testing.T) {
 	repo := newFakeRepo()
 	lbID := seedLB(t, repo, "prj-a", "edge")
 	opsRepo := newFakeOpsRepo()
-	uc := NewDeleteLoadBalancerUseCase(repo, opsRepo, &fakeAnycastClient{}, slog.Default())
+	uc := NewDeleteLoadBalancerUseCase(repo, opsRepo, &fakeAddressClient{}, slog.Default())
 	op, err := uc.Execute(context.Background(), &lbv1.DeleteNetworkLoadBalancerRequest{
 		NetworkLoadBalancerId: lbID,
 	})
@@ -43,7 +43,7 @@ func TestDelete_DeletionProtection(t *testing.T) {
 	repo := newFakeRepo()
 	lbID := seedLB(t, repo, "prj-a", "edge")
 	repo.lbs[lbID].DeletionProtection = true
-	uc := NewDeleteLoadBalancerUseCase(repo, newFakeOpsRepo(), &fakeAnycastClient{}, nil)
+	uc := NewDeleteLoadBalancerUseCase(repo, newFakeOpsRepo(), &fakeAddressClient{}, nil)
 	_, err := uc.Execute(context.Background(), &lbv1.DeleteNetworkLoadBalancerRequest{
 		NetworkLoadBalancerId: lbID,
 	})
@@ -62,7 +62,7 @@ func TestDelete_HasListeners(t *testing.T) {
 			LoadBalancerID: domain.ResourceID(lbID),
 		}},
 	}
-	uc := NewDeleteLoadBalancerUseCase(repo, newFakeOpsRepo(), &fakeAnycastClient{}, nil)
+	uc := NewDeleteLoadBalancerUseCase(repo, newFakeOpsRepo(), &fakeAddressClient{}, nil)
 	_, err := uc.Execute(context.Background(), &lbv1.DeleteNetworkLoadBalancerRequest{
 		NetworkLoadBalancerId: lbID,
 	})
@@ -78,7 +78,7 @@ func TestDelete_HasAttachedTG(t *testing.T) {
 	repo.pivot[lbID+"/"+tgID] = &kachorepo.AttachedTargetGroupRecord{
 		LoadBalancerID: lbID, TargetGroupID: tgID,
 	}
-	uc := NewDeleteLoadBalancerUseCase(repo, newFakeOpsRepo(), &fakeAnycastClient{}, nil)
+	uc := NewDeleteLoadBalancerUseCase(repo, newFakeOpsRepo(), &fakeAddressClient{}, nil)
 	_, err := uc.Execute(context.Background(), &lbv1.DeleteNetworkLoadBalancerRequest{
 		NetworkLoadBalancerId: lbID,
 	})
@@ -88,7 +88,7 @@ func TestDelete_HasAttachedTG(t *testing.T) {
 
 func TestDelete_NotFound(t *testing.T) {
 	t.Parallel()
-	uc := NewDeleteLoadBalancerUseCase(newFakeRepo(), newFakeOpsRepo(), &fakeAnycastClient{}, nil)
+	uc := NewDeleteLoadBalancerUseCase(newFakeRepo(), newFakeOpsRepo(), &fakeAddressClient{}, nil)
 	_, err := uc.Execute(context.Background(), &lbv1.DeleteNetworkLoadBalancerRequest{
 		NetworkLoadBalancerId: "nlb-x",
 	})

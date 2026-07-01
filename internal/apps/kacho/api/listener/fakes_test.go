@@ -872,6 +872,15 @@ func (c *fakeInternalAddressClient) ClearReference(_ context.Context, id string,
 	c.clearCalls = append(c.clearCalls, id)
 	return c.clearErr
 }
+func (c *fakeInternalAddressClient) AttachExisting(_ context.Context, req vpcclient.AttachExistingRequest) (*vpcclient.AllocateResponse, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.setRefCalls = append(c.setRefCalls, setRefCall{addressID: req.AddressID, owner: req.Owner})
+	if c.setRefErr != nil {
+		return nil, c.setRefErr
+	}
+	return &vpcclient.AllocateResponse{AddressID: req.AddressID, Value: c.nextAllocValue}, nil
+}
 
 // fakeSubnetClient — minimal SubnetClient stub (not exercised in current
 // tests — Listener.Create defers to vpc.InternalAddressService.AllocateInternalIP

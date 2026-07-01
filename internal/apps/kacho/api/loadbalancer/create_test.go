@@ -54,11 +54,19 @@ func lbFieldViolations(err error) string {
 	return strings.Join(parts, " | ")
 }
 
-// autoV4Spec — address_spec с auto-аллокацией одного семейства IPv4 (явный пул).
-func autoV4Spec(poolID string) *lbv1.NetworkLoadBalancerAddressSpec {
+// lbTestSubnetV4 / lbTestSubnetV6 — REGIONAL-подсети для auto-аллокации VIP в
+// unit-тестах (well-formed subnet id — префикс "sub" известен corevalidate).
+const (
+	lbTestSubnetV4 = "sub-1"
+	lbTestSubnetV6 = "sub-6"
+)
+
+// autoV4Spec — address_spec с auto-аллокацией одного семейства IPv4 из REGIONAL-
+// подсети subnetID.
+func autoV4Spec(subnetID string) *lbv1.NetworkLoadBalancerAddressSpec {
 	return &lbv1.NetworkLoadBalancerAddressSpec{
 		V4: &lbv1.FamilyAddressSpec{Source: &lbv1.FamilyAddressSpec_Auto{
-			Auto: &lbv1.FamilyAddressSpec_AnycastAllocate{AnycastPoolId: poolID},
+			Auto: &lbv1.FamilyAddressSpec_AnycastAllocate{SubnetId: subnetID},
 		}},
 	}
 }
@@ -68,18 +76,30 @@ func internalReq(name string) *lbv1.CreateNetworkLoadBalancerRequest {
 	return &lbv1.CreateNetworkLoadBalancerRequest{
 		ProjectId: "prj-a", RegionId: "ru-central1", Name: name,
 		Type: lbv1.NetworkLoadBalancer_INTERNAL, NetworkId: "net-1",
-		AddressSpec: autoV4Spec("aap-1"),
+		AddressSpec: autoV4Spec(lbTestSubnetV4),
 	}
 }
 
-// newCreateUC — use-case с дефолтными network/sg/anycast фейками.
+// newCreateUC — use-case с дефолтными network/sg/subnet/address фейками.
 func newCreateUC(repo *fakeRepo, opsRepo *fakeOpsRepo, pc ProjectClient, rc RegionClient) *CreateLoadBalancerUseCase {
-	return NewCreateLoadBalancerUseCase(repo, opsRepo, pc, rc, &fakeNetworkClient{}, &fakeSecurityGroupClient{}, &fakeAnycastClient{}, slog.Default())
+	return NewCreateLoadBalancerUseCase(repo, opsRepo, pc, rc, &fakeNetworkClient{}, &fakeSecurityGroupClient{}, &fakeSubnetClient{}, &fakeAddressReader{}, &fakeAddressClient{}, slog.Default())
 }
 
-// newCreateUCWithAnycast — вариант с явным anycast-фейком для assert'ов саги.
-func newCreateUCWithAnycast(repo *fakeRepo, opsRepo *fakeOpsRepo, ac AnycastAddressClient) *CreateLoadBalancerUseCase {
-	return NewCreateLoadBalancerUseCase(repo, opsRepo, &fakeProjectClient{}, &fakeRegionClient{}, &fakeNetworkClient{}, &fakeSecurityGroupClient{}, ac, slog.Default())
+// newCreateUCWithAddress — вариант с явным address-фейком для assert'ов саги
+// (subnet-client + address-reader — дефолтные REGIONAL / matching-owner фейки).
+func newCreateUCWithAddress(repo *fakeRepo, opsRepo *fakeOpsRepo, ac InternalAddressClient) *CreateLoadBalancerUseCase {
+	return NewCreateLoadBalancerUseCase(repo, opsRepo, &fakeProjectClient{}, &fakeRegionClient{}, &fakeNetworkClient{}, &fakeSecurityGroupClient{}, &fakeSubnetClient{}, &fakeAddressReader{}, ac, slog.Default())
+}
+
+// newCreateUCWithSubnet — вариант с явным subnet-фейком (для REGIONAL-валидации).
+func newCreateUCWithSubnet(repo *fakeRepo, opsRepo *fakeOpsRepo, snc SubnetClient, ac InternalAddressClient) *CreateLoadBalancerUseCase {
+	return NewCreateLoadBalancerUseCase(repo, opsRepo, &fakeProjectClient{}, &fakeRegionClient{}, &fakeNetworkClient{}, &fakeSecurityGroupClient{}, snc, &fakeAddressReader{}, ac, slog.Default())
+}
+
+// newCreateUCWithAddressReader — вариант с явным address-reader-фейком (для BYO
+// ownership/family-валидации). subnet-client — дефолтный REGIONAL-фейк.
+func newCreateUCWithAddressReader(repo *fakeRepo, opsRepo *fakeOpsRepo, ar AddressClient, ac InternalAddressClient) *CreateLoadBalancerUseCase {
+	return NewCreateLoadBalancerUseCase(repo, opsRepo, &fakeProjectClient{}, &fakeRegionClient{}, &fakeNetworkClient{}, &fakeSecurityGroupClient{}, &fakeSubnetClient{}, ar, ac, slog.Default())
 }
 
 // TestCreateLoadBalancer_SessionAffinity — session_affinity from the request is
@@ -153,15 +173,15 @@ func TestCreateLoadBalancer_CrossZoneEnabled(t *testing.T) {
 	}
 }
 
-// TestCreateLoadBalancer_AutoV4HappyPath — INTERNAL auto-alloc single-family v4:
-// durable-handle сага финализирует в INACTIVE, VIP проставлен, ip_families=[IPV4],
-// AllocateAnycast вызван ровно один раз (GWT-01).
+// TestCreateLoadBalancer_AutoV4HappyPath — INTERNAL auto-alloc single-family v4
+// из REGIONAL-подсети: durable-handle сага финализирует в INACTIVE, VIP проставлен,
+// ip_families=[IPV4], AllocateInternalIP вызван ровно один раз с subnet_id (GWT-01).
 func TestCreateLoadBalancer_AutoV4HappyPath(t *testing.T) {
 	t.Parallel()
 	repo := newFakeRepo()
 	opsRepo := newFakeOpsRepo()
-	ac := &fakeAnycastClient{}
-	uc := newCreateUCWithAnycast(repo, opsRepo, ac)
+	ac := &fakeAddressClient{}
+	uc := newCreateUCWithAddress(repo, opsRepo, ac)
 
 	op, err := uc.Execute(context.Background(), internalReq("edge-internal"))
 	require.NoError(t, err)
@@ -179,10 +199,10 @@ func TestCreateLoadBalancer_AutoV4HappyPath(t *testing.T) {
 	require.NotEmpty(t, string(lb.AddressIDV4), "address_id_v4 bound")
 	require.Equal(t, domain.VipOriginAuto, lb.VipOriginV4)
 	require.Empty(t, string(lb.AddressV6))
-	require.Len(t, ac.allocReqs, 1, "AllocateAnycast called once for v4")
-	require.Equal(t, vpcclient.AddressFamilyIPv4, ac.allocReqs[0].Family)
-	require.Equal(t, "aap-1", ac.allocReqs[0].AnycastPoolID)
-	require.Equal(t, "net-1", ac.allocReqs[0].NetworkID)
+	require.Len(t, ac.allocReqs, 1, "AllocateInternalIP called once for v4")
+	require.Equal(t, vpcclient.AddressFamilyIPv4, ac.allocReqs[0].family)
+	require.Equal(t, lbTestSubnetV4, ac.allocReqs[0].req.SubnetID)
+	require.Equal(t, "prj-a", ac.allocReqs[0].req.ProjectID)
 
 	evts := repo.outboxEvents()
 	require.Len(t, evts, 1)
@@ -190,18 +210,19 @@ func TestCreateLoadBalancer_AutoV4HappyPath(t *testing.T) {
 }
 
 // TestCreateLoadBalancer_DualstackFanOut — v4+v6 auto: оба семейства аллоцированы
-// и привязаны; ip_families=[IPV4,IPV6]; AllocateAnycast вызван дважды (GWT-03).
+// из своих REGIONAL-подсетей; ip_families=[IPV4,IPV6]; AllocateInternalIP(v4) +
+// AllocateInternalIPv6(v6) вызваны по разу (GWT-03).
 func TestCreateLoadBalancer_DualstackFanOut(t *testing.T) {
 	t.Parallel()
 	repo := newFakeRepo()
 	opsRepo := newFakeOpsRepo()
-	ac := &fakeAnycastClient{}
-	uc := newCreateUCWithAnycast(repo, opsRepo, ac)
+	ac := &fakeAddressClient{}
+	uc := newCreateUCWithAddress(repo, opsRepo, ac)
 
 	req := internalReq("edge-ds")
 	req.AddressSpec = &lbv1.NetworkLoadBalancerAddressSpec{
-		V4: &lbv1.FamilyAddressSpec{Source: &lbv1.FamilyAddressSpec_Auto{Auto: &lbv1.FamilyAddressSpec_AnycastAllocate{AnycastPoolId: "aap-1"}}},
-		V6: &lbv1.FamilyAddressSpec{Source: &lbv1.FamilyAddressSpec_Auto{Auto: &lbv1.FamilyAddressSpec_AnycastAllocate{AnycastPoolId: "aap-6"}}},
+		V4: &lbv1.FamilyAddressSpec{Source: &lbv1.FamilyAddressSpec_Auto{Auto: &lbv1.FamilyAddressSpec_AnycastAllocate{SubnetId: lbTestSubnetV4}}},
+		V6: &lbv1.FamilyAddressSpec{Source: &lbv1.FamilyAddressSpec_Auto{Auto: &lbv1.FamilyAddressSpec_AnycastAllocate{SubnetId: lbTestSubnetV6}}},
 	}
 	op, err := uc.Execute(context.Background(), req)
 	require.NoError(t, err)
@@ -213,17 +234,21 @@ func TestCreateLoadBalancer_DualstackFanOut(t *testing.T) {
 	require.NotEmpty(t, string(lb.AddressV6))
 	require.NotEmpty(t, string(lb.AddressIDV4))
 	require.NotEmpty(t, string(lb.AddressIDV6))
-	require.Len(t, ac.allocReqs, 2, "AllocateAnycast called for v4 and v6")
+	require.Len(t, ac.allocReqs, 2, "AllocateInternalIP called for v4 and v6")
+	require.Equal(t, vpcclient.AddressFamilyIPv4, ac.allocReqs[0].family)
+	require.Equal(t, lbTestSubnetV4, ac.allocReqs[0].req.SubnetID)
+	require.Equal(t, vpcclient.AddressFamilyIPv6, ac.allocReqs[1].family)
+	require.Equal(t, lbTestSubnetV6, ac.allocReqs[1].req.SubnetID)
 }
 
-// TestCreateLoadBalancer_BYOv4 — BYO v4: AttachAnycastBYO вызван с expect-guard
-// (project/family); VIP проставлен из принесённого Address (GWT-04).
+// TestCreateLoadBalancer_BYOv4 — BYO v4: AttachExisting вызван с owner + addressId;
+// VIP проставлен из принесённого Address (GWT-04).
 func TestCreateLoadBalancer_BYOv4(t *testing.T) {
 	t.Parallel()
 	repo := newFakeRepo()
 	opsRepo := newFakeOpsRepo()
-	ac := &fakeAnycastClient{}
-	uc := newCreateUCWithAnycast(repo, opsRepo, ac)
+	ac := &fakeAddressClient{}
+	uc := newCreateUCWithAddress(repo, opsRepo, ac)
 
 	req := internalReq("edge-byo")
 	req.AddressSpec = &lbv1.NetworkLoadBalancerAddressSpec{
@@ -236,12 +261,119 @@ func TestCreateLoadBalancer_BYOv4(t *testing.T) {
 	require.Nil(t, awaitOpDone(t, opsRepo, op.ID).Error)
 
 	require.Len(t, ac.byoReqs, 1)
-	require.Equal(t, "prj-a", ac.byoReqs[0].ExpectProjectID)
-	require.Equal(t, vpcclient.AddressFamilyIPv4, ac.byoReqs[0].ExpectFamily)
+	require.Equal(t, "adr00000000000000byo", ac.byoReqs[0].AddressID)
+	require.Equal(t, lbAddressOwnerKind, ac.byoReqs[0].Owner.Kind)
+	require.Empty(t, ac.allocReqs, "BYO path must not auto-allocate")
+	lb := onlyLB(t, repo)
+	require.Equal(t, domain.VipOriginBYO, lb.VipOriginV4)
+	require.Equal(t, "adr00000000000000byo", string(lb.AddressIDV4))
+}
+
+// byoV4Req — валидный INTERNAL Create-request с BYO v4 addressId.
+func byoV4Req(name, addressID string) *lbv1.CreateNetworkLoadBalancerRequest {
+	req := internalReq(name)
+	req.AddressSpec = &lbv1.NetworkLoadBalancerAddressSpec{
+		V4: &lbv1.FamilyAddressSpec{Source: &lbv1.FamilyAddressSpec_Byo{
+			Byo: &lbv1.FamilyAddressSpec_AnycastByo{AddressId: addressID},
+		}},
+	}
+	return req
+}
+
+// TestCreateLoadBalancer_BYOWrongProject — BYO Address принадлежит ЧУЖОМУ проекту:
+// sync-precheck ownership отвергает Create generic InvalidArgument (анти-oracle);
+// AttachExisting не вызывается, LB не создаётся.
+func TestCreateLoadBalancer_BYOWrongProject(t *testing.T) {
+	t.Parallel()
+	repo := newFakeRepo()
+	opsRepo := newFakeOpsRepo()
+	ac := &fakeAddressClient{}
+	// Адрес принадлежит "prj-other" (LB — "prj-a"), семейство совпадает (v4).
+	ar := &fakeAddressReader{projectID: "prj-other", family: vpcclient.AddressFamilyIPv4}
+	uc := newCreateUCWithAddressReader(repo, opsRepo, ar, ac)
+
+	_, err := uc.Execute(context.Background(), byoV4Req("edge-byo-xproj", "adr00000000000000byo"))
+	require.Equal(t, codes.InvalidArgument, status.Code(err))
+	require.Equal(t, "Illegal argument addressId", status.Convert(err).Message())
+	require.Empty(t, ac.byoReqs, "AttachExisting must not be called for cross-project address")
+	require.Empty(t, repo.lbs, "LB must not be persisted")
+}
+
+// TestCreateLoadBalancer_BYOWrongFamily — BYO Address семейства v6, а заявлен v4:
+// sync-precheck отвергает generic InvalidArgument; bind не происходит.
+func TestCreateLoadBalancer_BYOWrongFamily(t *testing.T) {
+	t.Parallel()
+	repo := newFakeRepo()
+	opsRepo := newFakeOpsRepo()
+	ac := &fakeAddressClient{}
+	// Проект совпадает (prj-a), но адрес — IPv6, а декларирован v4.
+	ar := &fakeAddressReader{projectID: "prj-a", family: vpcclient.AddressFamilyIPv6}
+	uc := newCreateUCWithAddressReader(repo, opsRepo, ar, ac)
+
+	_, err := uc.Execute(context.Background(), byoV4Req("edge-byo-xfam", "adr00000000000000byo"))
+	require.Equal(t, codes.InvalidArgument, status.Code(err))
+	require.Equal(t, "Illegal argument addressId", status.Convert(err).Message())
+	require.Empty(t, ac.byoReqs, "AttachExisting must not be called for family mismatch")
+	require.Empty(t, repo.lbs)
+}
+
+// TestCreateLoadBalancer_BYOOwnershipHappyPath — BYO Address совпадает по проекту
+// и семейству: precheck проходит, AttachExisting вызван, VIP персистится.
+func TestCreateLoadBalancer_BYOOwnershipHappyPath(t *testing.T) {
+	t.Parallel()
+	repo := newFakeRepo()
+	opsRepo := newFakeOpsRepo()
+	ac := &fakeAddressClient{}
+	ar := &fakeAddressReader{projectID: "prj-a", family: vpcclient.AddressFamilyIPv4}
+	uc := newCreateUCWithAddressReader(repo, opsRepo, ar, ac)
+
+	op, err := uc.Execute(context.Background(), byoV4Req("edge-byo-ok", "adr00000000000000byo"))
+	require.NoError(t, err)
+	require.Nil(t, awaitOpDone(t, opsRepo, op.ID).Error)
+
+	require.Len(t, ac.byoReqs, 1, "AttachExisting called after ownership check passes")
 	require.Equal(t, "adr00000000000000byo", ac.byoReqs[0].AddressID)
 	lb := onlyLB(t, repo)
 	require.Equal(t, domain.VipOriginBYO, lb.VipOriginV4)
 	require.Equal(t, "adr00000000000000byo", string(lb.AddressIDV4))
+}
+
+// TestCreateLoadBalancer_BYOVpcUnavailable — vpc недоступен при ownership-resolve:
+// fail-closed Unavailable (мутация не проходит); bind не происходит.
+func TestCreateLoadBalancer_BYOVpcUnavailable(t *testing.T) {
+	t.Parallel()
+	repo := newFakeRepo()
+	opsRepo := newFakeOpsRepo()
+	ac := &fakeAddressClient{}
+	ar := &fakeAddressReader{getFunc: func(_ context.Context, addressID string) (*vpcclient.Address, error) {
+		return nil, fmt.Errorf("%w: vpc address %s: dial", domain.ErrUnavailable, addressID)
+	}}
+	uc := newCreateUCWithAddressReader(repo, opsRepo, ar, ac)
+
+	_, err := uc.Execute(context.Background(), byoV4Req("edge-byo-vpcdown", "adr00000000000000byo"))
+	require.Equal(t, codes.Unavailable, status.Code(err))
+	require.Empty(t, ac.byoReqs)
+	require.Empty(t, repo.lbs)
+}
+
+// TestCreateLoadBalancer_BYONotFound — BYO Address не найден / недоступен tenant'у:
+// authz-gated Get вернул NotFound/PermissionDenied → generic InvalidArgument (анти-
+// oracle: не раскрываем, существует ли адрес и чей он).
+func TestCreateLoadBalancer_BYONotFound(t *testing.T) {
+	t.Parallel()
+	repo := newFakeRepo()
+	opsRepo := newFakeOpsRepo()
+	ac := &fakeAddressClient{}
+	ar := &fakeAddressReader{getFunc: func(_ context.Context, addressID string) (*vpcclient.Address, error) {
+		return nil, fmt.Errorf("%w: address %s not found", domain.ErrInvalidArg, addressID)
+	}}
+	uc := newCreateUCWithAddressReader(repo, opsRepo, ar, ac)
+
+	_, err := uc.Execute(context.Background(), byoV4Req("edge-byo-404", "adr00000000000000byo"))
+	require.Equal(t, codes.InvalidArgument, status.Code(err))
+	require.Equal(t, "Illegal argument addressId", status.Convert(err).Message())
+	require.Empty(t, ac.byoReqs)
+	require.Empty(t, repo.lbs)
 }
 
 // TestCreateLoadBalancer_CompensationOnV6Fail — dualstack где v6-acquire падает:
@@ -251,20 +383,20 @@ func TestCreateLoadBalancer_CompensationOnV6Fail(t *testing.T) {
 	t.Parallel()
 	repo := newFakeRepo()
 	opsRepo := newFakeOpsRepo()
-	ac := &fakeAnycastClient{
-		allocFunc: func(ctx context.Context, req vpcclient.AllocateAnycastRequest) (*vpcclient.AllocateResponse, error) {
-			if req.Family == vpcclient.AddressFamilyIPv6 {
-				return nil, fmt.Errorf("%w: could not allocate anycast address", domain.ErrFailedPrecondition)
+	ac := &fakeAddressClient{
+		allocFunc: func(ctx context.Context, req vpcclient.AllocateInternalIPRequest, family string) (*vpcclient.AllocateResponse, error) {
+			if family == vpcclient.AddressFamilyIPv6 {
+				return nil, fmt.Errorf("%w: could not allocate address", domain.ErrFailedPrecondition)
 			}
 			return &vpcclient.AllocateResponse{AddressID: "adr0000000000000v4x", Value: "10.0.0.7"}, nil
 		},
 	}
-	uc := newCreateUCWithAnycast(repo, opsRepo, ac)
+	uc := newCreateUCWithAddress(repo, opsRepo, ac)
 
 	req := internalReq("edge-ds-fail")
 	req.AddressSpec = &lbv1.NetworkLoadBalancerAddressSpec{
-		V4: &lbv1.FamilyAddressSpec{Source: &lbv1.FamilyAddressSpec_Auto{Auto: &lbv1.FamilyAddressSpec_AnycastAllocate{AnycastPoolId: "aap-1"}}},
-		V6: &lbv1.FamilyAddressSpec{Source: &lbv1.FamilyAddressSpec_Auto{Auto: &lbv1.FamilyAddressSpec_AnycastAllocate{AnycastPoolId: "aap-6"}}},
+		V4: &lbv1.FamilyAddressSpec{Source: &lbv1.FamilyAddressSpec_Auto{Auto: &lbv1.FamilyAddressSpec_AnycastAllocate{SubnetId: lbTestSubnetV4}}},
+		V6: &lbv1.FamilyAddressSpec{Source: &lbv1.FamilyAddressSpec_Auto{Auto: &lbv1.FamilyAddressSpec_AnycastAllocate{SubnetId: lbTestSubnetV6}}},
 	}
 	op, err := uc.Execute(context.Background(), req)
 	require.NoError(t, err)
@@ -275,6 +407,70 @@ func TestCreateLoadBalancer_CompensationOnV6Fail(t *testing.T) {
 	// v4 освобождён compensation'ом; handle снят → LB не остаётся.
 	require.Equal(t, []string{"adr0000000000000v4x"}, ac.freed, "v4 freed by compensation")
 	require.Empty(t, repo.lbs, "handle deleted by compensation")
+}
+
+// TestCreateLoadBalancer_SubnetZonalRejected — auto-семейство ссылается на ZONAL-
+// подсеть: sync-precheck отвергает Create с InvalidArgument (VIP обязан быть
+// anycast → REGIONAL-подсеть); LB не создаётся, VIP не аллоцируется.
+func TestCreateLoadBalancer_SubnetZonalRejected(t *testing.T) {
+	t.Parallel()
+	repo := newFakeRepo()
+	opsRepo := newFakeOpsRepo()
+	ac := &fakeAddressClient{}
+	uc := newCreateUCWithSubnet(repo, opsRepo, &fakeSubnetClient{placement: "ZONAL"}, ac)
+
+	_, err := uc.Execute(context.Background(), internalReq("edge-zonal"))
+	require.Equal(t, codes.InvalidArgument, status.Code(err))
+	require.Contains(t, status.Convert(err).Message(), "subnet must be REGIONAL")
+	require.Empty(t, repo.lbs, "LB must not be persisted for ZONAL subnet")
+	require.Empty(t, ac.allocReqs, "no VIP allocation for rejected ZONAL subnet")
+}
+
+// TestCreateLoadBalancer_SubnetNotFound — auto subnet_id не найден в vpc:
+// sync-precheck возвращает InvalidArgument; LB не создаётся.
+func TestCreateLoadBalancer_SubnetNotFound(t *testing.T) {
+	t.Parallel()
+	repo := newFakeRepo()
+	opsRepo := newFakeOpsRepo()
+	snc := &fakeSubnetClient{getFunc: func(_ context.Context, subnetID string) (*vpcclient.Subnet, error) {
+		return nil, fmt.Errorf("%w: Subnet %s not found", domain.ErrInvalidArg, subnetID)
+	}}
+	uc := newCreateUCWithSubnet(repo, opsRepo, snc, &fakeAddressClient{})
+
+	_, err := uc.Execute(context.Background(), internalReq("edge-nosub"))
+	require.Equal(t, codes.InvalidArgument, status.Code(err))
+	require.Contains(t, status.Convert(err).Message(), "not found")
+	require.Empty(t, repo.lbs)
+}
+
+// TestCreateLoadBalancer_SubnetVpcUnavailable — vpc недоступен при REGIONAL-precheck:
+// fail-closed Unavailable (мутация не проходит); LB не создаётся.
+func TestCreateLoadBalancer_SubnetVpcUnavailable(t *testing.T) {
+	t.Parallel()
+	repo := newFakeRepo()
+	opsRepo := newFakeOpsRepo()
+	snc := &fakeSubnetClient{getFunc: func(_ context.Context, subnetID string) (*vpcclient.Subnet, error) {
+		return nil, fmt.Errorf("%w: vpc subnet %s: dial", domain.ErrUnavailable, subnetID)
+	}}
+	uc := newCreateUCWithSubnet(repo, opsRepo, snc, &fakeAddressClient{})
+
+	_, err := uc.Execute(context.Background(), internalReq("edge-vpcdown"))
+	require.Equal(t, codes.Unavailable, status.Code(err))
+	require.Empty(t, repo.lbs)
+}
+
+// TestCreateLoadBalancer_AutoMissingSubnetID — auto-семейство без subnet_id →
+// синхронный InvalidArgument (subnet_id обязателен для auto).
+func TestCreateLoadBalancer_AutoMissingSubnetID(t *testing.T) {
+	t.Parallel()
+	repo := newFakeRepo()
+	uc := newCreateUC(repo, newFakeOpsRepo(), &fakeProjectClient{}, &fakeRegionClient{})
+	req := internalReq("edge-nosubid")
+	req.AddressSpec = autoV4Spec("")
+	_, err := uc.Execute(context.Background(), req)
+	require.Equal(t, codes.InvalidArgument, status.Code(err))
+	require.Contains(t, status.Convert(err).Message(), "subnet_id is required")
+	require.Empty(t, repo.lbs)
 }
 
 // TestCreateLoadBalancer_ExternalRejected — type=EXTERNAL отклоняется синхронно

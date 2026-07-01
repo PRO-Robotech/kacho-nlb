@@ -47,7 +47,9 @@ type CreateLoadBalancerUseCase struct {
 	regionClient        RegionClient
 	networkClient       NetworkClient
 	securityGroupClient SecurityGroupClient
-	anycastClient       AnycastAddressClient
+	subnetClient        SubnetClient
+	addressReader       AddressClient // публичный AddressService.Get — BYO ownership-валидация
+	addressClient       InternalAddressClient
 	logger              *slog.Logger
 }
 
@@ -55,7 +57,7 @@ type CreateLoadBalancerUseCase struct {
 func NewCreateLoadBalancerUseCase(
 	repo Repo, opsRepo operations.Repo,
 	pc ProjectClient, rc RegionClient, nc NetworkClient, sgc SecurityGroupClient,
-	ac AnycastAddressClient,
+	snc SubnetClient, ar AddressClient, ac InternalAddressClient,
 	logger *slog.Logger,
 ) *CreateLoadBalancerUseCase {
 	if logger == nil {
@@ -64,8 +66,8 @@ func NewCreateLoadBalancerUseCase(
 	return &CreateLoadBalancerUseCase{
 		repo: repo, opsRepo: opsRepo,
 		projectClient: pc, regionClient: rc, networkClient: nc, securityGroupClient: sgc,
-		anycastClient: ac,
-		logger:        logger,
+		subnetClient: snc, addressReader: ar, addressClient: ac,
+		logger: logger,
 	}
 }
 
@@ -163,6 +165,24 @@ func (u *CreateLoadBalancerUseCase) Execute(
 		return nil, err
 	}
 
+	// Sync-precheck REGIONAL-подсети auto-семейств: VIP аллоцируется только из
+	// region-scoped (REGIONAL) подсети — тогда он anycast. ZONAL/UNSPECIFIED →
+	// InvalidArgument; not-found → InvalidArgument; vpc недоступен → Unavailable
+	// (fail-closed для мутации). BYO-семейства subnet_id не несут → пропускаются.
+	if err := u.validateRegionalSubnets(ctx, specs); err != nil {
+		return nil, err
+	}
+
+	// Sync-precheck BYO-VIP: принесённый tenant'ом Address обязан принадлежать
+	// проекту LB И совпадать по семейству (cross-domain ownership через owner-read
+	// API, data-integrity §2 — восстанавливает project/family-guard, снятый с
+	// vpc.SetAddressReference). Резолв под tenant-identity: authz-gate `v_get` не
+	// даст прочитать чужой Address. Несоответствие/no-access → generic
+	// InvalidArgument (анти-oracle); vpc недоступен → Unavailable (fail-closed).
+	if err := u.validateBYOAddresses(ctx, lb, specs); err != nil {
+		return nil, err
+	}
+
 	// Sync duplicate-name check. Race against concurrent insert
 	// финализируется UNIQUE-constraint backstop в worker'е.
 	if string(lb.Name) != "" {
@@ -197,8 +217,9 @@ func (u *CreateLoadBalancerUseCase) Execute(
 //
 //	peer-check project_id / region_id (до Insert — отказ компенсировать нечего);
 //	TX-1: INSERT durable-handle (status='CREATING', ip_families заполнен, address_*='');
-//	per-family (v4 затем v6): acquire VIP (auto AllocateAnycast / BYO AttachAnycastBYO)
-//	  → persist CAS-attach (address_<fam>/address_id_<fam>/vip_origin_<fam>);
+//	per-family (v4 затем v6): acquire VIP (auto AllocateInternalIP из REGIONAL-
+//	  подсети / BYO AttachExisting) → persist CAS-attach
+//	  (address_<fam>/address_id_<fam>/vip_origin_<fam>);
 //	finalize: CAS CREATING→INACTIVE + outbox CREATED + FGA-register.
 //
 // Compensation (defer-guard, активна после Insert-handle и до finalize):
@@ -277,39 +298,112 @@ type vipAllocResult struct {
 	origin    domain.VipOrigin // auto → FreeIP; byo → ClearReference (release-ветка)
 }
 
-// acquireFamilyVIP — внешний side-effect одного семейства: auto-аллокация anycast
-// из пула либо BYO-привязка с server-side ownership/family CAS-guard.
+// acquireFamilyVIP — внешний side-effect одного семейства: auto-аллокация VIP из
+// REGIONAL-подсети (region-scoped → anycast) либо BYO-привязка принесённого Address.
 func (u *CreateLoadBalancerUseCase) acquireFamilyVIP(
 	ctx context.Context, lb domain.LoadBalancer, fs familyVIPSpec,
 ) (vipAllocResult, error) {
-	if u.anycastClient == nil {
-		return vipAllocResult{}, status.Error(codes.Unavailable, "vpc anycast address client not configured")
+	if u.addressClient == nil {
+		return vipAllocResult{}, status.Error(codes.Unavailable, "vpc internal address client not configured")
 	}
 	owner := lbAddressOwner(string(lb.ID))
 	if fs.byo {
-		resp, err := u.anycastClient.AttachAnycastBYO(ctx, vpcclient.AttachAnycastBYORequest{
-			AddressID:       fs.addressID,
-			Owner:           owner,
-			ExpectProjectID: string(lb.ProjectID),
-			ExpectFamily:    vpcFamily(fs.family),
+		resp, err := u.addressClient.AttachExisting(ctx, vpcclient.AttachExistingRequest{
+			AddressID: fs.addressID,
+			Owner:     owner,
 		})
 		if err != nil {
 			return vipAllocResult{}, err
 		}
 		return vipAllocResult{addressID: resp.AddressID, address: resp.Value, origin: domain.VipOriginBYO}, nil
 	}
-	resp, err := u.anycastClient.AllocateAnycast(ctx, vpcclient.AllocateAnycastRequest{
-		ProjectID:     string(lb.ProjectID),
-		Name:          domain.LBAnycastAddressName(lb.ID, fs.family),
-		NetworkID:     string(lb.NetworkID),
-		Family:        vpcFamily(fs.family),
-		AnycastPoolID: fs.anycastPoolID,
-		Owner:         owner,
-	})
+	req := vpcclient.AllocateInternalIPRequest{
+		ProjectID: string(lb.ProjectID),
+		Name:      domain.LBAnycastAddressName(lb.ID, fs.family),
+		SubnetID:  fs.subnetID,
+		Owner:     owner,
+	}
+	var (
+		resp *vpcclient.AllocateResponse
+		err  error
+	)
+	if fs.family == domain.IPVersionV6 {
+		resp, err = u.addressClient.AllocateInternalIPv6(ctx, req)
+	} else {
+		resp, err = u.addressClient.AllocateInternalIP(ctx, req)
+	}
 	if err != nil {
 		return vipAllocResult{}, err
 	}
 	return vipAllocResult{addressID: resp.AddressID, address: resp.Value, origin: domain.VipOriginAuto}, nil
+}
+
+// validateRegionalSubnets — sync-precheck: каждая auto-подсеть существует и
+// REGIONAL (region-scoped → VIP anycast). Дедуп по subnet_id. nil subnetClient
+// (dev/стенд без vpc) → пропуск. ZONAL/UNSPECIFIED → InvalidArgument.
+func (u *CreateLoadBalancerUseCase) validateRegionalSubnets(ctx context.Context, specs []familyVIPSpec) error {
+	if u.subnetClient == nil {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(specs))
+	for _, fs := range specs {
+		if fs.byo || fs.subnetID == "" {
+			continue
+		}
+		if _, ok := seen[fs.subnetID]; ok {
+			continue
+		}
+		seen[fs.subnetID] = struct{}{}
+		sn, err := u.subnetClient.Get(ctx, fs.subnetID)
+		if err != nil {
+			return subnetPeerErr(err, fs.subnetID)
+		}
+		if sn.PlacementType != vpcclient.SubnetPlacementRegional {
+			return status.Error(codes.InvalidArgument,
+				"subnet must be REGIONAL for anycast load balancer VIP")
+		}
+	}
+	return nil
+}
+
+// validateBYOAddresses — sync-precheck принесённых BYO-адресов: каждый Address
+// принадлежит проекту LB И его семейство совпадает с заявленным. Резолв через
+// публичный AddressService.Get под tenant-identity (authz-gate `v_get`
+// изолирует по tenant'у). Анти-oracle: mismatch / not-found / no-access →
+// generic InvalidArgument "Illegal argument addressId" (не раскрываем чужой
+// ownership/существование); vpc недоступен → Unavailable. nil addressReader
+// (dev/стенд без vpc) → пропуск. auto-семейства (subnet_id) не проверяются здесь.
+func (u *CreateLoadBalancerUseCase) validateBYOAddresses(ctx context.Context, lb domain.LoadBalancer, specs []familyVIPSpec) error {
+	if u.addressReader == nil {
+		return nil
+	}
+	for _, fs := range specs {
+		if !fs.byo {
+			continue
+		}
+		addr, err := u.addressReader.Get(ctx, fs.addressID)
+		if err != nil {
+			return byoAddressErr(err)
+		}
+		if addr.ProjectID != string(lb.ProjectID) || addr.Family != string(fs.family) {
+			return status.Error(codes.InvalidArgument, "Illegal argument addressId")
+		}
+	}
+	return nil
+}
+
+// byoAddressErr — маппинг ошибок AddressService.Get в BYO-precheck. Анти-oracle:
+// любое not-found/no-access/bad-input → generic InvalidArgument (не раскрываем,
+// существует ли адрес и чей он); vpc недоступен → Unavailable (fail-closed);
+// прочее → Internal (без leak'а).
+func byoAddressErr(err error) error {
+	switch {
+	case errors.Is(err, domain.ErrNotFound), errors.Is(err, domain.ErrInvalidArg):
+		return status.Error(codes.InvalidArgument, "Illegal argument addressId")
+	case errors.Is(err, domain.ErrUnavailable):
+		return status.Error(codes.Unavailable, "address lookup unavailable")
+	}
+	return status.Error(codes.Internal, "address lookup failed")
 }
 
 // insertHandle — TX-1: INSERT durable-handle строки LB (status='CREATING').
@@ -408,16 +502,16 @@ func (u *CreateLoadBalancerUseCase) compensateCreate(ctx context.Context, lbID s
 	logger = logger.With("load_balancer_id", lbID)
 
 	owner := lbAddressOwner(lbID)
-	if u.anycastClient != nil {
+	if u.addressClient != nil {
 		for family, alloc := range allocated {
 			if alloc.addressID == "" {
 				continue
 			}
 			var rerr error
 			if alloc.origin == domain.VipOriginBYO {
-				rerr = u.anycastClient.ClearReference(ctx, alloc.addressID, owner)
+				rerr = u.addressClient.ClearReference(ctx, alloc.addressID, owner)
 			} else {
-				rerr = u.anycastClient.FreeIP(ctx, alloc.addressID, owner)
+				rerr = u.addressClient.FreeIP(ctx, alloc.addressID, owner)
 			}
 			if rerr != nil {
 				logger.Warn("LoadBalancer.Create compensation release failed",
@@ -457,15 +551,16 @@ func (u *CreateLoadBalancerUseCase) deleteHandle(ctx context.Context, id string)
 
 // familyVIPSpec — разобранный per-family источник VIP (auto/byo) из address_spec.
 type familyVIPSpec struct {
-	family        domain.IPVersion // IPV4 / IPV6
-	byo           bool             // true → BYO addressID, false → auto-alloc
-	addressID     string           // BYO
-	anycastPoolID string           // auto (опционально; пусто → is_default-пул сети)
+	family    domain.IPVersion // IPV4 / IPV6
+	byo       bool             // true → BYO addressID, false → auto-alloc
+	addressID string           // BYO
+	subnetID  string           // auto — REGIONAL-подсеть, из которой аллоцируется VIP
 }
 
 // resolveAddressSpec — разбирает NetworkLoadBalancerAddressSpec в упорядоченный
 // (v4, затем v6) набор familyVIPSpec. ≥1 семейство обязательно; malformed BYO
-// addressId ловится синхронно. Источник без auto/byo → InvalidArgument.
+// addressId / auto subnet_id ловится синхронно. auto без subnet_id → InvalidArgument
+// (subnet_id обязателен). Источник без auto/byo → InvalidArgument.
 func resolveAddressSpec(spec *lbv1.NetworkLoadBalancerAddressSpec) ([]familyVIPSpec, error) {
 	var out []familyVIPSpec
 	add := func(family domain.IPVersion, fam *lbv1.FamilyAddressSpec) error {
@@ -482,7 +577,15 @@ func resolveAddressSpec(spec *lbv1.NetworkLoadBalancerAddressSpec) ([]familyVIPS
 			fs.byo = true
 			fs.addressID = addressID
 		case fam.GetAuto() != nil:
-			fs.anycastPoolID = fam.GetAuto().GetAnycastPoolId()
+			subnetID := fam.GetAuto().GetSubnetId()
+			if subnetID == "" {
+				return status.Errorf(codes.InvalidArgument,
+					"address_spec.%s.auto.subnet_id is required", familyTag(family))
+			}
+			if err := corevalidate.ResourceID("subnet", ids.PrefixSubnet, subnetID); err != nil {
+				return err
+			}
+			fs.subnetID = subnetID
 		default:
 			return status.Errorf(codes.InvalidArgument,
 				"address_spec.%s.source is not set", familyTag(family))
@@ -521,14 +624,6 @@ func familyTag(family domain.IPVersion) string {
 		return "v6"
 	}
 	return "v4"
-}
-
-// vpcFamily — domain.IPVersion → vpc-client family-токен.
-func vpcFamily(family domain.IPVersion) string {
-	if family == domain.IPVersionV6 {
-		return vpcclient.AddressFamilyIPv6
-	}
-	return vpcclient.AddressFamilyIPv4
 }
 
 // lbAddressOwner — owner-tuple для vpc.Address used_by ("nlb_load_balancer:<id>").
@@ -680,6 +775,20 @@ func networkPeerErr(err error, id string) error {
 		return status.Errorf(codes.Unavailable, "network lookup unavailable")
 	}
 	return status.Errorf(codes.Internal, "network lookup failed")
+}
+
+// subnetPeerErr — sync-precheck subnet_id через vpc.SubnetService.Get. Клиент
+// оборачивает grpc-status в domain-sentinel: NotFound/InvalidArgument peer'а — это
+// bad-input на request-time → InvalidArgument "subnet <id> not found"; недоступность
+// → Unavailable (fail-closed для мутации); прочее → Internal (без leak'а).
+func subnetPeerErr(err error, id string) error {
+	switch {
+	case errors.Is(err, domain.ErrNotFound), errors.Is(err, domain.ErrInvalidArg):
+		return status.Errorf(codes.InvalidArgument, "subnet %s not found", id)
+	case errors.Is(err, domain.ErrUnavailable):
+		return status.Errorf(codes.Unavailable, "subnet lookup unavailable")
+	}
+	return status.Errorf(codes.Internal, "subnet lookup failed")
 }
 
 // caser — Title-case 1-char для kind ("project" → "Project").

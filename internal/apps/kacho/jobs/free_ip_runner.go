@@ -5,7 +5,7 @@
 // handle). Устраняет утечку anycast-VIP при сбое create/delete-саги.
 //
 // Контекст. VIP консолидирован на LoadBalancer (anycast active-active): VIP
-// аллоцируется per-family из vpc AnycastAddressPool — внешний side-effect,
+// аллоцируется per-family из vpc REGIONAL-подсети — внешний side-effect,
 // единственный dual-write edge create/delete LB. Если процесс падает (или
 // peer-vpc недоступен) между аллокацией VIP и финализацией строки, остаётся
 // «сирота»:

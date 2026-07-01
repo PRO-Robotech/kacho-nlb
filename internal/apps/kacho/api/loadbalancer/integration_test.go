@@ -117,46 +117,52 @@ func pollOpDone(t *testing.T, opsRepo operations.Repo, opID string) *operations.
 func makeHandler(t *testing.T, repo *kachopg.Repository, opsRepo operations.Repo) *loadbalancer.Handler {
 	t.Helper()
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
-	// vpc недоступен в testcontainers-стенде — anycast-аллокация заглушается
-	// stub'ом, возвращающим уникальный адрес на вызов (DB-сторона саги — реальная).
-	return loadbalancer.NewHandler(repo, opsRepo, nil, nil, nil, nil, &stubAnycastClient{}, nil, logger)
+	// vpc недоступен в testcontainers-стенде — VIP-аллокация заглушается stub'ом,
+	// возвращающим уникальный адрес на вызов (DB-сторона саги — реальная). Subnet-
+	// client и address-reader — nil (REGIONAL / BYO-precheck пропускаются без vpc;
+	// эти сьюты гоняют auto-семейства).
+	return loadbalancer.NewHandler(repo, opsRepo, nil, nil, nil, nil, nil, nil, &stubAddressClient{}, nil, logger)
 }
 
-// stubAnycastClient — заглушка vpc.AnycastAddressClient для integration-стенда
-// (без реального vpc). AllocateAnycast возвращает уникальный адрес/id на вызов;
-// release — no-op.
-type stubAnycastClient struct{ seq int64 }
+// stubAddressClient — заглушка vpc InternalAddressClient для integration-стенда
+// (без реального vpc). AllocateInternalIP/IPv6 возвращают уникальный адрес/id на
+// вызов; AttachExisting эхо-адрес; release — no-op.
+type stubAddressClient struct{ seq int64 }
 
-func (s *stubAnycastClient) AllocateAnycast(_ context.Context, req vpcclient.AllocateAnycastRequest) (*vpcclient.AllocateResponse, error) {
+func (s *stubAddressClient) AllocateInternalIP(_ context.Context, _ vpcclient.AllocateInternalIPRequest) (*vpcclient.AllocateResponse, error) {
 	n := atomic.AddInt64(&s.seq, 1)
-	prefix := "100.64.0."
-	if req.Family == vpcclient.AddressFamilyIPv6 {
-		prefix = "fd00::"
-	}
 	return &vpcclient.AllocateResponse{
 		AddressID: fmt.Sprintf("adr%017d", n),
-		Value:     fmt.Sprintf("%s%d", prefix, n),
+		Value:     fmt.Sprintf("100.64.0.%d", n),
 	}, nil
 }
 
-func (s *stubAnycastClient) AttachAnycastBYO(_ context.Context, req vpcclient.AttachAnycastBYORequest) (*vpcclient.AllocateResponse, error) {
+func (s *stubAddressClient) AllocateInternalIPv6(_ context.Context, _ vpcclient.AllocateInternalIPRequest) (*vpcclient.AllocateResponse, error) {
+	n := atomic.AddInt64(&s.seq, 1)
+	return &vpcclient.AllocateResponse{
+		AddressID: fmt.Sprintf("adr%017d", n),
+		Value:     fmt.Sprintf("fd00::%d", n),
+	}, nil
+}
+
+func (s *stubAddressClient) AttachExisting(_ context.Context, req vpcclient.AttachExistingRequest) (*vpcclient.AllocateResponse, error) {
 	n := atomic.AddInt64(&s.seq, 1)
 	return &vpcclient.AllocateResponse{AddressID: req.AddressID, Value: fmt.Sprintf("100.64.9.%d", n)}, nil
 }
 
-func (s *stubAnycastClient) FreeIP(context.Context, string, vpcclient.AddressOwner) error { return nil }
-func (s *stubAnycastClient) ClearReference(context.Context, string, vpcclient.AddressOwner) error {
+func (s *stubAddressClient) FreeIP(context.Context, string, vpcclient.AddressOwner) error { return nil }
+func (s *stubAddressClient) ClearReference(context.Context, string, vpcclient.AddressOwner) error {
 	return nil
 }
 
-// internalAutoReq — INTERNAL Create-request (auto v4) для integration e2e.
+// internalAutoReq — INTERNAL Create-request (auto v4 из REGIONAL-подсети) для e2e.
 func internalAutoReq(projectID, name string) *lbv1.CreateNetworkLoadBalancerRequest {
 	return &lbv1.CreateNetworkLoadBalancerRequest{
 		ProjectId: projectID, RegionId: "ru-central1", Name: name,
 		Type: lbv1.NetworkLoadBalancer_INTERNAL, NetworkId: "net-1",
 		AddressSpec: &lbv1.NetworkLoadBalancerAddressSpec{
 			V4: &lbv1.FamilyAddressSpec{Source: &lbv1.FamilyAddressSpec_Auto{
-				Auto: &lbv1.FamilyAddressSpec_AnycastAllocate{},
+				Auto: &lbv1.FamilyAddressSpec_AnycastAllocate{SubnetId: "sub-1"},
 			}},
 		},
 	}

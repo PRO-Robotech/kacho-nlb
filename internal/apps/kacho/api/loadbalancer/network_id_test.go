@@ -20,9 +20,10 @@ import (
 	"github.com/PRO-Robotech/kacho-nlb/internal/domain"
 )
 
-// newCreateUCNet — Create UC c подменяемым NetworkClient (project/region/anycast — OK-фейки).
+// newCreateUCNet — Create UC c подменяемым NetworkClient (project/region/subnet/
+// address — OK-фейки).
 func newCreateUCNet(repo *fakeRepo, opsRepo *fakeOpsRepo, nc NetworkClient) *CreateLoadBalancerUseCase {
-	return NewCreateLoadBalancerUseCase(repo, opsRepo, &fakeProjectClient{}, &fakeRegionClient{}, nc, &fakeSecurityGroupClient{}, &fakeAnycastClient{}, slog.Default())
+	return NewCreateLoadBalancerUseCase(repo, opsRepo, &fakeProjectClient{}, &fakeRegionClient{}, nc, &fakeSecurityGroupClient{}, &fakeSubnetClient{}, &fakeAddressReader{}, &fakeAddressClient{}, slog.Default())
 }
 
 // internalNetReq — INTERNAL Create-request с auto v4 address_spec и заданным network_id.
@@ -31,7 +32,7 @@ func internalNetReq(name, networkID string) *lbv1.CreateNetworkLoadBalancerReque
 		ProjectId: "prj-a", RegionId: "ru-central1",
 		Name: name, Type: lbv1.NetworkLoadBalancer_INTERNAL,
 		NetworkId:   networkID,
-		AddressSpec: autoV4Spec("aap-1"),
+		AddressSpec: autoV4Spec(lbTestSubnetV4),
 	}
 }
 

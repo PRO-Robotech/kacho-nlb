@@ -35,7 +35,7 @@ type LoadBalancer struct {
 	IPFamilies []IPVersion
 	// AddressV4/AddressV6 — единый tenant-facing anycast-VIP на семейство
 	// (output-only; пуст пока status=CREATING, заполняется worker'ом после
-	// аллокации из vpc AnycastAddressPool).
+	// аллокации из vpc REGIONAL-подсети).
 	AddressV4 IPAddress
 	AddressV6 IPAddress
 	// AddressIDV4/AddressIDV6 — binding на vpc Address (auto-allocated либо BYO),

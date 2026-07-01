@@ -232,20 +232,21 @@ message NetworkLoadBalancerAddressSpec {
 }
 
 // FamilyAddressSpec — источник VIP одного семейства: auto-аллокация anycast VIP
-// из AnycastAddressPool kacho-vpc либо BYO заранее созданный anycast Address.
+// из REGIONAL-подсети kacho-vpc либо BYO заранее созданный anycast Address.
 message FamilyAddressSpec {
   oneof source {
-    // Auto-аллокация anycast VIP из пула kacho-vpc.
+    // Auto-аллокация anycast VIP из REGIONAL-подсети kacho-vpc.
     AnycastAllocate auto = 1;
     // BYO — заранее созданный тенантом anycast Address.
     AnycastByo byo = 2;
   }
 
   message AnycastAllocate {
-    // ID AnycastAddressPool, приаттаченного к network_id. Пусто → платформенный
-    // is_default-пул, приаттаченный к сети. INTERNAL anycast VIP network-scoped
-    // из пула, не из сабнета (потому subnet_id здесь нет).
-    string anycast_pool_id = 1 [(length) = "<=50"];
+    // ID REGIONAL-подсети kacho-vpc (placement_type=REGIONAL), из которой
+    // аллоцируется VIP. Обязателен для auto. VIP получается anycast именно
+    // потому, что подсеть region-scoped (анонсируется active-active из здоровых
+    // зон региона), а не привязана к одной зоне.
+    string subnet_id = 1 [(length) = "<=50"];
   }
 
   message AnycastByo {
@@ -304,7 +305,7 @@ message CreateNetworkLoadBalancerRequest {
   // address_spec — per-family источник VIP (design §4.1). Присутствие v4/v6
   // задаёт семейство в ip_families. Для INTERNAL обязательно хотя бы одно
   // семейство. Результат (address_v4/v6 на ресурсе) — output-only, назначается
-  // worker'ом; здесь задаётся только origin (auto/byo + pool/address_id).
+  // worker'ом; здесь задаётся только origin (auto/byo + subnet_id/address_id).
   NetworkLoadBalancerAddressSpec address_spec = 15;
 
   // ip_families — заявленные семейства адресов VIP. Согласуется с присутствием

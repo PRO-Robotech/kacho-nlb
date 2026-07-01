@@ -27,9 +27,9 @@ import (
 	vpcclient "github.com/PRO-Robotech/kacho-nlb/internal/clients/vpc"
 )
 
-// fanoutCompensationStub — vpc.AnycastAddressClient, моделирующий отказ v6-acquire
-// в середине fan-out: AllocateAnycast(IPV4) → успех (фиксированный address_id),
-// AllocateAnycast(IPV6) → FAILED_PRECONDITION. Записывает FreeIP/ClearReference —
+// fanoutCompensationStub — vpc InternalAddressClient, моделирующий отказ v6-acquire
+// в середине fan-out: AllocateInternalIP(v4) → успех (фиксированный address_id),
+// AllocateInternalIPv6(v6) → FAILED_PRECONDITION. Записывает FreeIP/ClearReference —
 // чтобы тест проверил release уже аллоцированного v4 в compensation.
 type fanoutCompensationStub struct {
 	v4AddressID string
@@ -39,17 +39,18 @@ type fanoutCompensationStub struct {
 	clears  []string
 }
 
-func (s *fanoutCompensationStub) AllocateAnycast(_ context.Context, req vpcclient.AllocateAnycastRequest) (*vpcclient.AllocateResponse, error) {
-	if req.Family == vpcclient.AddressFamilyIPv6 {
-		// v6-пул исчерпан — generic-ошибка (анти-oracle), валит второй side-effect.
-		return nil, status.Error(codes.FailedPrecondition, "could not allocate anycast address")
-	}
+func (s *fanoutCompensationStub) AllocateInternalIP(_ context.Context, _ vpcclient.AllocateInternalIPRequest) (*vpcclient.AllocateResponse, error) {
 	return &vpcclient.AllocateResponse{AddressID: s.v4AddressID, Value: "100.64.0.7"}, nil
 }
 
-// AttachAnycastBYO — BYO в этом сценарии не используется; вызов означал бы баг.
-func (s *fanoutCompensationStub) AttachAnycastBYO(_ context.Context, _ vpcclient.AttachAnycastBYORequest) (*vpcclient.AllocateResponse, error) {
-	return nil, status.Error(codes.Unavailable, "AttachAnycastBYO not expected in fan-out compensation test")
+func (s *fanoutCompensationStub) AllocateInternalIPv6(_ context.Context, _ vpcclient.AllocateInternalIPRequest) (*vpcclient.AllocateResponse, error) {
+	// v6-подсеть исчерпана — generic-ошибка (анти-oracle), валит второй side-effect.
+	return nil, status.Error(codes.FailedPrecondition, "could not allocate address")
+}
+
+// AttachExisting — BYO в этом сценарии не используется; вызов означал бы баг.
+func (s *fanoutCompensationStub) AttachExisting(_ context.Context, _ vpcclient.AttachExistingRequest) (*vpcclient.AllocateResponse, error) {
+	return nil, status.Error(codes.Unavailable, "AttachExisting not expected in fan-out compensation test")
 }
 
 func (s *fanoutCompensationStub) FreeIP(_ context.Context, addressID string, _ vpcclient.AddressOwner) error {
@@ -94,19 +95,19 @@ func TestIntegration_CreateLoadBalancer_FanoutCompensationOnV6Fail(t *testing.T)
 
 	stub := &fanoutCompensationStub{v4AddressID: "adr00000000000FANV4X"}
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
-	// peer-clients project/region/network/sg — nil (sync-prechecks и worker
-	// peer-check пропускаются); единственный side-effect — anycast fan-out.
-	h := loadbalancer.NewHandler(repo, opsRepo, nil, nil, nil, nil, stub, nil, logger)
+	// peer-clients project/region/network/sg/subnet/address — nil (sync-prechecks и
+	// worker peer-check пропускаются); единственный side-effect — VIP fan-out.
+	h := loadbalancer.NewHandler(repo, opsRepo, nil, nil, nil, nil, nil, nil, stub, nil, logger)
 
 	req := &lbv1.CreateNetworkLoadBalancerRequest{
 		ProjectId: "prj-fanout", RegionId: "region-1", Name: "edge-ds-fail",
 		Type: lbv1.NetworkLoadBalancer_INTERNAL, NetworkId: "net-1",
 		AddressSpec: &lbv1.NetworkLoadBalancerAddressSpec{
 			V4: &lbv1.FamilyAddressSpec{Source: &lbv1.FamilyAddressSpec_Auto{
-				Auto: &lbv1.FamilyAddressSpec_AnycastAllocate{AnycastPoolId: "aap-1"},
+				Auto: &lbv1.FamilyAddressSpec_AnycastAllocate{SubnetId: "sub-1"},
 			}},
 			V6: &lbv1.FamilyAddressSpec{Source: &lbv1.FamilyAddressSpec_Auto{
-				Auto: &lbv1.FamilyAddressSpec_AnycastAllocate{AnycastPoolId: "aap-6"},
+				Auto: &lbv1.FamilyAddressSpec_AnycastAllocate{SubnetId: "sub-6"},
 			}},
 		},
 	}
@@ -118,7 +119,7 @@ func TestIntegration_CreateLoadBalancer_FanoutCompensationOnV6Fail(t *testing.T)
 	final := pollOpDone(t, opsRepo, op.GetId())
 	require.NotNil(t, final.Error, "v6-acquire failure must surface as Operation error")
 	require.Equal(t, int32(codes.FailedPrecondition), final.Error.GetCode())
-	require.Contains(t, final.Error.GetMessage(), "could not allocate anycast address")
+	require.Contains(t, final.Error.GetMessage(), "could not allocate address")
 
 	// v4 уже persisted → освобождён compensation'ом ровно один раз; v6 не
 	// аллоцировался → не освобождается; BYO нет → ClearReference не зовётся.

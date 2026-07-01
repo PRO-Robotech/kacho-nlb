@@ -64,6 +64,9 @@ func (f *fakeReleaser) AllocateInternalIPv6(context.Context, vpcclient.AllocateI
 func (f *fakeReleaser) SetReference(context.Context, string, vpcclient.AddressOwner) error {
 	return nil
 }
+func (f *fakeReleaser) AttachExisting(context.Context, vpcclient.AttachExistingRequest) (*vpcclient.AllocateResponse, error) {
+	return &vpcclient.AllocateResponse{}, nil
+}
 
 func (f *fakeReleaser) FreeIP(_ context.Context, addressID string, _ vpcclient.AddressOwner) error {
 	f.mu.Lock()
