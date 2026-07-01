@@ -13,14 +13,39 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/anypb"
 
+	"github.com/PRO-Robotech/kacho-corelib/auth"
+	"github.com/PRO-Robotech/kacho-corelib/operations"
 	operationpb "github.com/PRO-Robotech/kacho-corelib/proto/gen/go/kacho/cloud/operation"
 	vpcpb "github.com/PRO-Robotech/kacho-vpc/proto/gen/go/kacho/cloud/vpc/v1"
 
 	"github.com/PRO-Robotech/kacho-nlb/internal/domain"
 )
+
+// TestInternalAddressClient_PropagatesPrincipal — регрессия: worker-вызовы vpc
+// обязаны нести principal тенанта в outgoing-metadata (auth.PropagateOutgoing),
+// иначе vpc authz отвергает как authz_no_principal. Проверяем, что SetReference,
+// вызванный с ctx-principal'ом, доносит x-kacho-principal-* до сервера.
+func TestInternalAddressClient_PropagatesPrincipal(t *testing.T) {
+	internalAddrs := &fakeInternalAddressService{}
+	conn := startFakeVPC(t, nil, nil, nil, internalAddrs, nil)
+	client := NewInternalAddressClient(conn, conn)
+
+	ctx := operations.WithPrincipal(context.Background(),
+		operations.Principal{Type: "user", ID: "usr-regress", DisplayName: "Regress User"})
+	err := client.SetReference(ctx, "adr-1",
+		AddressOwner{Kind: "network_load_balancer", ID: "nlb-1"}, true)
+	require.NoError(t, err)
+
+	got := internalAddrs.lastSetMD.Get(auth.MDKeyPrincipalID)
+	require.Len(t, got, 1, "principal id must reach vpc via outgoing metadata")
+	assert.Equal(t, "usr-regress", got[0])
+	assert.Equal(t, []string{"user"}, internalAddrs.lastSetMD.Get(auth.MDKeyPrincipalType))
+	assert.True(t, internalAddrs.setCalls[0].GetOwned(), "owned=true пробрасывается")
+}
 
 // fakeAddressForAlloc реализует AddressService.{Create,Delete}.
 // Возвращает done=true Operation с inline Address response (для теста auto-alloc).
@@ -85,13 +110,16 @@ type fakeInternalAddressService struct {
 
 	setCalls   []*vpcpb.SetAddressReferenceRequest
 	clearCalls []*vpcpb.ClearAddressReferenceRequest
+
+	lastSetMD metadata.MD // incoming metadata последнего SetAddressReference (проверка principal-проброса)
 }
 
 func (f *fakeInternalAddressService) SetAddressReference(
-	_ context.Context, req *vpcpb.SetAddressReferenceRequest,
+	ctx context.Context, req *vpcpb.SetAddressReferenceRequest,
 ) (*vpcpb.AddressReference, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.lastSetMD, _ = metadata.FromIncomingContext(ctx)
 	f.setCalls = append(f.setCalls, req)
 	if f.setErr != nil {
 		return nil, f.setErr

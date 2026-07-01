@@ -130,7 +130,9 @@ func (u *DeleteLoadBalancerUseCase) Execute(
 	}
 	projectID := string(cur.ProjectID)
 	operations.Run(ctx, u.opsRepo, op.ID, func(workerCtx context.Context) (*anypb.Any, error) {
-		return u.doDelete(workerCtx, id, projectID, snap)
+		// Worker-ctx детачнут — восстанавливаем principal, чтобы release-вызовы в vpc
+		// (ClearReference/FreeIP) несли identity тенанта (иначе authz_no_principal).
+		return u.doDelete(operations.WithPrincipal(workerCtx, principal), id, projectID, snap)
 	})
 
 	return &op, nil

@@ -14,6 +14,7 @@ import (
 
 	"google.golang.org/protobuf/types/known/anypb"
 
+	"github.com/PRO-Robotech/kacho-corelib/auth"
 	operationpb "github.com/PRO-Robotech/kacho-corelib/proto/gen/go/kacho/cloud/operation"
 	"github.com/PRO-Robotech/kacho-corelib/retry"
 	vpcpb "github.com/PRO-Robotech/kacho-vpc/proto/gen/go/kacho/cloud/vpc/v1"
@@ -299,7 +300,7 @@ func (c *internalAddressClient) FreeIP(ctx context.Context, addressID string, ow
 	var op *operationpb.Operation
 	if err := retry.OnUnavailable(ctx, func(ctx context.Context) error {
 		var rerr error
-		op, rerr = c.addrs.Delete(ctx, &vpcpb.DeleteAddressRequest{AddressId: addressID})
+		op, rerr = c.addrs.Delete(auth.PropagateOutgoing(ctx), &vpcpb.DeleteAddressRequest{AddressId: addressID})
 		if rerr != nil {
 			if st, ok := status.FromError(rerr); ok && st.Code() == codes.NotFound {
 				// Idempotent: уже удалён.
@@ -338,7 +339,7 @@ func (c *internalAddressClient) SetReference(
 	}
 
 	return retry.OnUnavailable(ctx, func(ctx context.Context) error {
-		_, rerr := c.internal.SetAddressReference(ctx, &vpcpb.SetAddressReferenceRequest{
+		_, rerr := c.internal.SetAddressReference(auth.PropagateOutgoing(ctx), &vpcpb.SetAddressReferenceRequest{
 			AddressId:    addressID,
 			ReferrerType: owner.Kind,
 			ReferrerId:   owner.ID,
@@ -375,7 +376,7 @@ func (c *internalAddressClient) ClearReference(
 	// добавим verify когда kacho-vpc дополнит CAS-семантику.
 
 	return retry.OnUnavailable(ctx, func(ctx context.Context) error {
-		_, rerr := c.internal.ClearAddressReference(ctx, &vpcpb.ClearAddressReferenceRequest{
+		_, rerr := c.internal.ClearAddressReference(auth.PropagateOutgoing(ctx), &vpcpb.ClearAddressReferenceRequest{
 			AddressId: addressID,
 		})
 		if rerr == nil {
@@ -412,7 +413,7 @@ func (c *internalAddressClient) AttachExisting(
 	// not-found → generic InvalidArgument (анти-oracle: не раскрываем чужой
 	// ownership/семейство/несуществование адреса).
 	if err := retry.OnUnavailable(ctx, func(ctx context.Context) error {
-		_, rerr := c.internal.SetAddressReference(ctx, &vpcpb.SetAddressReferenceRequest{
+		_, rerr := c.internal.SetAddressReference(auth.PropagateOutgoing(ctx), &vpcpb.SetAddressReferenceRequest{
 			AddressId:    req.AddressID,
 			ReferrerType: req.Owner.Kind,
 			ReferrerId:   req.Owner.ID,
@@ -451,7 +452,7 @@ func (c *internalAddressClient) resolveAddressValue(ctx context.Context, address
 	var resp *vpcpb.Address
 	if err := retry.OnUnavailable(ctx, func(ctx context.Context) error {
 		var rerr error
-		resp, rerr = c.addrs.Get(ctx, &vpcpb.GetAddressRequest{AddressId: addressID})
+		resp, rerr = c.addrs.Get(auth.PropagateOutgoing(ctx), &vpcpb.GetAddressRequest{AddressId: addressID})
 		return rerr
 	}); err != nil {
 		return "", mapAllocErr(addressID, err)
@@ -477,7 +478,7 @@ func (c *internalAddressClient) createAddressAndWait(
 	var op *operationpb.Operation
 	if err := retry.OnUnavailable(ctx, func(ctx context.Context) error {
 		var rerr error
-		op, rerr = c.addrs.Create(ctx, req)
+		op, rerr = c.addrs.Create(auth.PropagateOutgoing(ctx), req)
 		return rerr
 	}); err != nil {
 		return nil, mapAllocErr("", err)
@@ -517,7 +518,7 @@ func (c *internalAddressClient) waitOperation(
 		var got *operationpb.Operation
 		if err := retry.OnUnavailable(ctx, func(ctx context.Context) error {
 			var rerr error
-			got, rerr = c.ops.Get(ctx, &operationpb.GetOperationRequest{OperationId: id})
+			got, rerr = c.ops.Get(auth.PropagateOutgoing(ctx), &operationpb.GetOperationRequest{OperationId: id})
 			return rerr
 		}); err != nil {
 			return nil, err

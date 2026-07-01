@@ -51,6 +51,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/PRO-Robotech/kacho-corelib/operations"
 	vpcclient "github.com/PRO-Robotech/kacho-nlb/internal/clients/vpc"
 	"github.com/PRO-Robotech/kacho-nlb/internal/domain"
 )
@@ -259,6 +260,9 @@ func (r *FreeIPRunner) releaseFamily(ctx context.Context, lbID, addressID, origi
 	if addressID == "" {
 		return nil
 	}
+	// System-reconcile детачнут от tenant-request — идём под system-principal, чтобы
+	// vpc-вызовы release (ClearReference/FreeIP) несли identity (иначе authz_no_principal).
+	ctx = operations.WithPrincipal(ctx, operations.SystemPrincipal())
 	owner := vpcclient.AddressOwner{Kind: freeIPOwnerKind, ID: lbID}
 	if domain.VipOrigin(origin) == domain.VipOriginLinked {
 		return r.addrs.ClearReference(ctx, addressID, owner)

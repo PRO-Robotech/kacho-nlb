@@ -421,6 +421,11 @@ func subnetPlacementMatches(subnetPlacement string, lbPlacement domain.Placement
 func (u *CreateLoadBalancerUseCase) doCreate(
 	ctx context.Context, lb domain.LoadBalancer, principal operations.Principal, specs []familyVIPSpec,
 ) (*anypb.Any, error) {
+	// Worker-ctx детачнут от request'а — восстанавливаем principal из Operation,
+	// чтобы downstream-вызовы (vpc AddressService.Create / SetReference, geo Zone/
+	// Region) несли identity тенанта (auth.PropagateOutgoing). Без этого vpc authz
+	// отвергает Create как authz_no_principal.
+	ctx = operations.WithPrincipal(ctx, principal)
 	if u.projectClient != nil {
 		if _, err := u.projectClient.Get(ctx, string(lb.ProjectID)); err != nil {
 			return nil, peerErrToStatus(err, "project", string(lb.ProjectID))

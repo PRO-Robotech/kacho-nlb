@@ -11,6 +11,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/PRO-Robotech/kacho-corelib/auth"
 	"github.com/PRO-Robotech/kacho-corelib/retry"
 	geopb "github.com/PRO-Robotech/kacho-geo/proto/gen/go/kacho/cloud/geo/v1"
 
@@ -66,7 +67,7 @@ func (c *zoneClient) ListZoneIDsInRegion(ctx context.Context, regionID string) (
 		var resp *geopb.ListZonesResponse
 		if err := retry.OnUnavailable(ctx, func(ctx context.Context) error {
 			var rerr error
-			resp, rerr = c.zones.List(ctx, &geopb.ListZonesRequest{
+			resp, rerr = c.zones.List(auth.PropagateOutgoing(ctx), &geopb.ListZonesRequest{
 				PageSize:  zoneListPageSize,
 				PageToken: pageToken,
 			})
