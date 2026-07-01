@@ -860,7 +860,7 @@ func (c *fakeInternalAddressClient) FreeIP(_ context.Context, id string, _ vpccl
 	c.freeCalls = append(c.freeCalls, id)
 	return c.freeErr
 }
-func (c *fakeInternalAddressClient) SetReference(_ context.Context, id string, owner vpcclient.AddressOwner) error {
+func (c *fakeInternalAddressClient) SetReference(_ context.Context, id string, owner vpcclient.AddressOwner, _ bool) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.setRefCalls = append(c.setRefCalls, setRefCall{addressID: id, owner: owner})

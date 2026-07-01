@@ -39,7 +39,10 @@ type Address struct {
 	Value     string // IP в строковой форме (resolved)
 	Family    string // AddressFamilyIPv4 | AddressFamilyIPv6
 	External  bool
-	UsedBy    *AddressOwner // nil если адрес свободен (Used=false)
+	// SubnetID — подсеть internal-адреса (пусто для external). Нужна consumer'у
+	// для placement-guard link'а (подсеть адреса == placement LB).
+	SubnetID string
+	UsedBy   *AddressOwner // nil если адрес свободен (Used=false)
 }
 
 // AddressOwner — текущий referrer Address-ресурса.
@@ -112,10 +115,12 @@ func (c *addressClient) Get(ctx context.Context, addressID string) (*Address, er
 		addr.Value = resp.GetInternalIpv4Address().GetAddress()
 		addr.Family = AddressFamilyIPv4
 		addr.External = false
+		addr.SubnetID = resp.GetInternalIpv4Address().GetSubnetId()
 	case resp.GetInternalIpv6Address() != nil:
 		addr.Value = resp.GetInternalIpv6Address().GetAddress()
 		addr.Family = AddressFamilyIPv6
 		addr.External = false
+		addr.SubnetID = resp.GetInternalIpv6Address().GetSubnetId()
 	case resp.GetExternalIpv6Address() != nil:
 		addr.Value = resp.GetExternalIpv6Address().GetAddress()
 		addr.Family = AddressFamilyIPv6

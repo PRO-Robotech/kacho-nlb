@@ -5,648 +5,489 @@ package loadbalancer
 
 import (
 	"context"
-	"errors"
-	"fmt"
 	"log/slog"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
-	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
-	"google.golang.org/protobuf/proto"
 
 	lbv1 "github.com/PRO-Robotech/kacho-nlb/proto/gen/go/kacho/cloud/loadbalancer/v1"
 
-	"github.com/PRO-Robotech/kacho-nlb/internal/clients/geo"
-	"github.com/PRO-Robotech/kacho-nlb/internal/clients/iam"
 	vpcclient "github.com/PRO-Robotech/kacho-nlb/internal/clients/vpc"
 	"github.com/PRO-Robotech/kacho-nlb/internal/domain"
 )
 
-// onlyLB returns the single LoadBalancer stored in the fake repo, failing if the
-// count is not exactly one.
-func onlyLB(t *testing.T, repo *fakeRepo) domain.LoadBalancer {
-	t.Helper()
-	require.Len(t, repo.lbs, 1)
-	for _, lb := range repo.lbs {
-		return lb.LoadBalancer
-	}
-	return domain.LoadBalancer{}
-}
-
-// lbFieldViolations flattens gRPC-status BadRequest field violations into
-// "field: description" lines for assert.Contains.
-func lbFieldViolations(err error) string {
-	st, ok := status.FromError(err)
-	if !ok {
-		return err.Error()
-	}
-	parts := []string{st.Message()}
-	for _, d := range st.Details() {
-		if br, ok := d.(*errdetails.BadRequest); ok {
-			for _, v := range br.GetFieldViolations() {
-				parts = append(parts, v.GetField()+": "+v.GetDescription())
-			}
-		}
-	}
-	return strings.Join(parts, " | ")
-}
-
-// lbTestSubnetV4 / lbTestSubnetV6 — REGIONAL-подсети для auto-аллокации VIP в
-// unit-тестах (well-formed subnet id — префикс "sub" известен corevalidate).
+// Тестовые cross-service id (prefix из известного набора corevalidate).
 const (
-	lbTestSubnetV4 = "sub-1"
-	lbTestSubnetV6 = "sub-6"
+	lbTestSubnetRegional = "sub-reg"
+	lbTestSubnetZonal    = "sub-zon"
+	lbTestAddrInternal   = "adr-int"
+	lbTestAddrExternal   = "adr-ext"
 )
 
-// autoV4Spec — address_spec с auto-аллокацией одного семейства IPv4 из REGIONAL-
-// подсети subnetID.
-func autoV4Spec(subnetID string) *lbv1.NetworkLoadBalancerAddressSpec {
-	return &lbv1.NetworkLoadBalancerAddressSpec{
-		V4: &lbv1.FamilyAddressSpec{Source: &lbv1.FamilyAddressSpec_Auto{
-			Auto: &lbv1.FamilyAddressSpec_AnycastAllocate{SubnetId: subnetID},
-		}},
-	}
+// ---- Конструкторы use-case для тестов --------------------------------------
+
+// createDeps — инъекция peer-двойников (nil → sensible default).
+type createDeps struct {
+	subnet SubnetClient
+	reader AddressClient
+	addr   InternalAddressClient
+	zone   ZoneClient
+	region RegionClient
 }
 
-// internalReq — валидный INTERNAL Create-request (auto v4) с заданным именем.
-func internalReq(name string) *lbv1.CreateNetworkLoadBalancerRequest {
+func newCreateUC(repo *fakeRepo, opsRepo *fakeOpsRepo, d createDeps) *CreateLoadBalancerUseCase {
+	if d.subnet == nil {
+		d.subnet = &fakeSubnetClient{}
+	}
+	if d.reader == nil {
+		d.reader = &fakeAddressReader{}
+	}
+	if d.addr == nil {
+		d.addr = &fakeAddressClient{}
+	}
+	if d.zone == nil {
+		d.zone = &fakeZoneClient{}
+	}
+	if d.region == nil {
+		d.region = &fakeRegionClient{}
+	}
+	return NewCreateLoadBalancerUseCase(repo, opsRepo,
+		&fakeProjectClient{}, d.region, d.zone, d.subnet, d.reader, d.addr, slog.Default())
+}
+
+// ---- VipSource-хелперы -----------------------------------------------------
+
+func vipSubnet(id string) *lbv1.VipSource {
+	return &lbv1.VipSource{Source: &lbv1.VipSource_SubnetId{SubnetId: id}}
+}
+func vipAddress(id string) *lbv1.VipSource {
+	return &lbv1.VipSource{Source: &lbv1.VipSource_AddressId{AddressId: id}}
+}
+func vipPublic() *lbv1.VipSource {
+	return &lbv1.VipSource{Source: &lbv1.VipSource_Public{Public: &lbv1.PublicVip{}}}
+}
+
+func baseCreateReq() *lbv1.CreateNetworkLoadBalancerRequest {
 	return &lbv1.CreateNetworkLoadBalancerRequest{
-		ProjectId: "prj-a", RegionId: "ru-central1", Name: name,
-		Type: lbv1.NetworkLoadBalancer_INTERNAL, NetworkId: "net-1",
-		AddressSpec: autoV4Spec(lbTestSubnetV4),
+		ProjectId: "prj-a", RegionId: "region-1", Name: "lb-1",
 	}
 }
 
-// newCreateUC — use-case с дефолтными network/sg/subnet/address фейками.
-func newCreateUC(repo *fakeRepo, opsRepo *fakeOpsRepo, pc ProjectClient, rc RegionClient) *CreateLoadBalancerUseCase {
-	return NewCreateLoadBalancerUseCase(repo, opsRepo, pc, rc, &fakeNetworkClient{}, &fakeSecurityGroupClient{}, &fakeSubnetClient{}, &fakeAddressReader{}, &fakeAddressClient{}, slog.Default())
-}
+// ---- Группа A/B — happy positives ------------------------------------------
 
-// newCreateUCWithAddress — вариант с явным address-фейком для assert'ов саги
-// (subnet-client + address-reader — дефолтные REGIONAL / matching-owner фейки).
-func newCreateUCWithAddress(repo *fakeRepo, opsRepo *fakeOpsRepo, ac InternalAddressClient) *CreateLoadBalancerUseCase {
-	return NewCreateLoadBalancerUseCase(repo, opsRepo, &fakeProjectClient{}, &fakeRegionClient{}, &fakeNetworkClient{}, &fakeSecurityGroupClient{}, &fakeSubnetClient{}, &fakeAddressReader{}, ac, slog.Default())
-}
+// 8.1-01: INTERNAL ZONAL subnet-auto (unicast).
+func TestCreate_InternalZonal_SubnetAuto(t *testing.T) {
+	repo, opsRepo := newFakeRepo(), newFakeOpsRepo()
+	uc := newCreateUC(repo, opsRepo, createDeps{subnet: &fakeSubnetClient{placement: "ZONAL"}})
+	req := baseCreateReq()
+	req.Type = lbv1.NetworkLoadBalancer_INTERNAL
+	req.PlacementType = lbv1.NetworkLoadBalancer_ZONAL
+	req.V4Source = vipSubnet(lbTestSubnetZonal)
 
-// newCreateUCWithSubnet — вариант с явным subnet-фейком (для REGIONAL-валидации).
-func newCreateUCWithSubnet(repo *fakeRepo, opsRepo *fakeOpsRepo, snc SubnetClient, ac InternalAddressClient) *CreateLoadBalancerUseCase {
-	return NewCreateLoadBalancerUseCase(repo, opsRepo, &fakeProjectClient{}, &fakeRegionClient{}, &fakeNetworkClient{}, &fakeSecurityGroupClient{}, snc, &fakeAddressReader{}, ac, slog.Default())
-}
-
-// newCreateUCWithAddressReader — вариант с явным address-reader-фейком (для BYO
-// ownership/family-валидации). subnet-client — дефолтный REGIONAL-фейк.
-func newCreateUCWithAddressReader(repo *fakeRepo, opsRepo *fakeOpsRepo, ar AddressClient, ac InternalAddressClient) *CreateLoadBalancerUseCase {
-	return NewCreateLoadBalancerUseCase(repo, opsRepo, &fakeProjectClient{}, &fakeRegionClient{}, &fakeNetworkClient{}, &fakeSecurityGroupClient{}, &fakeSubnetClient{}, ar, ac, slog.Default())
-}
-
-// TestCreateLoadBalancer_SessionAffinity — session_affinity from the request is
-// persisted; UNSPECIFIED falls back to the FIVE_TUPLE default.
-func TestCreateLoadBalancer_SessionAffinity(t *testing.T) {
-	t.Parallel()
-	tests := map[string]struct {
-		in   lbv1.NetworkLoadBalancer_SessionAffinity
-		want domain.SessionAffinity
-	}{
-		"client_ip_only": {lbv1.NetworkLoadBalancer_CLIENT_IP_ONLY, domain.SessionAffinityClientIPOnly},
-		"five_tuple":     {lbv1.NetworkLoadBalancer_FIVE_TUPLE, domain.SessionAffinity5Tuple},
-		"unspecified":    {lbv1.NetworkLoadBalancer_SESSION_AFFINITY_UNSPECIFIED, domain.SessionAffinity5Tuple},
-	}
-	for name, tc := range tests {
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
-			repo := newFakeRepo()
-			opsRepo := newFakeOpsRepo()
-			uc := newCreateUC(repo, opsRepo, &fakeProjectClient{}, &fakeRegionClient{})
-			req := internalReq("edge-affinity")
-			req.SessionAffinity = tc.in
-			op, err := uc.Execute(context.Background(), req)
-			require.NoError(t, err)
-			require.Nil(t, awaitOpDone(t, opsRepo, op.ID).Error)
-			require.Equal(t, tc.want, onlyLB(t, repo).SessionAffinity)
-		})
-	}
-}
-
-// TestCreateLoadBalancer_SessionAffinityOutOfDomain — a numeric value outside
-// {0,1,2} is rejected synchronously with the verbatim field message.
-func TestCreateLoadBalancer_SessionAffinityOutOfDomain(t *testing.T) {
-	t.Parallel()
-	repo := newFakeRepo()
-	uc := newCreateUC(repo, newFakeOpsRepo(), &fakeProjectClient{}, &fakeRegionClient{})
-	req := internalReq("edge")
-	req.SessionAffinity = lbv1.NetworkLoadBalancer_SessionAffinity(99)
-	_, err := uc.Execute(context.Background(), req)
-	require.Equal(t, codes.InvalidArgument, status.Code(err))
-	require.Contains(t, lbFieldViolations(err),
-		"session_affinity: session_affinity must be one of: FIVE_TUPLE, CLIENT_IP_ONLY")
-	require.Empty(t, repo.lbs, "LB must not be persisted on out-of-domain session_affinity")
-}
-
-// TestCreateLoadBalancer_CrossZoneEnabled — explicit cross_zone_enabled honoured;
-// omitted keeps the default (true).
-func TestCreateLoadBalancer_CrossZoneEnabled(t *testing.T) {
-	t.Parallel()
-	tests := map[string]struct {
-		in   *bool
-		want bool
-	}{
-		"explicit_false": {proto.Bool(false), false},
-		"explicit_true":  {proto.Bool(true), true},
-		"omitted":        {nil, true},
-	}
-	for name, tc := range tests {
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
-			repo := newFakeRepo()
-			opsRepo := newFakeOpsRepo()
-			uc := newCreateUC(repo, opsRepo, &fakeProjectClient{}, &fakeRegionClient{})
-			req := internalReq("edge-cz")
-			req.CrossZoneEnabled = tc.in
-			op, err := uc.Execute(context.Background(), req)
-			require.NoError(t, err)
-			require.Nil(t, awaitOpDone(t, opsRepo, op.ID).Error)
-			require.Equal(t, tc.want, onlyLB(t, repo).CrossZoneEnabled)
-		})
-	}
-}
-
-// TestCreateLoadBalancer_AutoV4HappyPath — INTERNAL auto-alloc single-family v4
-// из REGIONAL-подсети: durable-handle сага финализирует в INACTIVE, VIP проставлен,
-// ip_families=[IPV4], AllocateInternalIP вызван ровно один раз с subnet_id (GWT-01).
-func TestCreateLoadBalancer_AutoV4HappyPath(t *testing.T) {
-	t.Parallel()
-	repo := newFakeRepo()
-	opsRepo := newFakeOpsRepo()
-	ac := &fakeAddressClient{}
-	uc := newCreateUCWithAddress(repo, opsRepo, ac)
-
-	op, err := uc.Execute(context.Background(), internalReq("edge-internal"))
-	require.NoError(t, err)
-	require.False(t, op.Done)
-
-	final := awaitOpDone(t, opsRepo, op.ID)
-	require.Nil(t, final.Error)
-	require.NotNil(t, final.Response)
-
-	lb := onlyLB(t, repo)
-	require.Equal(t, domain.LBStatusInactive, lb.Status)
-	require.Equal(t, domain.LBTypeInternal, lb.Type)
-	require.Equal(t, []domain.IPVersion{domain.IPVersionV4}, lb.IPFamilies)
-	require.NotEmpty(t, string(lb.AddressV4), "address_v4 set by worker")
-	require.NotEmpty(t, string(lb.AddressIDV4), "address_id_v4 bound")
-	require.Equal(t, domain.VipOriginAuto, lb.VipOriginV4)
-	require.Empty(t, string(lb.AddressV6))
-	require.Len(t, ac.allocReqs, 1, "AllocateInternalIP called once for v4")
-	require.Equal(t, vpcclient.AddressFamilyIPv4, ac.allocReqs[0].family)
-	require.Equal(t, lbTestSubnetV4, ac.allocReqs[0].req.SubnetID)
-	require.Equal(t, "prj-a", ac.allocReqs[0].req.ProjectID)
-
-	evts := repo.outboxEvents()
-	require.Len(t, evts, 1)
-	require.Equal(t, "CREATED", evts[0].Action)
-}
-
-// TestCreateLoadBalancer_DualstackFanOut — v4+v6 auto: оба семейства аллоцированы
-// из своих REGIONAL-подсетей; ip_families=[IPV4,IPV6]; AllocateInternalIP(v4) +
-// AllocateInternalIPv6(v6) вызваны по разу (GWT-03).
-func TestCreateLoadBalancer_DualstackFanOut(t *testing.T) {
-	t.Parallel()
-	repo := newFakeRepo()
-	opsRepo := newFakeOpsRepo()
-	ac := &fakeAddressClient{}
-	uc := newCreateUCWithAddress(repo, opsRepo, ac)
-
-	req := internalReq("edge-ds")
-	req.AddressSpec = &lbv1.NetworkLoadBalancerAddressSpec{
-		V4: &lbv1.FamilyAddressSpec{Source: &lbv1.FamilyAddressSpec_Auto{Auto: &lbv1.FamilyAddressSpec_AnycastAllocate{SubnetId: lbTestSubnetV4}}},
-		V6: &lbv1.FamilyAddressSpec{Source: &lbv1.FamilyAddressSpec_Auto{Auto: &lbv1.FamilyAddressSpec_AnycastAllocate{SubnetId: lbTestSubnetV6}}},
-	}
 	op, err := uc.Execute(context.Background(), req)
 	require.NoError(t, err)
 	require.Nil(t, awaitOpDone(t, opsRepo, op.ID).Error)
 
-	lb := onlyLB(t, repo)
-	require.Equal(t, []domain.IPVersion{domain.IPVersionV4, domain.IPVersionV6}, lb.IPFamilies)
-	require.NotEmpty(t, string(lb.AddressV4))
-	require.NotEmpty(t, string(lb.AddressV6))
-	require.NotEmpty(t, string(lb.AddressIDV4))
-	require.NotEmpty(t, string(lb.AddressIDV6))
-	require.Len(t, ac.allocReqs, 2, "AllocateInternalIP called for v4 and v6")
-	require.Equal(t, vpcclient.AddressFamilyIPv4, ac.allocReqs[0].family)
-	require.Equal(t, lbTestSubnetV4, ac.allocReqs[0].req.SubnetID)
-	require.Equal(t, vpcclient.AddressFamilyIPv6, ac.allocReqs[1].family)
-	require.Equal(t, lbTestSubnetV6, ac.allocReqs[1].req.SubnetID)
+	rec := lbByName(t, repo, "lb-1")
+	require.Equal(t, domain.PlacementZonal, rec.PlacementType)
+	require.NotEmpty(t, string(rec.AddressIDV4))
+	require.Empty(t, string(rec.AddressIDV6))
+	require.Equal(t, domain.VipOriginAuto, rec.VipOriginV4)
+	require.Equal(t, domain.LBStatusInactive, rec.Status)
 }
 
-// TestCreateLoadBalancer_BYOv4 — BYO v4: AttachExisting вызван с owner + addressId;
-// VIP проставлен из принесённого Address (GWT-04).
-func TestCreateLoadBalancer_BYOv4(t *testing.T) {
-	t.Parallel()
-	repo := newFakeRepo()
-	opsRepo := newFakeOpsRepo()
-	ac := &fakeAddressClient{}
-	uc := newCreateUCWithAddress(repo, opsRepo, ac)
+// 8.1-02: INTERNAL REGIONAL subnet-auto (anycast).
+func TestCreate_InternalRegional_SubnetAuto(t *testing.T) {
+	repo, opsRepo := newFakeRepo(), newFakeOpsRepo()
+	uc := newCreateUC(repo, opsRepo, createDeps{})
+	req := baseCreateReq()
+	req.Type = lbv1.NetworkLoadBalancer_INTERNAL
+	req.PlacementType = lbv1.NetworkLoadBalancer_REGIONAL
+	req.V4Source = vipSubnet(lbTestSubnetRegional)
 
-	req := internalReq("edge-byo")
-	req.AddressSpec = &lbv1.NetworkLoadBalancerAddressSpec{
-		V4: &lbv1.FamilyAddressSpec{Source: &lbv1.FamilyAddressSpec_Byo{
-			Byo: &lbv1.FamilyAddressSpec_AnycastByo{AddressId: "adr00000000000000byo"},
-		}},
-	}
 	op, err := uc.Execute(context.Background(), req)
 	require.NoError(t, err)
 	require.Nil(t, awaitOpDone(t, opsRepo, op.ID).Error)
-
-	require.Len(t, ac.byoReqs, 1)
-	require.Equal(t, "adr00000000000000byo", ac.byoReqs[0].AddressID)
-	require.Equal(t, lbAddressOwnerKind, ac.byoReqs[0].Owner.Kind)
-	require.Empty(t, ac.allocReqs, "BYO path must not auto-allocate")
-	lb := onlyLB(t, repo)
-	require.Equal(t, domain.VipOriginBYO, lb.VipOriginV4)
-	require.Equal(t, "adr00000000000000byo", string(lb.AddressIDV4))
+	rec := lbByName(t, repo, "lb-1")
+	require.Equal(t, domain.PlacementRegional, rec.PlacementType)
+	require.Empty(t, rec.DisabledAnnounceZones)
 }
 
-// byoV4Req — валидный INTERNAL Create-request с BYO v4 addressId.
-func byoV4Req(name, addressID string) *lbv1.CreateNetworkLoadBalancerRequest {
-	req := internalReq(name)
-	req.AddressSpec = &lbv1.NetworkLoadBalancerAddressSpec{
-		V4: &lbv1.FamilyAddressSpec{Source: &lbv1.FamilyAddressSpec_Byo{
-			Byo: &lbv1.FamilyAddressSpec_AnycastByo{AddressId: addressID},
-		}},
-	}
-	return req
-}
+// 8.1-03: INTERNAL REGIONAL + disabled_announce_zones on Create.
+func TestCreate_InternalRegional_Drain(t *testing.T) {
+	repo, opsRepo := newFakeRepo(), newFakeOpsRepo()
+	uc := newCreateUC(repo, opsRepo, createDeps{})
+	req := baseCreateReq()
+	req.Type = lbv1.NetworkLoadBalancer_INTERNAL
+	req.PlacementType = lbv1.NetworkLoadBalancer_REGIONAL
+	req.V4Source = vipSubnet(lbTestSubnetRegional)
+	req.DisabledAnnounceZones = []string{"region-1-b"}
 
-// TestCreateLoadBalancer_BYOWrongProject — BYO Address принадлежит ЧУЖОМУ проекту:
-// sync-precheck ownership отвергает Create generic InvalidArgument (анти-oracle);
-// AttachExisting не вызывается, LB не создаётся.
-func TestCreateLoadBalancer_BYOWrongProject(t *testing.T) {
-	t.Parallel()
-	repo := newFakeRepo()
-	opsRepo := newFakeOpsRepo()
-	ac := &fakeAddressClient{}
-	// Адрес принадлежит "prj-other" (LB — "prj-a"), семейство совпадает (v4).
-	ar := &fakeAddressReader{projectID: "prj-other", family: vpcclient.AddressFamilyIPv4}
-	uc := newCreateUCWithAddressReader(repo, opsRepo, ar, ac)
-
-	_, err := uc.Execute(context.Background(), byoV4Req("edge-byo-xproj", "adr00000000000000byo"))
-	require.Equal(t, codes.InvalidArgument, status.Code(err))
-	require.Equal(t, "Illegal argument addressId", status.Convert(err).Message())
-	require.Empty(t, ac.byoReqs, "AttachExisting must not be called for cross-project address")
-	require.Empty(t, repo.lbs, "LB must not be persisted")
-}
-
-// TestCreateLoadBalancer_BYOWrongFamily — BYO Address семейства v6, а заявлен v4:
-// sync-precheck отвергает generic InvalidArgument; bind не происходит.
-func TestCreateLoadBalancer_BYOWrongFamily(t *testing.T) {
-	t.Parallel()
-	repo := newFakeRepo()
-	opsRepo := newFakeOpsRepo()
-	ac := &fakeAddressClient{}
-	// Проект совпадает (prj-a), но адрес — IPv6, а декларирован v4.
-	ar := &fakeAddressReader{projectID: "prj-a", family: vpcclient.AddressFamilyIPv6}
-	uc := newCreateUCWithAddressReader(repo, opsRepo, ar, ac)
-
-	_, err := uc.Execute(context.Background(), byoV4Req("edge-byo-xfam", "adr00000000000000byo"))
-	require.Equal(t, codes.InvalidArgument, status.Code(err))
-	require.Equal(t, "Illegal argument addressId", status.Convert(err).Message())
-	require.Empty(t, ac.byoReqs, "AttachExisting must not be called for family mismatch")
-	require.Empty(t, repo.lbs)
-}
-
-// TestCreateLoadBalancer_BYOOwnershipHappyPath — BYO Address совпадает по проекту
-// и семейству: precheck проходит, AttachExisting вызван, VIP персистится.
-func TestCreateLoadBalancer_BYOOwnershipHappyPath(t *testing.T) {
-	t.Parallel()
-	repo := newFakeRepo()
-	opsRepo := newFakeOpsRepo()
-	ac := &fakeAddressClient{}
-	ar := &fakeAddressReader{projectID: "prj-a", family: vpcclient.AddressFamilyIPv4}
-	uc := newCreateUCWithAddressReader(repo, opsRepo, ar, ac)
-
-	op, err := uc.Execute(context.Background(), byoV4Req("edge-byo-ok", "adr00000000000000byo"))
+	op, err := uc.Execute(context.Background(), req)
 	require.NoError(t, err)
 	require.Nil(t, awaitOpDone(t, opsRepo, op.ID).Error)
-
-	require.Len(t, ac.byoReqs, 1, "AttachExisting called after ownership check passes")
-	require.Equal(t, "adr00000000000000byo", ac.byoReqs[0].AddressID)
-	lb := onlyLB(t, repo)
-	require.Equal(t, domain.VipOriginBYO, lb.VipOriginV4)
-	require.Equal(t, "adr00000000000000byo", string(lb.AddressIDV4))
+	require.Equal(t, []string{"region-1-b"}, lbByName(t, repo, "lb-1").DisabledAnnounceZones)
 }
 
-// TestCreateLoadBalancer_BYOVpcUnavailable — vpc недоступен при ownership-resolve:
-// fail-closed Unavailable (мутация не проходит); bind не происходит.
-func TestCreateLoadBalancer_BYOVpcUnavailable(t *testing.T) {
-	t.Parallel()
-	repo := newFakeRepo()
-	opsRepo := newFakeOpsRepo()
-	ac := &fakeAddressClient{}
-	ar := &fakeAddressReader{getFunc: func(_ context.Context, addressID string) (*vpcclient.Address, error) {
-		return nil, fmt.Errorf("%w: vpc address %s: dial", domain.ErrUnavailable, addressID)
-	}}
-	uc := newCreateUCWithAddressReader(repo, opsRepo, ar, ac)
+// 8.1-04: INTERNAL address-link (owned=false).
+func TestCreate_InternalRegional_AddressLink(t *testing.T) {
+	repo, opsRepo := newFakeRepo(), newFakeOpsRepo()
+	addr := &fakeAddressClient{}
+	uc := newCreateUC(repo, opsRepo, createDeps{
+		reader: &fakeAddressReader{},
+		addr:   addr,
+	})
+	req := baseCreateReq()
+	req.Type = lbv1.NetworkLoadBalancer_INTERNAL
+	req.PlacementType = lbv1.NetworkLoadBalancer_REGIONAL
+	req.V4Source = vipAddress(lbTestAddrInternal)
 
-	_, err := uc.Execute(context.Background(), byoV4Req("edge-byo-vpcdown", "adr00000000000000byo"))
-	require.Equal(t, codes.Unavailable, status.Code(err))
-	require.Empty(t, ac.byoReqs)
-	require.Empty(t, repo.lbs)
+	op, err := uc.Execute(context.Background(), req)
+	require.NoError(t, err)
+	require.Nil(t, awaitOpDone(t, opsRepo, op.ID).Error)
+	rec := lbByName(t, repo, "lb-1")
+	require.Equal(t, domain.VipOriginLinked, rec.VipOriginV4)
+	require.Equal(t, lbTestAddrInternal, string(rec.AddressIDV4))
+	require.Len(t, addr.byoReqs, 1)
+	require.False(t, addr.byoReqs[0].Owned)
 }
 
-// TestCreateLoadBalancer_BYONotFound — BYO Address не найден / недоступен tenant'у:
-// authz-gated Get вернул NotFound/PermissionDenied → generic InvalidArgument (анти-
-// oracle: не раскрываем, существует ли адрес и чей он).
-func TestCreateLoadBalancer_BYONotFound(t *testing.T) {
-	t.Parallel()
-	repo := newFakeRepo()
-	opsRepo := newFakeOpsRepo()
-	ac := &fakeAddressClient{}
-	ar := &fakeAddressReader{getFunc: func(_ context.Context, addressID string) (*vpcclient.Address, error) {
-		return nil, fmt.Errorf("%w: address %s not found", domain.ErrInvalidArg, addressID)
-	}}
-	uc := newCreateUCWithAddressReader(repo, opsRepo, ar, ac)
+// 8.1-05: INTERNAL REGIONAL dualstack — v4 subnet-auto + v6 link, same network.
+func TestCreate_InternalRegional_Dualstack_Mixed(t *testing.T) {
+	repo, opsRepo := newFakeRepo(), newFakeOpsRepo()
+	uc := newCreateUC(repo, opsRepo, createDeps{
+		reader: &fakeAddressReader{family: vpcclient.AddressFamilyIPv6},
+	})
+	req := baseCreateReq()
+	req.Type = lbv1.NetworkLoadBalancer_INTERNAL
+	req.PlacementType = lbv1.NetworkLoadBalancer_REGIONAL
+	req.V4Source = vipSubnet(lbTestSubnetRegional)
+	req.V6Source = vipAddress("adr-6")
 
-	_, err := uc.Execute(context.Background(), byoV4Req("edge-byo-404", "adr00000000000000byo"))
-	require.Equal(t, codes.InvalidArgument, status.Code(err))
-	require.Equal(t, "Illegal argument addressId", status.Convert(err).Message())
-	require.Empty(t, ac.byoReqs)
-	require.Empty(t, repo.lbs)
+	op, err := uc.Execute(context.Background(), req)
+	require.NoError(t, err)
+	require.Nil(t, awaitOpDone(t, opsRepo, op.ID).Error)
+	rec := lbByName(t, repo, "lb-1")
+	require.NotEmpty(t, string(rec.AddressIDV4))
+	require.Equal(t, "adr-6", string(rec.AddressIDV6))
 }
 
-// TestCreateLoadBalancer_CompensationOnV6Fail — dualstack где v6-acquire падает:
-// worker компенсирует уже аллоцированный v4 (FreeIP по address_id_v4) и снимает
-// handle; Operation done с error; LB не остаётся (GWT-19).
-func TestCreateLoadBalancer_CompensationOnV6Fail(t *testing.T) {
-	t.Parallel()
-	repo := newFakeRepo()
-	opsRepo := newFakeOpsRepo()
-	ac := &fakeAddressClient{
-		allocFunc: func(ctx context.Context, req vpcclient.AllocateInternalIPRequest, family string) (*vpcclient.AllocateResponse, error) {
-			if family == vpcclient.AddressFamilyIPv6 {
-				return nil, fmt.Errorf("%w: could not allocate address", domain.ErrFailedPrecondition)
-			}
-			return &vpcclient.AllocateResponse{AddressID: "adr0000000000000v4x", Value: "10.0.0.7"}, nil
+// 8.1-06: EXTERNAL public → неявный public IP (underlying zone derived).
+func TestCreate_External_Public(t *testing.T) {
+	repo, opsRepo := newFakeRepo(), newFakeOpsRepo()
+	addr := &fakeAddressClient{}
+	uc := newCreateUC(repo, opsRepo, createDeps{addr: addr})
+	req := baseCreateReq()
+	req.Type = lbv1.NetworkLoadBalancer_EXTERNAL
+	req.V4Source = vipPublic()
+
+	op, err := uc.Execute(context.Background(), req)
+	require.NoError(t, err)
+	require.Nil(t, awaitOpDone(t, opsRepo, op.ID).Error)
+	rec := lbByName(t, repo, "lb-1")
+	require.Equal(t, domain.PlacementUnspecified, rec.PlacementType)
+	require.Equal(t, domain.VipOriginAuto, rec.VipOriginV4)
+	require.Len(t, addr.extReqs, 1)
+	require.NotEmpty(t, addr.extReqs[0].ZoneID)
+}
+
+// 8.1-07: EXTERNAL address-link (BYO external).
+func TestCreate_External_AddressLink(t *testing.T) {
+	repo, opsRepo := newFakeRepo(), newFakeOpsRepo()
+	uc := newCreateUC(repo, opsRepo, createDeps{
+		reader: &fakeAddressReader{external: true},
+	})
+	req := baseCreateReq()
+	req.Type = lbv1.NetworkLoadBalancer_EXTERNAL
+	req.V4Source = vipAddress(lbTestAddrExternal)
+
+	op, err := uc.Execute(context.Background(), req)
+	require.NoError(t, err)
+	require.Nil(t, awaitOpDone(t, opsRepo, op.ID).Error)
+	require.Equal(t, domain.VipOriginLinked, lbByName(t, repo, "lb-1").VipOriginV4)
+}
+
+// ---- Группа C — sync negatives (fail-fast, Operation НЕ создаётся) ----------
+
+func TestCreate_SyncNegatives(t *testing.T) {
+	cases := []struct {
+		name string
+		mut  func(*lbv1.CreateNetworkLoadBalancerRequest)
+		deps createDeps
+		msg  string
+	}{
+		{ // 8.1-08
+			name: "subnet source on EXTERNAL",
+			mut: func(r *lbv1.CreateNetworkLoadBalancerRequest) {
+				r.Type = lbv1.NetworkLoadBalancer_EXTERNAL
+				r.V4Source = vipSubnet(lbTestSubnetRegional)
+			},
+			msg: "subnet address source is only valid for INTERNAL load balancer",
+		},
+		{ // 8.1-09
+			name: "public source on INTERNAL",
+			mut: func(r *lbv1.CreateNetworkLoadBalancerRequest) {
+				r.Type = lbv1.NetworkLoadBalancer_INTERNAL
+				r.PlacementType = lbv1.NetworkLoadBalancer_ZONAL
+				r.V4Source = vipPublic()
+			},
+			msg: "public address source is only valid for EXTERNAL load balancer",
+		},
+		{ // 8.1-10 kind mismatch: external address in INTERNAL
+			name: "external address linked into INTERNAL",
+			deps: createDeps{reader: &fakeAddressReader{external: true}},
+			mut: func(r *lbv1.CreateNetworkLoadBalancerRequest) {
+				r.Type = lbv1.NetworkLoadBalancer_INTERNAL
+				r.PlacementType = lbv1.NetworkLoadBalancer_ZONAL
+				r.V4Source = vipAddress(lbTestAddrExternal)
+			},
+			msg: "Illegal argument addressId",
+		},
+		{ // 8.1-11a placement mismatch: ZONAL LB + REGIONAL subnet
+			name: "zonal lb regional subnet",
+			deps: createDeps{subnet: &fakeSubnetClient{placement: "REGIONAL"}},
+			mut: func(r *lbv1.CreateNetworkLoadBalancerRequest) {
+				r.Type = lbv1.NetworkLoadBalancer_INTERNAL
+				r.PlacementType = lbv1.NetworkLoadBalancer_ZONAL
+				r.V4Source = vipSubnet(lbTestSubnetRegional)
+			},
+			msg: "subnet placement does not match load balancer placement",
+		},
+		{ // 8.1-11b placement mismatch via address_id → generic
+			name: "regional lb zonal linked address",
+			deps: createDeps{subnet: &fakeSubnetClient{placement: "ZONAL"}},
+			mut: func(r *lbv1.CreateNetworkLoadBalancerRequest) {
+				r.Type = lbv1.NetworkLoadBalancer_INTERNAL
+				r.PlacementType = lbv1.NetworkLoadBalancer_REGIONAL
+				r.V4Source = vipAddress(lbTestAddrInternal)
+			},
+			msg: "Illegal argument addressId",
+		},
+		{ // 8.1-12a placement on EXTERNAL
+			name: "placement on external",
+			mut: func(r *lbv1.CreateNetworkLoadBalancerRequest) {
+				r.Type = lbv1.NetworkLoadBalancer_EXTERNAL
+				r.PlacementType = lbv1.NetworkLoadBalancer_REGIONAL
+				r.V4Source = vipPublic()
+			},
+			msg: "placement_type is only valid for INTERNAL load balancer",
+		},
+		{ // 8.1-12b placement missing on INTERNAL
+			name: "placement missing on internal",
+			mut: func(r *lbv1.CreateNetworkLoadBalancerRequest) {
+				r.Type = lbv1.NetworkLoadBalancer_INTERNAL
+				r.V4Source = vipSubnet(lbTestSubnetRegional)
+			},
+			msg: "placement_type is required for INTERNAL load balancer",
+		},
+		{ // 8.1-13 drain on ZONAL
+			name: "drain on zonal",
+			deps: createDeps{subnet: &fakeSubnetClient{placement: "ZONAL"}},
+			mut: func(r *lbv1.CreateNetworkLoadBalancerRequest) {
+				r.Type = lbv1.NetworkLoadBalancer_INTERNAL
+				r.PlacementType = lbv1.NetworkLoadBalancer_ZONAL
+				r.V4Source = vipSubnet(lbTestSubnetZonal)
+				r.DisabledAnnounceZones = []string{"region-1-a"}
+			},
+			msg: "disabled_announce_zones is only valid for REGIONAL load balancer",
+		},
+		{ // 8.1-14 drain covers all zones
+			name: "drain covers all zones",
+			mut: func(r *lbv1.CreateNetworkLoadBalancerRequest) {
+				r.Type = lbv1.NetworkLoadBalancer_INTERNAL
+				r.PlacementType = lbv1.NetworkLoadBalancer_REGIONAL
+				r.V4Source = vipSubnet(lbTestSubnetRegional)
+				r.DisabledAnnounceZones = []string{"region-1-a", "region-1-b"}
+			},
+			msg: "disabled_announce_zones must not cover all zones of the region",
+		},
+		{ // 8.1-15 drain zone not in region
+			name: "drain zone outside region",
+			mut: func(r *lbv1.CreateNetworkLoadBalancerRequest) {
+				r.Type = lbv1.NetworkLoadBalancer_INTERNAL
+				r.PlacementType = lbv1.NetworkLoadBalancer_REGIONAL
+				r.V4Source = vipSubnet(lbTestSubnetRegional)
+				r.DisabledAnnounceZones = []string{"region-2-a"}
+			},
+			msg: "zone region-2-a is not in region region-1",
+		},
+		{ // 8.1-16 foreign project address
+			name: "foreign project address",
+			deps: createDeps{reader: &fakeAddressReader{projectID: "prj-b"}},
+			mut: func(r *lbv1.CreateNetworkLoadBalancerRequest) {
+				r.Type = lbv1.NetworkLoadBalancer_INTERNAL
+				r.PlacementType = lbv1.NetworkLoadBalancer_REGIONAL
+				r.V4Source = vipAddress("adr-foreign")
+			},
+			msg: "Illegal argument addressId",
+		},
+		{ // 8.1-17 family/slot mismatch (v4 slot → v6 address)
+			name: "family slot mismatch",
+			deps: createDeps{reader: &fakeAddressReader{family: vpcclient.AddressFamilyIPv6}},
+			mut: func(r *lbv1.CreateNetworkLoadBalancerRequest) {
+				r.Type = lbv1.NetworkLoadBalancer_INTERNAL
+				r.PlacementType = lbv1.NetworkLoadBalancer_REGIONAL
+				r.V4Source = vipAddress("adr-6only")
+			},
+			msg: "Illegal argument addressId",
+		},
+		{ // 8.1-19 no source
+			name: "no source",
+			mut: func(r *lbv1.CreateNetworkLoadBalancerRequest) {
+				r.Type = lbv1.NetworkLoadBalancer_INTERNAL
+				r.PlacementType = lbv1.NetworkLoadBalancer_ZONAL
+			},
+			msg: "load balancer must declare a vip source for at least one ip family",
 		},
 	}
-	uc := newCreateUCWithAddress(repo, opsRepo, ac)
-
-	req := internalReq("edge-ds-fail")
-	req.AddressSpec = &lbv1.NetworkLoadBalancerAddressSpec{
-		V4: &lbv1.FamilyAddressSpec{Source: &lbv1.FamilyAddressSpec_Auto{Auto: &lbv1.FamilyAddressSpec_AnycastAllocate{SubnetId: lbTestSubnetV4}}},
-		V6: &lbv1.FamilyAddressSpec{Source: &lbv1.FamilyAddressSpec_Auto{Auto: &lbv1.FamilyAddressSpec_AnycastAllocate{SubnetId: lbTestSubnetV6}}},
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			repo, opsRepo := newFakeRepo(), newFakeOpsRepo()
+			uc := newCreateUC(repo, opsRepo, tc.deps)
+			req := baseCreateReq()
+			tc.mut(req)
+			_, err := uc.Execute(context.Background(), req)
+			require.Equal(t, codes.InvalidArgument, status.Code(err))
+			require.Equal(t, tc.msg, status.Convert(err).Message())
+			require.Empty(t, repo.lbs) // Operation не создаётся, LB не появляется
+		})
 	}
+}
+
+// 8.1-18: dualstack INTERNAL, subnets of different networks → reject.
+func TestCreate_Dualstack_DifferentNetworks(t *testing.T) {
+	repo, opsRepo := newFakeRepo(), newFakeOpsRepo()
+	sn := &fakeSubnetClient{getFunc: func(_ context.Context, id string) (*vpcclient.Subnet, error) {
+		net := "net-1"
+		if id == "sub-net2" {
+			net = "net-2"
+		}
+		return &vpcclient.Subnet{ID: id, ProjectID: "prj-a", NetworkID: net, PlacementType: vpcclient.SubnetPlacementRegional}, nil
+	}}
+	rd := &fakeAddressReader{family: vpcclient.AddressFamilyIPv6, subnetID: "sub-net2"}
+	uc := newCreateUC(repo, opsRepo, createDeps{subnet: sn, reader: rd})
+	req := baseCreateReq()
+	req.Type = lbv1.NetworkLoadBalancer_INTERNAL
+	req.PlacementType = lbv1.NetworkLoadBalancer_REGIONAL
+	req.V4Source = vipSubnet(lbTestSubnetRegional)
+	req.V6Source = vipAddress("adr-6")
+
+	_, err := uc.Execute(context.Background(), req)
+	require.Equal(t, codes.InvalidArgument, status.Code(err))
+	require.Equal(t, "dualstack load balancer families must resolve to the same network", status.Convert(err).Message())
+}
+
+// ---- Группа D — worker alloc / cross-service unavailable --------------------
+
+// 8.1-20: подсеть исчерпана на аллокации → generic FAILED_PRECONDITION.
+func TestCreate_Worker_SubnetExhausted(t *testing.T) {
+	repo, opsRepo := newFakeRepo(), newFakeOpsRepo()
+	addr := &fakeAddressClient{allocFunc: func(_ context.Context, _ vpcclient.AllocateInternalIPRequest, _ string) (*vpcclient.AllocateResponse, error) {
+		return nil, domain.ErrFailedPrecondition
+	}}
+	uc := newCreateUC(repo, opsRepo, createDeps{addr: addr})
+	req := baseCreateReq()
+	req.Type = lbv1.NetworkLoadBalancer_INTERNAL
+	req.PlacementType = lbv1.NetworkLoadBalancer_REGIONAL
+	req.V4Source = vipSubnet(lbTestSubnetRegional)
+
 	op, err := uc.Execute(context.Background(), req)
 	require.NoError(t, err)
-
 	final := awaitOpDone(t, opsRepo, op.ID)
 	require.NotNil(t, final.Error)
 	require.Equal(t, int32(codes.FailedPrecondition), final.Error.GetCode())
-	// v4 освобождён compensation'ом; handle снят → LB не остаётся.
-	require.Equal(t, []string{"adr0000000000000v4x"}, ac.freed, "v4 freed by compensation")
-	require.Empty(t, repo.lbs, "handle deleted by compensation")
-}
-
-// TestCreateLoadBalancer_SubnetZonalRejected — auto-семейство ссылается на ZONAL-
-// подсеть: sync-precheck отвергает Create с InvalidArgument (VIP обязан быть
-// anycast → REGIONAL-подсеть); LB не создаётся, VIP не аллоцируется.
-func TestCreateLoadBalancer_SubnetZonalRejected(t *testing.T) {
-	t.Parallel()
-	repo := newFakeRepo()
-	opsRepo := newFakeOpsRepo()
-	ac := &fakeAddressClient{}
-	uc := newCreateUCWithSubnet(repo, opsRepo, &fakeSubnetClient{placement: "ZONAL"}, ac)
-
-	_, err := uc.Execute(context.Background(), internalReq("edge-zonal"))
-	require.Equal(t, codes.InvalidArgument, status.Code(err))
-	require.Contains(t, status.Convert(err).Message(), "subnet must be REGIONAL")
-	require.Empty(t, repo.lbs, "LB must not be persisted for ZONAL subnet")
-	require.Empty(t, ac.allocReqs, "no VIP allocation for rejected ZONAL subnet")
-}
-
-// TestCreateLoadBalancer_SubnetNotFound — auto subnet_id не найден в vpc:
-// sync-precheck возвращает InvalidArgument; LB не создаётся.
-func TestCreateLoadBalancer_SubnetNotFound(t *testing.T) {
-	t.Parallel()
-	repo := newFakeRepo()
-	opsRepo := newFakeOpsRepo()
-	snc := &fakeSubnetClient{getFunc: func(_ context.Context, subnetID string) (*vpcclient.Subnet, error) {
-		return nil, fmt.Errorf("%w: Subnet %s not found", domain.ErrInvalidArg, subnetID)
-	}}
-	uc := newCreateUCWithSubnet(repo, opsRepo, snc, &fakeAddressClient{})
-
-	_, err := uc.Execute(context.Background(), internalReq("edge-nosub"))
-	require.Equal(t, codes.InvalidArgument, status.Code(err))
-	require.Contains(t, status.Convert(err).Message(), "not found")
+	require.Equal(t, "could not allocate load balancer address", final.Error.GetMessage())
 	require.Empty(t, repo.lbs)
 }
 
-// TestCreateLoadBalancer_SubnetVpcUnavailable — vpc недоступен при REGIONAL-precheck:
-// fail-closed Unavailable (мутация не проходит); LB не создаётся.
-func TestCreateLoadBalancer_SubnetVpcUnavailable(t *testing.T) {
-	t.Parallel()
-	repo := newFakeRepo()
-	opsRepo := newFakeOpsRepo()
-	snc := &fakeSubnetClient{getFunc: func(_ context.Context, subnetID string) (*vpcclient.Subnet, error) {
-		return nil, fmt.Errorf("%w: vpc subnet %s: dial", domain.ErrUnavailable, subnetID)
+// 8.1-21a: sync-precheck resolution недоступен (subnet) → sync UNAVAILABLE.
+func TestCreate_Sync_SubnetUnavailable(t *testing.T) {
+	repo, opsRepo := newFakeRepo(), newFakeOpsRepo()
+	sn := &fakeSubnetClient{getFunc: func(_ context.Context, _ string) (*vpcclient.Subnet, error) {
+		return nil, domain.ErrUnavailable
 	}}
-	uc := newCreateUCWithSubnet(repo, opsRepo, snc, &fakeAddressClient{})
+	uc := newCreateUC(repo, opsRepo, createDeps{subnet: sn})
+	req := baseCreateReq()
+	req.Type = lbv1.NetworkLoadBalancer_INTERNAL
+	req.PlacementType = lbv1.NetworkLoadBalancer_REGIONAL
+	req.V4Source = vipSubnet(lbTestSubnetRegional)
 
-	_, err := uc.Execute(context.Background(), internalReq("edge-vpcdown"))
+	_, err := uc.Execute(context.Background(), req)
 	require.Equal(t, codes.Unavailable, status.Code(err))
 	require.Empty(t, repo.lbs)
 }
 
-// TestCreateLoadBalancer_AutoMissingSubnetID — auto-семейство без subnet_id →
-// синхронный InvalidArgument (subnet_id обязателен для auto).
-func TestCreateLoadBalancer_AutoMissingSubnetID(t *testing.T) {
-	t.Parallel()
-	repo := newFakeRepo()
-	uc := newCreateUC(repo, newFakeOpsRepo(), &fakeProjectClient{}, &fakeRegionClient{})
-	req := internalReq("edge-nosubid")
-	req.AddressSpec = autoV4Spec("")
-	_, err := uc.Execute(context.Background(), req)
-	require.Equal(t, codes.InvalidArgument, status.Code(err))
-	require.Contains(t, status.Convert(err).Message(), "subnet_id is required")
-	require.Empty(t, repo.lbs)
-}
+// 8.1-21b: worker-alloc недоступен → Operation done UNAVAILABLE + compensation.
+func TestCreate_Worker_AllocUnavailable(t *testing.T) {
+	repo, opsRepo := newFakeRepo(), newFakeOpsRepo()
+	addr := &fakeAddressClient{allocFunc: func(_ context.Context, _ vpcclient.AllocateInternalIPRequest, _ string) (*vpcclient.AllocateResponse, error) {
+		return nil, domain.ErrUnavailable
+	}}
+	uc := newCreateUC(repo, opsRepo, createDeps{addr: addr})
+	req := baseCreateReq()
+	req.Type = lbv1.NetworkLoadBalancer_INTERNAL
+	req.PlacementType = lbv1.NetworkLoadBalancer_REGIONAL
+	req.V4Source = vipSubnet(lbTestSubnetRegional)
 
-// TestCreateLoadBalancer_ExternalRejected — type=EXTERNAL отклоняется синхронно
-// (фаза 1 INTERNAL-only) — Operation не создаётся (GWT-22).
-func TestCreateLoadBalancer_ExternalRejected(t *testing.T) {
-	t.Parallel()
-	repo := newFakeRepo()
-	uc := newCreateUC(repo, newFakeOpsRepo(), &fakeProjectClient{}, &fakeRegionClient{})
-	req := internalReq("edge-ext")
-	req.Type = lbv1.NetworkLoadBalancer_EXTERNAL
-	_, err := uc.Execute(context.Background(), req)
-	require.Equal(t, codes.InvalidArgument, status.Code(err))
-	require.Contains(t, status.Convert(err).Message(), "only INTERNAL is supported")
-	require.Empty(t, repo.lbs)
-}
-
-// TestCreateLoadBalancer_NoFamily — пустой address_spec (ни v4, ни v6) →
-// синхронный InvalidArgument (GWT-08).
-func TestCreateLoadBalancer_NoFamily(t *testing.T) {
-	t.Parallel()
-	repo := newFakeRepo()
-	uc := newCreateUC(repo, newFakeOpsRepo(), &fakeProjectClient{}, &fakeRegionClient{})
-	req := internalReq("edge-nf")
-	req.AddressSpec = nil
-	_, err := uc.Execute(context.Background(), req)
-	require.Equal(t, codes.InvalidArgument, status.Code(err))
-	require.Contains(t, status.Convert(err).Message(), "at least one ip family")
-	require.Empty(t, repo.lbs)
-}
-
-// TestCreateLoadBalancer_BYOMalformed — malformed BYO addressId → синхронный
-// InvalidArgument "invalid address id '<x>'" (GWT-06).
-func TestCreateLoadBalancer_BYOMalformed(t *testing.T) {
-	t.Parallel()
-	repo := newFakeRepo()
-	uc := newCreateUC(repo, newFakeOpsRepo(), &fakeProjectClient{}, &fakeRegionClient{})
-	req := internalReq("edge-bad")
-	req.AddressSpec = &lbv1.NetworkLoadBalancerAddressSpec{
-		V4: &lbv1.FamilyAddressSpec{Source: &lbv1.FamilyAddressSpec_Byo{
-			Byo: &lbv1.FamilyAddressSpec_AnycastByo{AddressId: "not-an-id"},
-		}},
-	}
-	_, err := uc.Execute(context.Background(), req)
-	require.Equal(t, codes.InvalidArgument, status.Code(err))
-	require.Contains(t, status.Convert(err).Message(), "invalid address id 'not-an-id'")
-	require.Empty(t, repo.lbs)
-}
-
-func TestCreateLoadBalancer_MissingNetworkID(t *testing.T) {
-	t.Parallel()
-	repo := newFakeRepo()
-	uc := newCreateUC(repo, newFakeOpsRepo(), &fakeProjectClient{}, &fakeRegionClient{})
-	req := internalReq("edge-nonet")
-	req.NetworkId = ""
-	_, err := uc.Execute(context.Background(), req)
-	require.Equal(t, codes.InvalidArgument, status.Code(err))
-	require.Contains(t, lbFieldViolations(err), "network_id is required for INTERNAL load balancer")
-}
-
-func TestCreateLoadBalancer_InvalidProjectID(t *testing.T) {
-	t.Parallel()
-	uc := newCreateUC(newFakeRepo(), newFakeOpsRepo(), nil, nil)
-	req := internalReq("edge")
-	req.ProjectId = ""
-	_, err := uc.Execute(context.Background(), req)
-	require.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestCreateLoadBalancer_InvalidName(t *testing.T) {
-	t.Parallel()
-	uc := newCreateUC(newFakeRepo(), newFakeOpsRepo(), nil, nil)
-	req := internalReq("Edge!")
-	_, err := uc.Execute(context.Background(), req)
-	require.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestCreateLoadBalancer_TypeUnspecified(t *testing.T) {
-	t.Parallel()
-	uc := newCreateUC(newFakeRepo(), newFakeOpsRepo(), nil, nil)
-	req := internalReq("edge")
-	req.Type = lbv1.NetworkLoadBalancer_TYPE_UNSPECIFIED
-	_, err := uc.Execute(context.Background(), req)
-	require.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestCreateLoadBalancer_DuplicateName(t *testing.T) {
-	t.Parallel()
-	repo := newFakeRepo()
-	seedLB(t, repo, "prj-a", "edge")
-	uc := newCreateUC(repo, newFakeOpsRepo(), nil, nil)
-	_, err := uc.Execute(context.Background(), internalReq("edge"))
-	require.Equal(t, codes.AlreadyExists, status.Code(err))
-}
-
-func TestCreateLoadBalancer_ProjectNotFound(t *testing.T) {
-	t.Parallel()
-	repo := newFakeRepo()
-	opsRepo := newFakeOpsRepo()
-	pc := &fakeProjectClient{
-		getFunc: func(ctx context.Context, projectID string) (*iam.Project, error) {
-			return nil, fmt.Errorf("%w: Project %s not found", domain.ErrNotFound, projectID)
-		},
-	}
-	uc := newCreateUC(repo, opsRepo, pc, &fakeRegionClient{})
-	op, err := uc.Execute(context.Background(), internalReq("edge"))
-	require.NoError(t, err)
-	final := awaitOpDone(t, opsRepo, op.ID)
-	require.NotNil(t, final.Error, "operation should have async error")
-	require.Equal(t, int32(codes.InvalidArgument), final.Error.GetCode())
-	require.Empty(t, repo.lbs)
-}
-
-// TestCreateLoadBalancer_RegionNotFound — region отсутствует: worker peer-check
-// возвращает error ДО Insert-handle (компенсировать нечего) — LB не создан (GWT-25).
-func TestCreateLoadBalancer_RegionNotFound(t *testing.T) {
-	t.Parallel()
-	repo := newFakeRepo()
-	opsRepo := newFakeOpsRepo()
-	rc := &fakeRegionClient{
-		getFunc: func(ctx context.Context, regionID string) (*geo.Region, error) {
-			return nil, fmt.Errorf("%w: Region %s not found", domain.ErrInvalidArg, regionID)
-		},
-	}
-	uc := newCreateUC(repo, opsRepo, &fakeProjectClient{}, rc)
-	op, err := uc.Execute(context.Background(), internalReq("edge"))
+	op, err := uc.Execute(context.Background(), req)
 	require.NoError(t, err)
 	final := awaitOpDone(t, opsRepo, op.ID)
 	require.NotNil(t, final.Error)
-	require.Empty(t, repo.lbs, "handle not inserted (peer-check before insert)")
+	require.Equal(t, int32(codes.Unavailable), final.Error.GetCode())
+	require.Empty(t, repo.lbs)
 }
 
-// TestCreateLoadBalancer_FGARegisterIntentEmitted — finalize пишет fga.register-
-// intent (project-hierarchy) в writer-tx.
-func TestCreateLoadBalancer_FGARegisterIntentEmitted(t *testing.T) {
-	t.Parallel()
-	repo := newFakeRepo()
-	opsRepo := newFakeOpsRepo()
-	uc := newCreateUC(repo, opsRepo, &fakeProjectClient{}, &fakeRegionClient{})
-	op, err := uc.Execute(context.Background(), internalReq("edge"))
+// 8.1-24 (nlb-side): worker link-CAS проигрыш (адрес уже занят) → Operation done
+// FAILED_PRECONDITION "Illegal argument addressId" (generic, anti-oracle).
+func TestCreate_Worker_LinkConflict(t *testing.T) {
+	repo, opsRepo := newFakeRepo(), newFakeOpsRepo()
+	addr := &fakeAddressClient{byoFunc: func(_ context.Context, _ vpcclient.AttachExistingRequest) (*vpcclient.AllocateResponse, error) {
+		return nil, domain.ErrFailedPrecondition // used_by CAS проигран
+	}}
+	uc := newCreateUC(repo, opsRepo, createDeps{reader: &fakeAddressReader{}, addr: addr})
+	req := baseCreateReq()
+	req.Type = lbv1.NetworkLoadBalancer_INTERNAL
+	req.PlacementType = lbv1.NetworkLoadBalancer_REGIONAL
+	req.V4Source = vipAddress(lbTestAddrInternal)
+
+	op, err := uc.Execute(context.Background(), req)
 	require.NoError(t, err)
 	final := awaitOpDone(t, opsRepo, op.ID)
-	require.Nil(t, final.Error)
-
-	require.Len(t, repo.fga, 1, "expected one fga.register intent in writer-tx")
-	ev := repo.fga[0]
-	require.Equal(t, domain.FGAEventRegister, ev.EventType)
-	require.Equal(t, "NetworkLoadBalancer", ev.Intent.Kind)
-	require.NotEmpty(t, ev.Intent.Tuples)
-	require.Equal(t, domain.FGARelationProject, ev.Intent.Tuples[0].Relation)
-	require.Equal(t, "project:prj-a", ev.Intent.Tuples[0].SubjectID)
+	require.NotNil(t, final.Error)
+	require.Equal(t, int32(codes.FailedPrecondition), final.Error.GetCode())
+	require.Equal(t, "Illegal argument addressId", final.Error.GetMessage())
+	require.Empty(t, repo.lbs)
 }
 
-func TestCreateLoadBalancer_ProjectClientErrorMapped(t *testing.T) {
-	t.Parallel()
-	tests := map[string]struct {
-		peerErr  error
-		wantCode codes.Code
-	}{
-		"unavailable":         {fmt.Errorf("%w: dial", domain.ErrUnavailable), codes.Unavailable},
-		"invalid_arg":         {fmt.Errorf("%w: invalid project", domain.ErrInvalidArg), codes.InvalidArgument},
-		"failed_precondition": {fmt.Errorf("%w: project deleted", domain.ErrFailedPrecondition), codes.FailedPrecondition},
-		"generic":             {errors.New("boom"), codes.Internal},
+// 8.1-36 (unit): duplicate name → sync ALREADY_EXISTS.
+func TestCreate_DuplicateName(t *testing.T) {
+	repo, opsRepo := newFakeRepo(), newFakeOpsRepo()
+	seedLB(t, repo, "prj-a", "lb-dup")
+	uc := newCreateUC(repo, opsRepo, createDeps{})
+	req := baseCreateReq()
+	req.Name = "lb-dup"
+	req.Type = lbv1.NetworkLoadBalancer_INTERNAL
+	req.PlacementType = lbv1.NetworkLoadBalancer_REGIONAL
+	req.V4Source = vipSubnet(lbTestSubnetRegional)
+
+	_, err := uc.Execute(context.Background(), req)
+	require.Equal(t, codes.AlreadyExists, status.Code(err))
+	require.Contains(t, status.Convert(err).Message(), "already exists in project")
+}
+
+// lbByName — находит LB-запись по имени в fakeRepo (для post-op assert'ов).
+func lbByName(t *testing.T, repo *fakeRepo, name string) *domain.LoadBalancer {
+	t.Helper()
+	repo.mu.Lock()
+	defer repo.mu.Unlock()
+	for _, rec := range repo.lbs {
+		if string(rec.Name) == name {
+			lb := rec.LoadBalancer
+			return &lb
+		}
 	}
-	for name, tc := range tests {
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
-			opsRepo := newFakeOpsRepo()
-			pc := &fakeProjectClient{getFunc: func(_ context.Context, _ string) (*iam.Project, error) {
-				return nil, tc.peerErr
-			}}
-			uc := newCreateUC(newFakeRepo(), opsRepo, pc, &fakeRegionClient{})
-			op, err := uc.Execute(context.Background(), internalReq("edge"))
-			require.NoError(t, err)
-			final := awaitOpDone(t, opsRepo, op.ID)
-			require.NotNil(t, final.Error)
-			require.Equal(t, int32(tc.wantCode), final.Error.GetCode())
-		})
-	}
+	t.Fatalf("load balancer %q not found", name)
+	return nil
 }

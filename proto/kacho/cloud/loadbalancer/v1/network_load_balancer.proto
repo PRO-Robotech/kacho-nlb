@@ -18,20 +18,24 @@ enum IpVersion {
   IPV6 = 2;
 }
 
-// NetworkLoadBalancer — L4 regional load balancer (design §2.2).
+// NetworkLoadBalancer — L4 regional load balancer.
+//
+// Плоский ресурс: источник VIP задаётся пофамильно на Create через VipSource
+// oneof (subnet-auto / address-link / platform-public) и резолвится в связанный
+// vpc Address (v4_address_id / v6_address_id, output-only). Сам VIP-IP лежит в
+// связанном Address (vpc.AddressService.Get) — здесь не дублируется.
 message NetworkLoadBalancer {
-  // Reserved hot-path / future fields. 8/16/17 are vestigial upstream
-  // numbers. 12 (was inline `repeated Listener listeners`) is now reserved
-  // because Listener is a standalone resource (see listener.proto) and
-  // promoting the field would create a circular proto import. 15
-  // (`allow_zonal_shift`) and 18 (`disable_zone_statuses`) перечисляли зоны на
-  // публичной поверхности — это per-zone-сигнал (placement), несовместимый с
-  // моделью «один anycast VIP скрывает зональную раскладку»; убраны с
-  // tenant-facing проекции (инфра-чувствительное — только Internal-проекция).
-  // 30-39 are claimed for the future GlobalLoadBalancer composition layer so a
-  // single NLB can be lifted into a GLB without renumbering wire-incompatibly.
+  // Reserved: 8/16/17 — vestigial. 12 — прежний inline `repeated Listener`
+  // (Listener теперь standalone-ресурс). 15/18 — прежние per-zone-поля (placement-
+  // leak, несовместимо с anycast). 19-23,26 — снятые tenant-поля прежней VIP-модели
+  // (cross_zone_enabled/network_id/security_group_ids/address_v4/address_v6/
+  // ip_families): network derived, SG на таргетах, VIP-источник теперь VipSource.
+  // 30-39 — зарезервированы под будущий GlobalLoadBalancer composition-слой.
   reserved 8, 12, 15, 16, 17, 18;
+  reserved 19, 20, 21, 22, 23, 26;
   reserved "listeners", "allow_zonal_shift", "disable_zone_statuses";
+  reserved "cross_zone_enabled", "network_id", "security_group_ids";
+  reserved "address_v4", "address_v6", "ip_families";
   reserved 30 to 39;
 
   enum Status {
@@ -51,6 +55,16 @@ message NetworkLoadBalancer {
     TYPE_UNSPECIFIED = 0;
     EXTERNAL = 1;
     INTERNAL = 2;
+  }
+
+  // PlacementType — размещение INTERNAL-LB (для EXTERNAL неприменим).
+  // ZONAL — unicast-VIP в одной зоне (зональная подсеть/адрес); REGIONAL —
+  // anycast-VIP, region-scoped (региональная подсеть/адрес, анонс active-active
+  // из здоровых зон региона; announce — data plane).
+  enum PlacementType {
+    PLACEMENT_TYPE_UNSPECIFIED = 0;
+    ZONAL = 1;
+    REGIONAL = 2;
   }
 
   enum SessionAffinity {
@@ -80,48 +94,42 @@ message NetworkLoadBalancer {
 
   // Inline attached target groups snapshot — DEPRECATED. The
   // `attached_target_groups` DB pivot (M:N managed via
-  // AttachTargetGroup/DetachTargetGroup RPCs, design §3.2 / §5.2) is the
-  // source of truth. Retained for yc-shim JSON-name compatibility.
+  // AttachTargetGroup/DetachTargetGroup RPCs) is the source of truth.
   repeated AttachedTargetGroup attached_target_groups = 13 [deprecated = true];
 
   bool deletion_protection = 14;
 
-  // Control-plane intent to spread traffic across targets in all zones of the
-  // region. Distribution programming is data-plane (out of control-plane
-  // scope). DB default true.
-  bool cross_zone_enabled = 19;
+  // v4_address_id / v6_address_id — output-only: связанный vpc Address (IPv4/IPv6),
+  // в который резолвится VipSource. Пуст, пока status=CREATING (durable-handle до
+  // bind). Один Address на семейство (single-VIP-per-LB, инвариант на DB-уровне:
+  // кардинальность строки + CAS-attach). Сам VIP-IP — в Address (vpc.AddressService.Get).
+  string v4_address_id = 24;
+  string v6_address_id = 25;
 
-  // ID of the VPC network the load balancer's private VIP belongs to. Required
-  // for INTERNAL scheme (the VIP is allocated inside this network), rejected
-  // for EXTERNAL (its VIP is public, not drawn from a network). Immutable after
-  // Create. Cross-service ref to kacho-vpc Network (TEXT, no FK); validated on
-  // Create via vpc.NetworkService.Get.
-  string network_id = 20;
+  // placement_type — только для INTERNAL (immutable). Для EXTERNAL пуст.
+  PlacementType placement_type = 27;
 
-  // Control-plane intent describing the allowed inbound to the load balancer
-  // VIP. Each id references a kacho-vpc SecurityGroup that must exist and belong
-  // to the same network_id (same-network invariant). Mutable: Update replaces
-  // the whole set via update_mask. Only valid for INTERNAL scheme (SGs live in a
-  // network). Cross-service refs to kacho-vpc SecurityGroup (TEXT, no FK);
-  // validated on Create/Update via vpc.SecurityGroupService.Get. Traffic
-  // filtering itself is data-plane (out of control-plane scope).
-  repeated string security_group_ids = 21;
+  // disabled_announce_zones — только для REGIONAL (mutable): deny-list зон, из
+  // которых anycast-VIP НЕ анонсируется (drain). Пусто = анонс из всех здоровых зон.
+  // Реальный withdraw — data plane; здесь только intent.
+  repeated string disabled_announce_zones = 28;
+}
 
-  // Единый anycast VIP сервиса — output-only. Назначается worker'ом после
-  // VIP-аллокации; пуст, пока status=CREATING (durable-handle до alloc). Один
-  // VIP на LoadBalancer на семейство (single-VIP-per-LB, инвариант на DB-уровне:
-  // кардинальность строки + CAS-attach), а не per-Listener. Значения, переданные
-  // клиентом в теле Create/Update, игнорируются (адрес назначает только worker).
-  string address_v4 = 22;
-  string address_v6 = 23;
+// PublicVip — parameterless marker платформенного public-источника VIP
+// (EXTERNAL auto-alloc). Underlying-зона деривится worker'ом из региона и скрыта
+// от публичной поверхности (placement-leak не нарушается).
+message PublicVip {}
 
-  // Binding на vpc Address (BYO или auto-аллокация из AnycastAddressPool) —
-  // output-only. Cross-service ref на kacho-vpc Address (TEXT, без FK).
-  string address_id_v4 = 24;
-  string address_id_v6 = 25;
-
-  // Заявленные семейства адресов VIP (одно — single-family, либо оба — dualstack).
-  repeated IpVersion ip_families = 26;
+// VipSource — per-family источник VIP LoadBalancer'а (design §3.3):
+//   - address_id — линк существующего vpc Address (kind internal|external по type);
+//   - subnet_id  — авто-аллокация свежего internal Address из подсети (INTERNAL);
+//   - public     — платформенный public Address (EXTERNAL).
+message VipSource {
+  oneof source {
+    string address_id = 1;
+    string subnet_id = 2;
+    PublicVip public = 3;
+  }
 }
 
 // AttachedTargetGroup — yc-shim-compat snapshot of a single

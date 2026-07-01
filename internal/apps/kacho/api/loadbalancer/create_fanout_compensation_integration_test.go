@@ -44,11 +44,19 @@ func (s *fanoutCompensationStub) AllocateInternalIP(_ context.Context, _ vpcclie
 }
 
 func (s *fanoutCompensationStub) AllocateInternalIPv6(_ context.Context, _ vpcclient.AllocateInternalIPRequest) (*vpcclient.AllocateResponse, error) {
-	// v6-подсеть исчерпана — generic-ошибка (анти-oracle), валит второй side-effect.
-	return nil, status.Error(codes.FailedPrecondition, "could not allocate address")
+	// v6-подсеть исчерпана — FAILED_PRECONDITION, валит второй side-effect.
+	return nil, status.Error(codes.FailedPrecondition, "subnet exhausted")
 }
 
-// AttachExisting — BYO в этом сценарии не используется; вызов означал бы баг.
+func (s *fanoutCompensationStub) AllocateExternalIP(_ context.Context, _ vpcclient.AllocateExternalIPRequest) (*vpcclient.AllocateResponse, error) {
+	return nil, status.Error(codes.Unavailable, "AllocateExternalIP not expected in fan-out compensation test")
+}
+
+func (s *fanoutCompensationStub) AllocateExternalIPv6(_ context.Context, _ vpcclient.AllocateExternalIPRequest) (*vpcclient.AllocateResponse, error) {
+	return nil, status.Error(codes.Unavailable, "AllocateExternalIPv6 not expected in fan-out compensation test")
+}
+
+// AttachExisting — link в этом сценарии не используется; вызов означал бы баг.
 func (s *fanoutCompensationStub) AttachExisting(_ context.Context, _ vpcclient.AttachExistingRequest) (*vpcclient.AllocateResponse, error) {
 	return nil, status.Error(codes.Unavailable, "AttachExisting not expected in fan-out compensation test")
 }
@@ -95,21 +103,16 @@ func TestIntegration_CreateLoadBalancer_FanoutCompensationOnV6Fail(t *testing.T)
 
 	stub := &fanoutCompensationStub{v4AddressID: "adr00000000000FANV4X"}
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
-	// peer-clients project/region/network/sg/subnet/address — nil (sync-prechecks и
+	// peer-clients project/region/zone/subnet/address — nil (sync-prechecks и
 	// worker peer-check пропускаются); единственный side-effect — VIP fan-out.
-	h := loadbalancer.NewHandler(repo, opsRepo, nil, nil, nil, nil, nil, nil, stub, nil, logger)
+	h := loadbalancer.NewHandler(repo, opsRepo, nil, nil, nil, nil, nil, stub, nil, logger)
 
 	req := &lbv1.CreateNetworkLoadBalancerRequest{
 		ProjectId: "prj-fanout", RegionId: "region-1", Name: "edge-ds-fail",
-		Type: lbv1.NetworkLoadBalancer_INTERNAL, NetworkId: "net-1",
-		AddressSpec: &lbv1.NetworkLoadBalancerAddressSpec{
-			V4: &lbv1.FamilyAddressSpec{Source: &lbv1.FamilyAddressSpec_Auto{
-				Auto: &lbv1.FamilyAddressSpec_AnycastAllocate{SubnetId: "sub-1"},
-			}},
-			V6: &lbv1.FamilyAddressSpec{Source: &lbv1.FamilyAddressSpec_Auto{
-				Auto: &lbv1.FamilyAddressSpec_AnycastAllocate{SubnetId: "sub-6"},
-			}},
-		},
+		Type:          lbv1.NetworkLoadBalancer_INTERNAL,
+		PlacementType: lbv1.NetworkLoadBalancer_REGIONAL,
+		V4Source:      &lbv1.VipSource{Source: &lbv1.VipSource_SubnetId{SubnetId: "sub-1"}},
+		V6Source:      &lbv1.VipSource{Source: &lbv1.VipSource_SubnetId{SubnetId: "sub-6"}},
 	}
 
 	op, err := h.Create(context.Background(), req)
@@ -119,12 +122,12 @@ func TestIntegration_CreateLoadBalancer_FanoutCompensationOnV6Fail(t *testing.T)
 	final := pollOpDone(t, opsRepo, op.GetId())
 	require.NotNil(t, final.Error, "v6-acquire failure must surface as Operation error")
 	require.Equal(t, int32(codes.FailedPrecondition), final.Error.GetCode())
-	require.Contains(t, final.Error.GetMessage(), "could not allocate address")
+	require.Equal(t, "could not allocate load balancer address", final.Error.GetMessage())
 
-	// v4 уже persisted → освобождён compensation'ом ровно один раз; v6 не
-	// аллоцировался → не освобождается; BYO нет → ClearReference не зовётся.
+	// v4 уже persisted (owned auto) → освобождён two-step compensation'ом:
+	// ClearReference(v4) → FreeIP(v4); v6 не аллоцировался → не освобождается.
 	require.Equal(t, []string{"adr00000000000FANV4X"}, stub.freedIPs(), "v4 freed by compensation")
-	require.Empty(t, stub.clearedRefs(), "no BYO → no ClearReference")
+	require.Equal(t, []string{"adr00000000000FANV4X"}, stub.clearedRefs(), "owned v4 ref cleared before free (two-step)")
 
 	// Durable-handle снят — реальная строка удалена; LB не остаётся с половиной VIP.
 	var n int

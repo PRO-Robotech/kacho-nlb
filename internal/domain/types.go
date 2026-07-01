@@ -41,20 +41,14 @@ type (
 	// ZoneID — semantic id, "ru-central1-a"-style; owner — kacho-compute.
 	ZoneID string
 
-	// SubnetID, NetworkID, AddressID, NicID, InstanceID — type-aliases для
-	// ResourceID. Алиасы (а не distinct newtypes) — потому что они хранят
-	// тот же 20-символьный prefix-формат и cross-service refs валидируются
-	// в worker-е peer-gRPC-вызовом (а не локально на типе).
+	// SubnetID, AddressID, NicID, InstanceID — type-aliases для ResourceID.
+	// Алиасы (а не distinct newtypes) — потому что они хранят тот же
+	// 20-символьный prefix-формат и cross-service refs валидируются в worker-е
+	// peer-gRPC-вызовом (а не локально на типе).
 	SubnetID   = ResourceID
-	NetworkID  = ResourceID
 	AddressID  = ResourceID
 	NicID      = ResourceID
 	InstanceID = ResourceID
-
-	// SecurityGroupID — id ресурса kacho-vpc SecurityGroup. Алиас ResourceID
-	// (тот же prefix-формат); существование + same-network валидируются в
-	// use-case'е peer-gRPC-вызовом, не на типе.
-	SecurityGroupID = ResourceID
 )
 
 // ---- Семантические строковые поля ------------------------------------------
@@ -279,42 +273,10 @@ func LabelsToMap(d LbLabels) map[string]string {
 	return m
 }
 
-// SecurityGroupIDsFromStrings конвертирует входной []string (proto repeated) в
-// []SecurityGroupID, применяя set-семантику: дубликаты схлопываются с
-// сохранением порядка первого вхождения. nil/пустой вход → nil.
-func SecurityGroupIDsFromStrings(ids []string) []SecurityGroupID {
-	if len(ids) == 0 {
-		return nil
-	}
-	seen := make(map[string]struct{}, len(ids))
-	out := make([]SecurityGroupID, 0, len(ids))
-	for _, id := range ids {
-		if _, ok := seen[id]; ok {
-			continue
-		}
-		seen[id] = struct{}{}
-		out = append(out, SecurityGroupID(id))
-	}
-	return out
-}
-
-// SecurityGroupIDsToStrings — обратное преобразование для DTO/repo. nil если
-// набор пуст (паритет с proto-семантикой: отсутствие = поле не задано).
-func SecurityGroupIDsToStrings(ids []SecurityGroupID) []string {
-	if len(ids) == 0 {
-		return nil
-	}
-	out := make([]string, len(ids))
-	for i, id := range ids {
-		out[i] = string(id)
-	}
-	return out
-}
-
-// SecurityGroupIDsEqual — порядко-чувствительное сравнение наборов SG (used in
-// Update no-op detection). Набор хранится нормализованным (dedup, стабильный
-// порядок), поэтому ordered-compare корректен.
-func SecurityGroupIDsEqual(a, b []SecurityGroupID) bool {
+// stringsEqualOrdered — порядко-чувствительное сравнение двух наборов строк
+// (used in Update no-op detection для disabled_announce_zones). Набор хранится
+// в стабильном порядке (нормализован на входе), поэтому ordered-compare корректен.
+func stringsEqualOrdered(a, b []string) bool {
 	if len(a) != len(b) {
 		return false
 	}

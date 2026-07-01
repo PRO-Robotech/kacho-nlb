@@ -223,50 +223,14 @@ message ListNetworkLoadBalancersResponse {
   string next_page_token = 2;
 }
 
-// NetworkLoadBalancerAddressSpec — per-family источник VIP для LoadBalancer
-// (design §4.1). Присутствие семейства (v4/v6) задаёт его в ip_families
-// (dualstack = оба). Для INTERNAL хотя бы одно семейство обязательно.
-message NetworkLoadBalancerAddressSpec {
-  FamilyAddressSpec v4 = 1;
-  FamilyAddressSpec v6 = 2;
-}
-
-// FamilyAddressSpec — источник VIP одного семейства: auto-аллокация anycast VIP
-// из REGIONAL-подсети kacho-vpc либо BYO заранее созданный anycast Address.
-message FamilyAddressSpec {
-  oneof source {
-    // Auto-аллокация anycast VIP из REGIONAL-подсети kacho-vpc.
-    AnycastAllocate auto = 1;
-    // BYO — заранее созданный тенантом anycast Address.
-    AnycastByo byo = 2;
-  }
-
-  message AnycastAllocate {
-    // ID REGIONAL-подсети kacho-vpc (placement_type=REGIONAL), из которой
-    // аллоцируется VIP. Обязателен для auto. VIP получается anycast именно
-    // потому, что подсеть region-scoped (анонсируется active-active из здоровых
-    // зон региона), а не привязана к одной зоне.
-    string subnet_id = 1 [(length) = "<=50"];
-  }
-
-  message AnycastByo {
-    // ID заранее созданного anycast kacho-vpc Address (только свой). Ownership и
-    // family проверяются server-side CAS в vpc (expect_project_id /
-    // expect_ip_version в SetAddressReference), не client-side TOCTOU.
-    string address_id = 1 [(length) = "<=50"];
-  }
-}
-
 message CreateNetworkLoadBalancerRequest {
-  // Listener and target-group attachment at-Create were inline in upstream
-  // YC; in kacho-nlb they go through ListenerService.Create and
-  // NetworkLoadBalancerService.AttachTargetGroup respectively. Field
-  // numbers 7 (listener_specs) and 8 (attached_target_groups) are reserved
-  // so they cannot be accidentally reused with different semantics. 10
-  // (allow_zonal_shift) reserved — zonal-shift убран с публичной поверхности
-  // (per-zone-сигнал; нет zonal-shift data plane).
+  // Reserved: 7/8 — прежние inline listener/TG attach at-Create (теперь отдельные
+  // RPC). 10 — allow_zonal_shift (снят). 12-16 — снятые поля прежней VIP-модели
+  // (cross_zone_enabled/network_id/security_group_ids/address_spec/ip_families).
   reserved 7, 8, 10;
+  reserved 12, 13, 14, 15, 16;
   reserved "listener_specs", "attached_target_groups", "allow_zonal_shift";
+  reserved "cross_zone_enabled", "network_id", "security_group_ids", "address_spec", "ip_families";
 
   string project_id = 1 [(required) = true, (length) = "<=50"];
 
@@ -288,29 +252,19 @@ message CreateNetworkLoadBalancerRequest {
   // default; FIVE_TUPLE / CLIENT_IP_ONLY are persisted verbatim.
   NetworkLoadBalancer.SessionAffinity session_affinity = 11;
 
-  // cross_zone_enabled — optional so an omitted field keeps the DB default
-  // (true); an explicit false is honoured.
-  optional bool cross_zone_enabled = 12;
+  // placement_type — обязателен и явен для INTERNAL (ZONAL|REGIONAL);
+  // запрещён для EXTERNAL.
+  NetworkLoadBalancer.PlacementType placement_type = 17;
 
-  // network_id — required for INTERNAL scheme (private VIP inside this VPC
-  // network), rejected for EXTERNAL. Validated against vpc.NetworkService.Get.
-  string network_id = 13 [(length) = "<=50"];
+  // disabled_announce_zones — только для REGIONAL: зоны, из которых anycast-VIP
+  // не анонсируется (drain). Каждая зона ∈ регион LB; набор не покрывает все зоны.
+  repeated string disabled_announce_zones = 18 [(length) = "<=50"];
 
-  // security_group_ids — set of vpc.SecurityGroup ids describing the allowed
-  // inbound to the VIP (control-plane intent). Only valid for INTERNAL; each id
-  // must exist and belong to network_id. Validated against
-  // vpc.SecurityGroupService.Get.
-  repeated string security_group_ids = 14 [(length) = "<=50"];
-
-  // address_spec — per-family источник VIP (design §4.1). Присутствие v4/v6
-  // задаёт семейство в ip_families. Для INTERNAL обязательно хотя бы одно
-  // семейство. Результат (address_v4/v6 на ресурсе) — output-only, назначается
-  // worker'ом; здесь задаётся только origin (auto/byo + subnet_id/address_id).
-  NetworkLoadBalancerAddressSpec address_spec = 15;
-
-  // ip_families — заявленные семейства адресов VIP. Согласуется с присутствием
-  // v4/v6 в address_spec.
-  repeated IpVersion ip_families = 16;
+  // v4_source / v6_source — per-family источник VIP. Хотя бы одно семейство
+  // обязательно. subnet_id ⟹ INTERNAL auto; address_id ⟹ link по kind;
+  // public ⟹ EXTERNAL auto.
+  VipSource v4_source = 19;
+  VipSource v6_source = 20;
 }
 
 message CreateNetworkLoadBalancerMetadata {
@@ -318,12 +272,16 @@ message CreateNetworkLoadBalancerMetadata {
 }
 
 message UpdateNetworkLoadBalancerRequest {
-  // Same rationale as CreateNetworkLoadBalancerRequest — listener and TG
-  // attachment now go through dedicated RPCs. Field numbers 6 and 7 are
-  // reserved. 9 (allow_zonal_shift) reserved — zonal-shift убран с публичной
-  // поверхности (per-zone-сигнал; нет zonal-shift data plane).
+  // Reserved: 6/7 — прежние inline listener/TG attach. 9 — allow_zonal_shift.
+  // 11-16 — снятые mutable/immutable поля прежней VIP-модели (cross_zone_enabled/
+  // network_id/security_group_ids/address_id_v4/address_id_v6/ip_families).
+  // Immutable-поля (type/placement_type/v4_source/v6_source/region_id/
+  // v4_address_id/v6_address_id) в теле не несутся: попытка адресовать их в
+  // update_mask отклоняется по имени пути (InvalidArgument), поле не требуется.
   reserved 6, 7, 9;
+  reserved 11, 12, 13, 14, 15, 16;
   reserved "listener_specs", "attached_target_groups", "allow_zonal_shift";
+  reserved "cross_zone_enabled", "network_id", "security_group_ids", "address_id_v4", "address_id_v6", "ip_families";
 
   string network_load_balancer_id = 1 [(required) = true, (length) = "<=50"];
   google.protobuf.FieldMask update_mask = 2;
@@ -339,28 +297,13 @@ message UpdateNetworkLoadBalancerRequest {
 
   bool deletion_protection = 8;
 
-  // session_affinity / cross_zone_enabled — mutable; applied when present in
-  // update_mask (or under an empty mask full-PATCH).
+  // session_affinity — mutable; applied when present in update_mask (or under an
+  // empty mask full-PATCH).
   NetworkLoadBalancer.SessionAffinity session_affinity = 10;
-  bool cross_zone_enabled = 11;
 
-  // network_id — immutable after Create; present so a client can address it in
-  // update_mask (which is rejected with InvalidArgument). Never applied.
-  string network_id = 12 [(length) = "<=50"];
-
-  // security_group_ids — mutable; full-replace of the SG set when present in
-  // update_mask (or under an empty mask full-PATCH). Each id must exist and
-  // belong to the LB network_id. Validated against vpc.SecurityGroupService.Get.
-  repeated string security_group_ids = 13 [(length) = "<=50"];
-
-  // address_id_v4 / address_id_v6 / ip_families — immutable after Create
-  // (VIP-binding и заявленные семейства фиксируются Create-сагой). Присутствуют
-  // в запросе только чтобы клиент мог адресовать их в update_mask — что
-  // отклоняется InvalidArgument. Никогда не применяются. address_v4/v6 —
-  // output-only результат, во вход Update не входят вообще.
-  string address_id_v4 = 14 [(length) = "<=50"];
-  string address_id_v6 = 15 [(length) = "<=50"];
-  repeated IpVersion ip_families = 16;
+  // disabled_announce_zones — mutable (REGIONAL only): drain / re-enable зон.
+  // Валидируется по тем же правилам, что Create (зоны ∈ регион, не все зоны).
+  repeated string disabled_announce_zones = 17 [(length) = "<=50"];
 }
 
 message UpdateNetworkLoadBalancerMetadata {

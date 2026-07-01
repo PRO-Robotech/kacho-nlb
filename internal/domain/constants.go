@@ -93,10 +93,6 @@ const (
 
 	// MaxListenersPerLB —
 	MaxListenersPerLB = 50
-
-	// MaxSecurityGroupsPerLB — верхняя граница набора security_group_ids на LB
-	// (raid-protection набора cross-service ref'ов; control-plane intent).
-	MaxSecurityGroupsPerLB = 5
 )
 
 // ---- Enum-литералы для свободных строковых newtypes -----------------------

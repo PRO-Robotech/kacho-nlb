@@ -20,8 +20,8 @@
 // нетерминальном статусе. Reconciler периодически сканирует такие строки старше
 // age-порога (свежий in-flight не трогаем — легитимный worker дорабатывает) и
 // детерминированно по address_id освобождает VIP КАЖДОГО семейства РАЗДЕЛЬНО
-// (vip_origin='auto' → FreeIP; 'byo' → ClearReference — чужой Address не
-// удаляется), затем финализирует/удаляет handle.
+// (vip_origin='auto' owned → two-step ClearReference→FreeIP; 'linked' →
+// ClearReference — tenant-адрес уцелевает), затем финализирует/удаляет handle.
 //
 // Идемпотентность: release client'а трактует NotFound как успех (повторный
 // проход безопасен). Multi-replica-safety: claim строки — FOR UPDATE SKIP
@@ -55,10 +55,10 @@ import (
 	"github.com/PRO-Robotech/kacho-nlb/internal/domain"
 )
 
-// freeIPOwnerKind — Reference.kind для NLB LoadBalancer в vpc.Address used_by
-// («owner="nlb_load_balancer:<id>"»). Release ключуется address_id; owner —
-// forward-compat для verify-CAS в vpc.
-const freeIPOwnerKind = "nlb_load_balancer"
+// freeIPOwnerKind — Reference.type для NLB LoadBalancer в vpc.Address referrer
+// («owner="network_load_balancer:<id>"»). Release ключуется address_id + LB-handle;
+// owner — owner-scoped ClearReference (§3.9) и forward-compat verify-CAS в vpc.
+const freeIPOwnerKind = "network_load_balancer"
 
 // freeIPMaxPerTick — верхняя граница строк, реконсилируемых за один тик (защита
 // от unbounded-loop при большом backlog; остаток доедет на следующем тике).
@@ -250,16 +250,22 @@ func (r *FreeIPRunner) reconcileOne(ctx context.Context) (bool, error) {
 	return true, nil
 }
 
-// releaseFamily освобождает VIP одного семейства: пустой address_id → no-op;
-// vip_origin='byo' → ClearReference (Address tenant'а уцелел), иначе FreeIP
-// (Address удаляется). owner — forward-compat verify-CAS (release по address_id).
+// releaseFamily освобождает VIP одного семейства (§3.9): пустой address_id → no-op;
+// vip_origin='linked' → ClearReference (tenant-адрес уцелевает); 'auto' (owned) →
+// two-step owner-scoped ClearReference → FreeIP (иначе FreeIP==Delete упрётся в
+// собственный Delete-guard). Идемпотентно (NotFound → успех); окно cleared-but-not-
+// deleted доедет на следующем тике (re-drive Delete).
 func (r *FreeIPRunner) releaseFamily(ctx context.Context, lbID, addressID, origin string) error {
 	if addressID == "" {
 		return nil
 	}
 	owner := vpcclient.AddressOwner{Kind: freeIPOwnerKind, ID: lbID}
-	if domain.VipOrigin(origin) == domain.VipOriginBYO {
+	if domain.VipOrigin(origin) == domain.VipOriginLinked {
 		return r.addrs.ClearReference(ctx, addressID, owner)
+	}
+	// owned (auto): снять собственный owned-референс, затем удалить адрес.
+	if err := r.addrs.ClearReference(ctx, addressID, owner); err != nil {
+		return err
 	}
 	return r.addrs.FreeIP(ctx, addressID, owner)
 }

@@ -21,7 +21,7 @@ import (
 const loadBalancerCols = `
     id, project_id, region_id, created_at, updated_at,
     name, description, labels, type, status, session_affinity,
-    cross_zone_enabled, deletion_protection, network_id, security_group_ids,
+    deletion_protection, placement_type, disabled_announce_zones,
     ip_families, address_v4, address_v6, address_id_v4, address_id_v6,
     vip_origin_v4, vip_origin_v6`
 
@@ -33,30 +33,30 @@ type loadBalancerReader struct {
 // scanLB — общий scanner для load_balancers row (в порядке loadBalancerCols).
 func scanLB(row pgx.Row) (*kacho.LoadBalancerRecord, error) {
 	var (
-		rec          kacho.LoadBalancerRecord
-		labelsRaw    []byte
-		nameStr      string
-		descStr      string
-		typeStr      string
-		statusStr    string
-		affinStr     string
-		regionIDs    string
-		projectIDs   string
-		idStr        string
-		networkIDStr string
-		sgIDs        []string
-		ipFamilies   []string
-		addrV4       string
-		addrV6       string
-		addrIDV4     string
-		addrIDV6     string
-		vipOriginV4  string
-		vipOriginV6  string
+		rec           kacho.LoadBalancerRecord
+		labelsRaw     []byte
+		nameStr       string
+		descStr       string
+		typeStr       string
+		statusStr     string
+		affinStr      string
+		regionIDs     string
+		projectIDs    string
+		idStr         string
+		placementStr  string
+		disabledZones []string
+		ipFamilies    []string
+		addrV4        string
+		addrV6        string
+		addrIDV4      string
+		addrIDV6      string
+		vipOriginV4   string
+		vipOriginV6   string
 	)
 	if err := row.Scan(
 		&idStr, &projectIDs, &regionIDs, &rec.CreatedAt, &rec.UpdatedAt,
 		&nameStr, &descStr, &labelsRaw, &typeStr, &statusStr, &affinStr,
-		&rec.CrossZoneEnabled, &rec.DeletionProtection, &networkIDStr, &sgIDs,
+		&rec.DeletionProtection, &placementStr, &disabledZones,
 		&ipFamilies, &addrV4, &addrV6, &addrIDV4, &addrIDV6,
 		&vipOriginV4, &vipOriginV6,
 	); err != nil {
@@ -65,8 +65,8 @@ func scanLB(row pgx.Row) (*kacho.LoadBalancerRecord, error) {
 	rec.ID = domain.ResourceID(idStr)
 	rec.ProjectID = domain.ProjectID(projectIDs)
 	rec.RegionID = domain.RegionID(regionIDs)
-	rec.NetworkID = domain.NetworkID(networkIDStr)
-	rec.SecurityGroupIDs = domain.SecurityGroupIDsFromStrings(sgIDs)
+	rec.PlacementType = domain.PlacementType(placementStr)
+	rec.DisabledAnnounceZones = disabledZonesFromDB(disabledZones)
 	rec.IPFamilies = ipVersionsFromStrings(ipFamilies)
 	rec.AddressV4 = domain.IPAddress(addrV4)
 	rec.AddressV6 = domain.IPAddress(addrV6)
@@ -85,6 +85,24 @@ func scanLB(row pgx.Row) (*kacho.LoadBalancerRecord, error) {
 	}
 	rec.Labels = labels
 	return &rec, nil
+}
+
+// disabledZonesFromDB — text[] → []string, nil для пустого набора (паритет
+// с proto-семантикой «отсутствие = поле не задано»).
+func disabledZonesFromDB(raw []string) []string {
+	if len(raw) == 0 {
+		return nil
+	}
+	return append([]string(nil), raw...)
+}
+
+// disabledZonesParam — []string → NOT NULL text[] (nil → пустой non-nil slice,
+// иначе нарушил бы NOT NULL).
+func disabledZonesParam(zones []string) []string {
+	if zones == nil {
+		return []string{}
+	}
+	return zones
 }
 
 // Get — по конвенции Kachō: well-formed-but-absent → ErrNotFound "NetworkLoadBalancer <id> not found".
@@ -219,19 +237,19 @@ func (w *loadBalancerWriter) Insert(ctx context.Context, lb *domain.LoadBalancer
 	q := fmt.Sprintf(`
         INSERT INTO kacho_nlb.load_balancers
             (id, project_id, region_id, name, description, labels,
-             type, status, session_affinity, cross_zone_enabled, deletion_protection,
-             network_id, security_group_ids, ip_families,
+             type, status, session_affinity, deletion_protection,
+             placement_type, disabled_announce_zones, ip_families,
              address_v4, address_v6, address_id_v4, address_id_v6,
              vip_origin_v4, vip_origin_v6)
-        VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9, $10, $11, $12, $13, $14,
-                $15, $16, $17, $18, $19, $20)
+        VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9, $10, $11, $12, $13,
+                $14, $15, $16, $17, $18, $19)
         RETURNING %s`, loadBalancerCols)
 	row := w.tx.QueryRow(ctx, q,
 		string(lb.ID), string(lb.ProjectID), string(lb.RegionID),
 		string(lb.Name), string(lb.Description), labelsJSON,
 		string(lb.Type), string(lb.Status), string(lb.SessionAffinity),
-		lb.CrossZoneEnabled, lb.DeletionProtection,
-		string(lb.NetworkID), sgIDsParam(lb.SecurityGroupIDs), ipFamiliesParam(lb.IPFamilies),
+		lb.DeletionProtection,
+		string(lb.PlacementType), disabledZonesParam(lb.DisabledAnnounceZones), ipFamiliesParam(lb.IPFamilies),
 		string(lb.AddressV4), string(lb.AddressV6), string(lb.AddressIDV4), string(lb.AddressIDV6),
 		string(lb.VipOriginV4), string(lb.VipOriginV6),
 	)
@@ -251,8 +269,8 @@ func (w *loadBalancerWriter) Insert(ctx context.Context, lb *domain.LoadBalancer
 // 0 rows → FailedPrecondition "load balancer already has an address for this
 // family" (семейство уже несёт другой адрес; повтор того же адреса — no-op,
 // идемпотентность retry). per-region UNIQUE (23505) → generic FailedPrecondition
-// "could not assign anycast address to load balancer" (анти-oracle: не раскрываем
-// чей именно адрес). status-aware CHECK (23514) → InvalidArgument — означает, что
+// "could not assign address to load balancer" (анти-oracle: не раскрываем чей
+// именно адрес). status-aware CHECK (23514) → InvalidArgument — означает, что
 // семейство не объявлено в ip_families ДО persist (sequencing-баг саги).
 func (w *loadBalancerWriter) AttachVIP(
 	ctx context.Context, id string, family domain.IPVersion, address, addressID string, origin domain.VipOrigin,
@@ -285,7 +303,7 @@ func mapAttachVIPErr(err error) error {
 	if errors.As(err, &pgErr) {
 		switch pgErr.Code {
 		case "23505":
-			return fmt.Errorf("%w: could not assign anycast address to load balancer", kacho.ErrFailedPrecondition)
+			return fmt.Errorf("%w: could not assign address to load balancer", kacho.ErrFailedPrecondition)
 		case "23514":
 			return fmt.Errorf("%w: load balancer violates address constraint", kacho.ErrInvalidArg)
 		}
@@ -326,36 +344,34 @@ func ipVersionsFromStrings(raw []string) []domain.IPVersion {
 	return out
 }
 
-// Update — мутирует name/description/labels/session_affinity/cross_zone_enabled/
-// deletion_protection. NB: type, region_id, project_id, status — НЕ меняются
-// тут (immutable / managed через отдельные методы).
+// Update — мутирует name/description/labels/session_affinity/deletion_protection/
+// disabled_announce_zones. NB: type, placement_type, region_id, project_id,
+// status, VIP-binding — НЕ меняются тут (immutable / managed через отдельные методы).
 func (w *loadBalancerWriter) Update(ctx context.Context, lb *domain.LoadBalancer) (*kacho.LoadBalancerRecord, error) {
 	labelsJSON, err := dto.LabelsToJSONB(lb.Labels)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", kacho.ErrInvalidArg, err)
 	}
-	// security_group_ids — full-replace набора одной атомарной single-statement
+	// disabled_announce_zones — full-replace набора одной атомарной single-statement
 	// UPDATE: text[] переписывается целиком, под row-lock'ом. Конкурентные
 	// replace'ы сериализуются (второй ждёт commit первого и перезаписывает),
-	// итог — один из наборов целиком, без torn-state (data-integrity «full-replace
-	// набора = атомарная запись колонки»).
+	// итог — один из наборов целиком, без torn-state.
 	q := fmt.Sprintf(`
         UPDATE kacho_nlb.load_balancers
            SET name = $2,
                description = $3,
                labels = $4::jsonb,
                session_affinity = $5,
-               cross_zone_enabled = $6,
-               deletion_protection = $7,
-               security_group_ids = $8,
+               deletion_protection = $6,
+               disabled_announce_zones = $7,
                updated_at = now()
          WHERE id = $1
         RETURNING %s`, loadBalancerCols)
 	row := w.tx.QueryRow(ctx, q,
 		string(lb.ID),
 		string(lb.Name), string(lb.Description), labelsJSON,
-		string(lb.SessionAffinity), lb.CrossZoneEnabled, lb.DeletionProtection,
-		sgIDsParam(lb.SecurityGroupIDs),
+		string(lb.SessionAffinity), lb.DeletionProtection,
+		disabledZonesParam(lb.DisabledAnnounceZones),
 	)
 	rec, err := scanLB(row)
 	if err != nil {
@@ -419,17 +435,6 @@ func (w *loadBalancerWriter) Delete(ctx context.Context, id string) error {
 		return fmt.Errorf("%w: NetworkLoadBalancer %s not found", kacho.ErrNotFound, id)
 	}
 	return nil
-}
-
-// sgIDsParam — кодирует набор SG для записи в NOT NULL text[]-колонку. Возвращает
-// НЕ-nil пустой slice для пустого набора (nil []string закодировался бы в NULL и
-// нарушил NOT NULL); непустой набор — материализованные строки.
-func sgIDsParam(ids []domain.SecurityGroupID) []string {
-	out := make([]string, len(ids))
-	for i, id := range ids {
-		out[i] = string(id)
-	}
-	return out
 }
 
 // pgxIsNoRows — true если err оборачивает pgx.ErrNoRows. Helper для CAS-семантики

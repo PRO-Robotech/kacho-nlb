@@ -83,8 +83,8 @@ func (u *DeleteLoadBalancerUseCase) Execute(
 		return nil, mapDomainErr(err)
 	}
 	if cur.DeletionProtection {
-		return nil, status.Errorf(codes.FailedPrecondition,
-			"NetworkLoadBalancer %s has deletion_protection enabled", id)
+		return nil, status.Error(codes.FailedPrecondition,
+			"load balancer has deletion protection enabled")
 	}
 	hasListeners, err := rd.LoadBalancers().HasListeners(ctx, id)
 	if err != nil {
@@ -190,9 +190,11 @@ func (u *DeleteLoadBalancerUseCase) doDelete(ctx context.Context, id, projectID 
 	return out, nil
 }
 
-// releaseVIP — освобождает VIP одного семейства по address_id: auto → FreeIP
-// (Address удаляется), byo → ClearReference (Address tenant'а уцелел). Пустой
-// addressID → no-op (семейство без VIP). Идемпотентно (NotFound → успех).
+// releaseVIP — освобождает VIP одного семейства по address_id (§3.9): owned (auto)
+// → two-step owner-scoped ClearReference → FreeIP (иначе FreeIP==AddressService.
+// Delete упрётся в собственный Delete-guard на owned-референсе); linked →
+// ClearReference без Delete (tenant-адрес уцелевает). Пустой addressID → no-op.
+// Идемпотентно (NotFound → успех; окно cleared-but-not-deleted добивает free_ip_runner).
 func (u *DeleteLoadBalancerUseCase) releaseVIP(ctx context.Context, lbID, addressID string, origin domain.VipOrigin) error {
 	if addressID == "" {
 		return nil
@@ -201,8 +203,13 @@ func (u *DeleteLoadBalancerUseCase) releaseVIP(ctx context.Context, lbID, addres
 		return status.Error(codes.Unavailable, "vpc internal address client not configured")
 	}
 	owner := lbAddressOwner(lbID)
-	if origin == domain.VipOriginBYO {
-		return u.addressClient.ClearReference(ctx, addressID, owner)
+	if origin == domain.VipOriginAuto {
+		// owned: снять собственный owned-референс, затем удалить адрес.
+		if err := u.addressClient.ClearReference(ctx, addressID, owner); err != nil {
+			return err
+		}
+		return u.addressClient.FreeIP(ctx, addressID, owner)
 	}
-	return u.addressClient.FreeIP(ctx, addressID, owner)
+	// linked (tenant-owned): снять только референс.
+	return u.addressClient.ClearReference(ctx, addressID, owner)
 }

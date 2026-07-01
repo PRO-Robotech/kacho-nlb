@@ -187,7 +187,7 @@ func TestLB_AttachVIP_ConcurrentPerRegionDoubleClaim(t *testing.T) {
 	require.Len(t, res.conflicts, 1, "the double-claim is rejected once")
 	require.ErrorIs(t, res.conflicts[0], kacho.ErrFailedPrecondition)
 	msg := res.conflicts[0].Error()
-	assert.Contains(t, msg, "could not assign anycast address to load balancer")
+	assert.Contains(t, msg, "could not assign address to load balancer")
 	// Анти-oracle: ни ёмкости пула, ни чужого ownership/LB в тексте.
 	for _, leak := range []string{"exhausted", "capacity", "owned", "owner", string(a.ID), string(b.ID)} {
 		assert.NotContains(t, msg, leak, "generic conflict must not leak %q", leak)

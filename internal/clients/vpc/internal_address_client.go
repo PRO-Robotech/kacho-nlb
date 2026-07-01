@@ -51,13 +51,15 @@ type AllocateResponse struct {
 	PoolID    string // pool_id для external (пусто для internal)
 }
 
-// AttachExistingRequest — параметры BYO-привязки принесённого tenant'ом Address к
+// AttachExistingRequest — параметры link-привязки принесённого tenant'ом Address к
 // owner-ресурсу (LoadBalancer VIP). Server-side привязка идёт через
 // InternalAddressService.SetAddressReference (атомарный CAS в vpc); mismatch /
-// not-found мапится в generic InvalidArgument (анти-oracle).
+// not-found мапится в generic InvalidArgument (анти-oracle). Owned=false —
+// tenant-owned адрес (link): release снимает только референс, адрес уцелевает.
 type AttachExistingRequest struct {
 	AddressID string
 	Owner     AddressOwner
+	Owned     bool
 }
 
 // InternalAddressClient — port-интерфейс для service-слоя.
@@ -99,11 +101,12 @@ type InternalAddressClient interface {
 	// kacho-vpc при Delete.
 	FreeIP(ctx context.Context, addressID string, owner AddressOwner) error
 
-	// SetReference — атомарный CAS Set used_by=owner на существующем Address
-	// (BYO attach в Listener.Create). Семантика ошибок:
+	// SetReference — атомарный CAS Set used_by=owner на существующем Address.
+	// owned помечает референс как owned (auto-alloc, lifecycle связан) либо
+	// used_by (linked, tenant-owned). Семантика ошибок:
 	//   - AlreadyExists (address уже занят другим owner) → domain.ErrFailedPrecondition
 	//   - NotFound                                       → domain.ErrInvalidArg
-	SetReference(ctx context.Context, addressID string, owner AddressOwner) error
+	SetReference(ctx context.Context, addressID string, owner AddressOwner, owned bool) error
 
 	// ClearReference — снимает used_by с Address (Listener.Delete release BYO).
 	// Идемпотентно: NotFound → успех.
@@ -250,7 +253,8 @@ func (c *internalAddressClient) allocFromCreate(
 	if err != nil {
 		return nil, err
 	}
-	if err := c.SetReference(ctx, addr.GetId(), owner); err != nil {
+	// auto-alloc → owned=true (адрес заказан LB неявно, lifecycle связан).
+	if err := c.SetReference(ctx, addr.GetId(), owner, true); err != nil {
 		// Best-effort cleanup: tear down half-allocated address. Не маскируем
 		// исходную ошибку (она важнее для caller'а).
 		_ = c.FreeIP(ctx, addr.GetId(), owner)
@@ -322,7 +326,7 @@ func (c *internalAddressClient) FreeIP(ctx context.Context, addressID string, ow
 
 // SetReference — см. контракт InternalAddressClient.SetReference.
 func (c *internalAddressClient) SetReference(
-	ctx context.Context, addressID string, owner AddressOwner,
+	ctx context.Context, addressID string, owner AddressOwner, owned bool,
 ) error {
 	switch {
 	case addressID == "":
@@ -338,6 +342,7 @@ func (c *internalAddressClient) SetReference(
 			AddressId:    addressID,
 			ReferrerType: owner.Kind,
 			ReferrerId:   owner.ID,
+			Owned:        owned,
 		})
 		if rerr == nil {
 			return nil
@@ -411,6 +416,7 @@ func (c *internalAddressClient) AttachExisting(
 			AddressId:    req.AddressID,
 			ReferrerType: req.Owner.Kind,
 			ReferrerId:   req.Owner.ID,
+			Owned:        req.Owned,
 		})
 		if rerr == nil {
 			return nil

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sort"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -24,39 +25,53 @@ import (
 	kachopg "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho/pg"
 )
 
-// CreateLoadBalancerUseCase — async Create flow.
-//
-// Sync part:
-//   - sync-validate request → domain.LoadBalancer.Validate (multi-err fast-fail);
-//   - sync-check duplicate-name via repo.Reader.List(project+name) → AlreadyExists;
-//   - operations.New + opsRepo.CreateWithPrincipal → return Operation immediately.
-//
-// Async part (worker):
-//   - peer-check `project_id` (`InvalidArgument`/`Unavailable` on failure);
-//   - peer-check `region_id`;
-//   - open Writer-TX → Insert(LB) + Outbox.Emit("CREATED") +
-//     FGARegisterOutbox.Emit(fga.register) → Commit (Вариант A: the
-//     owner-hierarchy + creator tuple intent is written in the SAME writer-tx
-//     as the Insert — no dual-write; a register-drainer applies it through
-//     kacho-iam InternalIAMService.RegisterResource);
-//   - return Operation.Response = NetworkLoadBalancer.
+// vipSourceKind — тип источника VIP одного семейства (VipSource oneof).
+type vipSourceKind int
+
+const (
+	srcSubnetAuto  vipSourceKind = iota // subnet_id → auto-аллокация internal Address
+	srcPublicAuto                       // public {} → платформенный public Address
+	srcAddressLink                      // address_id → линк существующего Address
+)
+
+// familyVIPSpec — разобранный + резолвнутый per-family источник VIP.
+type familyVIPSpec struct {
+	family    domain.IPVersion
+	kind      vipSourceKind
+	subnetID  string // srcSubnetAuto — подсеть, из которой аллоцируется VIP
+	addressID string // srcAddressLink — существующий Address
+	// networkID — derived сеть семейства (INTERNAL): подсеть auto либо подсеть
+	// linked-адреса. Пусто для EXTERNAL/public (сети нет). Используется для
+	// dualstack same-network инварианта.
+	networkID string
+}
+
+// origin — release-дискриминатор источника (auto owned / linked).
+func (fs familyVIPSpec) origin() domain.VipOrigin {
+	if fs.kind == srcAddressLink {
+		return domain.VipOriginLinked
+	}
+	return domain.VipOriginAuto
+}
+
+// CreateLoadBalancerUseCase — async Create с sync-precheck матрицы source×type×
+// placement (fail-fast ДО Operation) и per-family VIP fan-out в worker'е.
 type CreateLoadBalancerUseCase struct {
-	repo                Repo
-	opsRepo             operations.Repo
-	projectClient       ProjectClient
-	regionClient        RegionClient
-	networkClient       NetworkClient
-	securityGroupClient SecurityGroupClient
-	subnetClient        SubnetClient
-	addressReader       AddressClient // публичный AddressService.Get — BYO ownership-валидация
-	addressClient       InternalAddressClient
-	logger              *slog.Logger
+	repo          Repo
+	opsRepo       operations.Repo
+	projectClient ProjectClient
+	regionClient  RegionClient
+	zoneClient    ZoneClient
+	subnetClient  SubnetClient
+	addressReader AddressClient         // public AddressService.Get — link-resolution
+	addressClient InternalAddressClient // VIP alloc/link/release
+	logger        *slog.Logger
 }
 
 // NewCreateLoadBalancerUseCase конструктор.
 func NewCreateLoadBalancerUseCase(
 	repo Repo, opsRepo operations.Repo,
-	pc ProjectClient, rc RegionClient, nc NetworkClient, sgc SecurityGroupClient,
+	pc ProjectClient, rc RegionClient, zc ZoneClient,
 	snc SubnetClient, ar AddressClient, ac InternalAddressClient,
 	logger *slog.Logger,
 ) *CreateLoadBalancerUseCase {
@@ -65,19 +80,17 @@ func NewCreateLoadBalancerUseCase(
 	}
 	return &CreateLoadBalancerUseCase{
 		repo: repo, opsRepo: opsRepo,
-		projectClient: pc, regionClient: rc, networkClient: nc, securityGroupClient: sgc,
+		projectClient: pc, regionClient: rc, zoneClient: zc,
 		subnetClient: snc, addressReader: ar, addressClient: ac,
 		logger: logger,
 	}
 }
 
-// Execute — entry-point Create. Возвращает `*operations.Operation` (handler
-// конвертит в proto). Sync-validation + Operation insert; worker — отдельная
-// goroutine через operations.Run.
+// Execute — sync-precheck (тип/placement/матрица источника/drain/резолв
+// адресов+подсетей+сети) fail-fast ДО Operation; затем ops insert + worker.
 func (u *CreateLoadBalancerUseCase) Execute(
 	ctx context.Context, req *lbv1.CreateNetworkLoadBalancerRequest,
 ) (*operations.Operation, error) {
-	// ---- Sync validation ----
 	if req.GetProjectId() == "" {
 		return nil, errInvalidArg("project_id", "required")
 	}
@@ -89,17 +102,21 @@ func (u *CreateLoadBalancerUseCase) Execute(
 	if err != nil {
 		return nil, err
 	}
-	// INTERNAL-only: EXTERNAL anycast — следующая фаза. Reject синхронно (LB не
-	// создаётся), generic-текст по конвенции Kachō.
-	if lbType != domain.LBTypeInternal {
-		return nil, status.Error(codes.InvalidArgument, "Illegal argument type: only INTERNAL is supported")
+
+	// placement_type ↔ type coupling (§3.2).
+	placement, err := resolvePlacement(lbType, req.GetPlacementType())
+	if err != nil {
+		return nil, err
 	}
 
-	// address_spec → семейства VIP + per-family источник (auto/byo). Присутствие
-	// семейства задаёт его в ip_families (dualstack = оба). ≥1 семейство обязательно;
-	// malformed BYO addressId ловится синхронно первым стейтментом.
-	specs, err := resolveAddressSpec(req.GetAddressSpec())
+	// VipSource oneof → упорядоченный (v4, v6) набор; ≥1 семейство; malformed id sync.
+	specs, err := resolveVipSources(req.GetV4Source(), req.GetV6Source())
 	if err != nil {
+		return nil, err
+	}
+
+	// source × type матрица (§3.3): subnet⟹INTERNAL, public⟹EXTERNAL.
+	if err := validateSourceTypeMatrix(specs, lbType); err != nil {
 		return nil, err
 	}
 
@@ -112,79 +129,36 @@ func (u *CreateLoadBalancerUseCase) Execute(
 		domain.LabelsFromMap(req.GetLabels()),
 		lbType,
 	)
+	lb.PlacementType = placement
+	lb.DisabledAnnounceZones = normalizeZones(req.GetDisabledAnnounceZones())
 	if req.GetDeletionProtection() {
 		lb.DeletionProtection = true
 	}
-	// network_id — VPC-сеть приватного VIP (INTERNAL). Cross-field инвариант
-	// INTERNAL⟺non-empty проверяет lb.Validate ниже; существование — sync-precheck
-	// через vpc.NetworkService.Get.
-	lb.NetworkID = domain.NetworkID(req.GetNetworkId())
-	// security_group_ids — набор vpc.SecurityGroup (control-plane intent). Set-
-	// семантика (dedup). Cross-field INTERNAL-only + cardinality проверяет
-	// lb.Validate; существование + same-network — sync-precheck через
-	// vpc.SecurityGroupService.Get.
-	lb.SecurityGroupIDs = domain.SecurityGroupIDsFromStrings(req.GetSecurityGroupIds())
-	// session_affinity: UNSPECIFIED оставляет builder-default (FIVE_TUPLE);
-	// out-of-domain — sync fail-fast с каноничным field-сообщением (зеркало DB CHECK).
 	sa, err := lbSessionAffinityFromPb(req.GetSessionAffinity())
 	if err != nil {
 		return nil, mapDomainErr(err)
 	}
 	lb.SessionAffinity = sa
-	// cross_zone_enabled — optional: omitted сохраняет builder-default (true),
-	// явный false/true применяется.
-	if req.CrossZoneEnabled != nil {
-		lb.CrossZoneEnabled = req.GetCrossZoneEnabled()
-	}
-	// ip_families — заявленные семейства anycast-VIP (точные токены IPV4/IPV6).
-	// КРИТИЧНО: проставляются ДО Insert-handle, т.к. status-aware CHECK требует
-	// семейство в ip_families прежде чем persist-VIP запишет непустой address.
+	// ip_families — заявленные семейства VIP (проставляются ДО Insert-handle:
+	// family-guard CHECK требует семейство в ip_families прежде чем persist-VIP
+	// запишет непустой address).
 	lb.IPFamilies = familiesFromSpecs(specs)
 	if err := lb.Validate(); err != nil {
-		// Validate возвращает coreerrors.InvalidArgument (gRPC-shaped). mapDomainErr
-		// сохранит её as-is.
 		return nil, mapDomainErr(err)
 	}
 
-	// Sync-precheck существования network_id (только INTERNAL — Validate выше
-	// гарантировал INTERNAL⟺non-empty). Cross-domain ref на kacho-vpc Network
-	// (request-path, fail-closed): not-found → InvalidArgument, peer недоступен →
-	// Unavailable. Gonko-зависимый dangling до writer-TX переживается graceful на
-	// чтении (TEXT-ref без FK).
-	if lb.Type == domain.LBTypeInternal && u.networkClient != nil {
-		if _, err := u.networkClient.Get(ctx, string(lb.NetworkID)); err != nil {
-			return nil, networkPeerErr(err, string(lb.NetworkID))
-		}
-	}
-
-	// Sync-precheck security_group_ids: каждый SG существует И принадлежит
-	// network_id LB (same-network). Domain.Validate выше уже гарантировал, что
-	// непустой набор бывает только у INTERNAL (где network_id задан). not-found/
-	// чужая сеть → InvalidArgument; vpc недоступен → Unavailable (fail-closed).
-	if err := validateSecurityGroups(ctx, u.securityGroupClient, string(lb.NetworkID), lb.SecurityGroupIDs); err != nil {
+	// disabled_announce_zones (§3.4): REGIONAL-only + зоны ∈ регион + не все зоны (geo).
+	if err := u.validateDisabledAnnounceZones(ctx, lb); err != nil {
 		return nil, err
 	}
 
-	// Sync-precheck REGIONAL-подсети auto-семейств: VIP аллоцируется только из
-	// region-scoped (REGIONAL) подсети — тогда он anycast. ZONAL/UNSPECIFIED →
-	// InvalidArgument; not-found → InvalidArgument; vpc недоступен → Unavailable
-	// (fail-closed для мутации). BYO-семейства subnet_id не несут → пропускаются.
-	if err := u.validateRegionalSubnets(ctx, specs); err != nil {
+	// Резолв источников (§3.3): placement подсети/адреса == placement LB;
+	// kind/family/ownership link'а; derived network + dualstack same-network.
+	if err := u.resolveSources(ctx, lb, specs); err != nil {
 		return nil, err
 	}
 
-	// Sync-precheck BYO-VIP: принесённый tenant'ом Address обязан принадлежать
-	// проекту LB И совпадать по семейству (cross-domain ownership через owner-read
-	// API, data-integrity §2 — восстанавливает project/family-guard, снятый с
-	// vpc.SetAddressReference). Резолв под tenant-identity: authz-gate `v_get` не
-	// даст прочитать чужой Address. Несоответствие/no-access → generic
-	// InvalidArgument (анти-oracle); vpc недоступен → Unavailable (fail-closed).
-	if err := u.validateBYOAddresses(ctx, lb, specs); err != nil {
-		return nil, err
-	}
-
-	// Sync duplicate-name check. Race against concurrent insert
-	// финализируется UNIQUE-constraint backstop в worker'е.
+	// Sync duplicate-name check (worker-Insert UNIQUE — атомарный backstop).
 	if string(lb.Name) != "" {
 		if err := u.assertNameUnique(ctx, string(lb.ProjectID), string(lb.Name)); err != nil {
 			return nil, err
@@ -205,7 +179,6 @@ func (u *CreateLoadBalancerUseCase) Execute(
 		return nil, mapDomainErr(err)
 	}
 
-	// ---- Spawn worker ----
 	operations.Run(ctx, u.opsRepo, op.ID, func(workerCtx context.Context) (*anypb.Any, error) {
 		return u.doCreate(workerCtx, lb, principal, specs)
 	})
@@ -213,24 +186,241 @@ func (u *CreateLoadBalancerUseCase) Execute(
 	return &op, nil
 }
 
+// resolvePlacement — placement_type ↔ type coupling. INTERNAL требует явный
+// ZONAL|REGIONAL; EXTERNAL запрещает placement (§3.2, 8.1-12).
+func resolvePlacement(lbType domain.LBType, pb lbv1.NetworkLoadBalancer_PlacementType) (domain.PlacementType, error) {
+	set := pb != lbv1.NetworkLoadBalancer_PLACEMENT_TYPE_UNSPECIFIED
+	if lbType == domain.LBTypeInternal {
+		switch pb {
+		case lbv1.NetworkLoadBalancer_ZONAL:
+			return domain.PlacementZonal, nil
+		case lbv1.NetworkLoadBalancer_REGIONAL:
+			return domain.PlacementRegional, nil
+		}
+		return "", status.Error(codes.InvalidArgument,
+			"placement_type is required for INTERNAL load balancer")
+	}
+	if set {
+		return "", status.Error(codes.InvalidArgument,
+			"placement_type is only valid for INTERNAL load balancer")
+	}
+	return domain.PlacementUnspecified, nil
+}
+
+// resolveVipSources — VipSource v4/v6 → упорядоченный набор familyVIPSpec. ≥1
+// семейство обязательно; malformed subnet_id/address_id ловится синхронно.
+func resolveVipSources(v4, v6 *lbv1.VipSource) ([]familyVIPSpec, error) {
+	var out []familyVIPSpec
+	add := func(family domain.IPVersion, src *lbv1.VipSource) error {
+		if src == nil || src.GetSource() == nil {
+			return nil
+		}
+		fs := familyVIPSpec{family: family}
+		switch s := src.GetSource().(type) {
+		case *lbv1.VipSource_SubnetId:
+			if err := corevalidate.ResourceID("subnet", ids.PrefixSubnet, s.SubnetId); err != nil {
+				return err
+			}
+			fs.kind = srcSubnetAuto
+			fs.subnetID = s.SubnetId
+		case *lbv1.VipSource_AddressId:
+			if err := corevalidate.ResourceID("address", ids.PrefixAddress, s.AddressId); err != nil {
+				return err
+			}
+			fs.kind = srcAddressLink
+			fs.addressID = s.AddressId
+		case *lbv1.VipSource_Public:
+			fs.kind = srcPublicAuto
+		default:
+			return status.Errorf(codes.InvalidArgument,
+				"%s_source has no vip source set", familyTag(family))
+		}
+		out = append(out, fs)
+		return nil
+	}
+	if err := add(domain.IPVersionV4, v4); err != nil {
+		return nil, err
+	}
+	if err := add(domain.IPVersionV6, v6); err != nil {
+		return nil, err
+	}
+	if len(out) == 0 {
+		return nil, status.Error(codes.InvalidArgument,
+			"load balancer must declare a vip source for at least one ip family")
+	}
+	return out, nil
+}
+
+// validateSourceTypeMatrix — subnet_id ⟹ INTERNAL; public {} ⟹ EXTERNAL (§3.3).
+// Несоответствие → каноничный field-текст (не generic — это форма запроса, не oracle).
+func validateSourceTypeMatrix(specs []familyVIPSpec, lbType domain.LBType) error {
+	for _, fs := range specs {
+		switch fs.kind {
+		case srcSubnetAuto:
+			if lbType != domain.LBTypeInternal {
+				return status.Error(codes.InvalidArgument,
+					"subnet address source is only valid for INTERNAL load balancer")
+			}
+		case srcPublicAuto:
+			if lbType != domain.LBTypeExternal {
+				return status.Error(codes.InvalidArgument,
+					"public address source is only valid for EXTERNAL load balancer")
+			}
+		}
+	}
+	return nil
+}
+
+// validateDisabledAnnounceZones — REGIONAL-only + зоны ∈ регион + не все зоны.
+func (u *CreateLoadBalancerUseCase) validateDisabledAnnounceZones(ctx context.Context, lb domain.LoadBalancer) error {
+	return checkDisabledAnnounceZones(ctx, u.zoneClient, lb.PlacementType, string(lb.RegionID), lb.DisabledAnnounceZones)
+}
+
+// checkDisabledAnnounceZones — общая валидация drain-набора (Create + Update):
+// REGIONAL-only; каждая зона ∈ регион; набор не покрывает все зоны региона. nil
+// zoneClient (dev-стенд без geo) → пропуск geo-проверок (REGIONAL-only остаётся).
+func checkDisabledAnnounceZones(ctx context.Context, zc ZoneClient, placement domain.PlacementType, regionID string, zones []string) error {
+	if len(zones) == 0 {
+		return nil
+	}
+	if placement != domain.PlacementRegional {
+		return status.Error(codes.InvalidArgument,
+			"disabled_announce_zones is only valid for REGIONAL load balancer")
+	}
+	if zc == nil {
+		return nil
+	}
+	regionZones, err := zc.ListZoneIDsInRegion(ctx, regionID)
+	if err != nil {
+		return zonePeerErr(err)
+	}
+	inRegion := make(map[string]struct{}, len(regionZones))
+	for _, z := range regionZones {
+		inRegion[z] = struct{}{}
+	}
+	drained := make(map[string]struct{}, len(zones))
+	for _, z := range zones {
+		if _, ok := inRegion[z]; !ok {
+			return status.Errorf(codes.InvalidArgument,
+				"zone %s is not in region %s", z, regionID)
+		}
+		drained[z] = struct{}{}
+	}
+	// Набор не должен покрывать ВСЕ зоны региона (VIP стал бы недостижим).
+	if len(regionZones) > 0 && len(drained) >= len(inRegion) {
+		return status.Error(codes.InvalidArgument,
+			"disabled_announce_zones must not cover all zones of the region")
+	}
+	return nil
+}
+
+// resolveSources — резолв каждого источника через peer-API (§3.3): placement
+// подсети/адреса == placement LB; link kind/family/ownership; derived network +
+// dualstack same-network. Заполняет specs[i].networkID (INTERNAL).
+func (u *CreateLoadBalancerUseCase) resolveSources(ctx context.Context, lb domain.LoadBalancer, specs []familyVIPSpec) error {
+	for i := range specs {
+		if err := u.resolveOneSource(ctx, lb, &specs[i]); err != nil {
+			return err
+		}
+	}
+	// dualstack same-network (INTERNAL): derived network семейств должен совпасть.
+	var net string
+	for _, fs := range specs {
+		if fs.networkID == "" {
+			continue
+		}
+		if net == "" {
+			net = fs.networkID
+			continue
+		}
+		if fs.networkID != net {
+			return status.Error(codes.InvalidArgument,
+				"dualstack load balancer families must resolve to the same network")
+		}
+	}
+	return nil
+}
+
+// resolveOneSource — резолв одного семейства.
+func (u *CreateLoadBalancerUseCase) resolveOneSource(ctx context.Context, lb domain.LoadBalancer, fs *familyVIPSpec) error {
+	switch fs.kind {
+	case srcSubnetAuto:
+		if u.subnetClient == nil {
+			return nil
+		}
+		sn, err := u.subnetClient.Get(ctx, fs.subnetID)
+		if err != nil {
+			return subnetPeerErr(err, fs.subnetID)
+		}
+		if !subnetPlacementMatches(sn.PlacementType, lb.PlacementType) {
+			return status.Error(codes.InvalidArgument,
+				"subnet placement does not match load balancer placement")
+		}
+		fs.networkID = sn.NetworkID
+		return nil
+	case srcPublicAuto:
+		return nil // EXTERNAL public — сети нет; underlying-зона деривится в worker'е
+	case srcAddressLink:
+		return u.resolveLinkedAddress(ctx, lb, fs)
+	}
+	return nil
+}
+
+// resolveLinkedAddress — sync-precheck link'а: kind/family/ownership/placement
+// через public AddressService.Get под tenant-identity. Анти-oracle: любой
+// mismatch/no-access → generic InvalidArgument "Illegal argument addressId".
+func (u *CreateLoadBalancerUseCase) resolveLinkedAddress(ctx context.Context, lb domain.LoadBalancer, fs *familyVIPSpec) error {
+	if u.addressReader == nil {
+		return nil
+	}
+	addr, err := u.addressReader.Get(ctx, fs.addressID)
+	if err != nil {
+		return linkedAddressErr(err)
+	}
+	// ownership + family + kind↔type.
+	internalWanted := lb.Type == domain.LBTypeInternal
+	if addr.ProjectID != string(lb.ProjectID) ||
+		addr.Family != string(fs.family) ||
+		addr.External == internalWanted {
+		return status.Error(codes.InvalidArgument, "Illegal argument addressId")
+	}
+	// INTERNAL: placement подсети адреса == placement LB (derived network).
+	if internalWanted {
+		if u.subnetClient == nil {
+			return nil
+		}
+		sn, err := u.subnetClient.Get(ctx, addr.SubnetID)
+		if err != nil {
+			// подсеть адреса не резолвится — не подтверждаем детали (generic),
+			// vpc недоступен → Unavailable (fail-closed).
+			if errors.Is(err, domain.ErrUnavailable) {
+				return status.Error(codes.Unavailable, "subnet lookup unavailable")
+			}
+			return status.Error(codes.InvalidArgument, "Illegal argument addressId")
+		}
+		if !subnetPlacementMatches(sn.PlacementType, lb.PlacementType) {
+			return status.Error(codes.InvalidArgument, "Illegal argument addressId")
+		}
+		fs.networkID = sn.NetworkID
+	}
+	return nil
+}
+
+// subnetPlacementMatches — placement подсети (vpc) == placement LB (domain).
+func subnetPlacementMatches(subnetPlacement string, lbPlacement domain.PlacementType) bool {
+	switch lbPlacement {
+	case domain.PlacementRegional:
+		return subnetPlacement == vpcclient.SubnetPlacementRegional
+	case domain.PlacementZonal:
+		return subnetPlacement != vpcclient.SubnetPlacementRegional && subnetPlacement != ""
+	}
+	return false
+}
+
 // doCreate — async worker: durable-handle сага с per-family VIP fan-out.
-//
-//	peer-check project_id / region_id (до Insert — отказ компенсировать нечего);
-//	TX-1: INSERT durable-handle (status='CREATING', ip_families заполнен, address_*='');
-//	per-family (v4 затем v6): acquire VIP (auto AllocateInternalIP из REGIONAL-
-//	  подсети / BYO AttachExisting) → persist CAS-attach
-//	  (address_<fam>/address_id_<fam>/vip_origin_<fam>);
-//	finalize: CAS CREATING→INACTIVE + outbox CREATED + FGA-register.
-//
-// Compensation (defer-guard, активна после Insert-handle и до finalize):
-// освобождает VIP по КАЖДОМУ непустому address_id (auto → FreeIP, byo →
-// ClearReference) и удаляет handle (best-effort; краш раньше → free_ip_runner).
-// Возвращает anypb.Any(NetworkLoadBalancer) при успехе либо gRPC-status при ошибке.
 func (u *CreateLoadBalancerUseCase) doCreate(
 	ctx context.Context, lb domain.LoadBalancer, principal operations.Principal, specs []familyVIPSpec,
 ) (*anypb.Any, error) {
-	// Peer-check `project_id` / `region_id` ДО Insert-handle. Отказ здесь —
-	// компенсировать нечего (handle не вставлен, VIP не аллоцирован).
 	if u.projectClient != nil {
 		if _, err := u.projectClient.Get(ctx, string(lb.ProjectID)); err != nil {
 			return nil, peerErrToStatus(err, "project", string(lb.ProjectID))
@@ -242,15 +432,11 @@ func (u *CreateLoadBalancerUseCase) doCreate(
 		}
 	}
 
-	// TX-1: durable-handle (status='CREATING'). ip_families заполнен; address_*=''
-	// — status-aware CHECK пропускает INSERT с пустым address.
 	lb.Status = domain.LBStatusCreating
 	if err := u.insertHandle(ctx, &lb); err != nil {
-		return nil, mapDomainErr(err)
+		return nil, err
 	}
 
-	// Compensation guard (до finalize): release каждого аллоцированного VIP +
-	// delete handle. best-effort; ошибка compensation не маскирует исходную.
 	finalized := false
 	allocated := map[domain.IPVersion]vipAllocResult{}
 	defer func() {
@@ -260,11 +446,10 @@ func (u *CreateLoadBalancerUseCase) doCreate(
 		u.compensateCreate(ctx, string(lb.ID), allocated)
 	}()
 
-	// per-family fan-out: acquire → persist для каждого заявленного семейства.
 	for _, fs := range specs {
 		alloc, err := u.acquireFamilyVIP(ctx, lb, fs)
 		if err != nil {
-			return nil, mapDomainErr(err)
+			return nil, err
 		}
 		allocated[fs.family] = alloc
 		if _, err := u.persistVIP(ctx, string(lb.ID), fs.family, alloc.address, alloc.addressID, alloc.origin); err != nil {
@@ -272,8 +457,6 @@ func (u *CreateLoadBalancerUseCase) doCreate(
 		}
 	}
 
-	// Finalize: CREATING→INACTIVE (терминальное Create-состояние VIP-only LB) +
-	// outbox CREATED + FGA-register, атомарно одним commit'ом.
 	created, err := u.finalizeCreate(ctx, lb, principal)
 	if err != nil {
 		return nil, mapDomainErr(err)
@@ -295,11 +478,13 @@ func (u *CreateLoadBalancerUseCase) doCreate(
 type vipAllocResult struct {
 	addressID string
 	address   string
-	origin    domain.VipOrigin // auto → FreeIP; byo → ClearReference (release-ветка)
+	origin    domain.VipOrigin // auto → two-step release; linked → ClearReference
 }
 
-// acquireFamilyVIP — внешний side-effect одного семейства: auto-аллокация VIP из
-// REGIONAL-подсети (region-scoped → anycast) либо BYO-привязка принесённого Address.
+// acquireFamilyVIP — внешний side-effect одного семейства: auto-аллокация
+// (subnet internal / platform public) либо link существующего Address. Анти-oracle:
+// alloc-провал (ёмкость) → generic FAILED_PRECONDITION; link-конфликт → generic
+// `Illegal argument addressId`; vpc недоступен → Unavailable.
 func (u *CreateLoadBalancerUseCase) acquireFamilyVIP(
 	ctx context.Context, lb domain.LoadBalancer, fs familyVIPSpec,
 ) (vipAllocResult, error) {
@@ -307,110 +492,113 @@ func (u *CreateLoadBalancerUseCase) acquireFamilyVIP(
 		return vipAllocResult{}, status.Error(codes.Unavailable, "vpc internal address client not configured")
 	}
 	owner := lbAddressOwner(string(lb.ID))
-	if fs.byo {
+	switch fs.kind {
+	case srcAddressLink:
 		resp, err := u.addressClient.AttachExisting(ctx, vpcclient.AttachExistingRequest{
 			AddressID: fs.addressID,
 			Owner:     owner,
+			Owned:     false,
 		})
+		if err != nil {
+			return vipAllocResult{}, linkAcquireErr(err)
+		}
+		return vipAllocResult{addressID: resp.AddressID, address: resp.Value, origin: domain.VipOriginLinked}, nil
+	case srcPublicAuto:
+		zone, err := u.deriveUnderlayZone(ctx, string(lb.RegionID))
 		if err != nil {
 			return vipAllocResult{}, err
 		}
-		return vipAllocResult{addressID: resp.AddressID, address: resp.Value, origin: domain.VipOriginBYO}, nil
+		req := vpcclient.AllocateExternalIPRequest{
+			ProjectID: string(lb.ProjectID),
+			Name:      domain.LBAnycastAddressName(lb.ID, fs.family),
+			ZoneID:    zone,
+			Owner:     owner,
+		}
+		var (
+			resp *vpcclient.AllocateResponse
+			err2 error
+		)
+		if fs.family == domain.IPVersionV6 {
+			resp, err2 = u.addressClient.AllocateExternalIPv6(ctx, req)
+		} else {
+			resp, err2 = u.addressClient.AllocateExternalIP(ctx, req)
+		}
+		if err2 != nil {
+			return vipAllocResult{}, allocAcquireErr(err2)
+		}
+		return vipAllocResult{addressID: resp.AddressID, address: resp.Value, origin: domain.VipOriginAuto}, nil
+	default: // srcSubnetAuto
+		req := vpcclient.AllocateInternalIPRequest{
+			ProjectID: string(lb.ProjectID),
+			Name:      domain.LBAnycastAddressName(lb.ID, fs.family),
+			SubnetID:  fs.subnetID,
+			Owner:     owner,
+		}
+		var (
+			resp *vpcclient.AllocateResponse
+			err  error
+		)
+		if fs.family == domain.IPVersionV6 {
+			resp, err = u.addressClient.AllocateInternalIPv6(ctx, req)
+		} else {
+			resp, err = u.addressClient.AllocateInternalIP(ctx, req)
+		}
+		if err != nil {
+			return vipAllocResult{}, allocAcquireErr(err)
+		}
+		return vipAllocResult{addressID: resp.AddressID, address: resp.Value, origin: domain.VipOriginAuto}, nil
 	}
-	req := vpcclient.AllocateInternalIPRequest{
-		ProjectID: string(lb.ProjectID),
-		Name:      domain.LBAnycastAddressName(lb.ID, fs.family),
-		SubnetID:  fs.subnetID,
-		Owner:     owner,
+}
+
+// deriveUnderlayZone — детерминированная underlying-зона public-VIP из региона
+// (первая по сортировке). Скрыта от публичной поверхности (placement-leak).
+func (u *CreateLoadBalancerUseCase) deriveUnderlayZone(ctx context.Context, regionID string) (string, error) {
+	if u.zoneClient == nil {
+		return "", status.Error(codes.Unavailable, "zone lookup unavailable")
 	}
-	var (
-		resp *vpcclient.AllocateResponse
-		err  error
-	)
-	if fs.family == domain.IPVersionV6 {
-		resp, err = u.addressClient.AllocateInternalIPv6(ctx, req)
-	} else {
-		resp, err = u.addressClient.AllocateInternalIP(ctx, req)
-	}
+	zones, err := u.zoneClient.ListZoneIDsInRegion(ctx, regionID)
 	if err != nil {
-		return vipAllocResult{}, err
+		return "", zonePeerErr(err)
 	}
-	return vipAllocResult{addressID: resp.AddressID, address: resp.Value, origin: domain.VipOriginAuto}, nil
+	if len(zones) == 0 {
+		return "", status.Error(codes.FailedPrecondition, "could not allocate load balancer address")
+	}
+	sort.Strings(zones)
+	return zones[0], nil
 }
 
-// validateRegionalSubnets — sync-precheck: каждая auto-подсеть существует и
-// REGIONAL (region-scoped → VIP anycast). Дедуп по subnet_id. nil subnetClient
-// (dev/стенд без vpc) → пропуск. ZONAL/UNSPECIFIED → InvalidArgument.
-func (u *CreateLoadBalancerUseCase) validateRegionalSubnets(ctx context.Context, specs []familyVIPSpec) error {
-	if u.subnetClient == nil {
-		return nil
-	}
-	seen := make(map[string]struct{}, len(specs))
-	for _, fs := range specs {
-		if fs.byo || fs.subnetID == "" {
-			continue
-		}
-		if _, ok := seen[fs.subnetID]; ok {
-			continue
-		}
-		seen[fs.subnetID] = struct{}{}
-		sn, err := u.subnetClient.Get(ctx, fs.subnetID)
-		if err != nil {
-			return subnetPeerErr(err, fs.subnetID)
-		}
-		if sn.PlacementType != vpcclient.SubnetPlacementRegional {
-			return status.Error(codes.InvalidArgument,
-				"subnet must be REGIONAL for anycast load balancer VIP")
-		}
-	}
-	return nil
-}
-
-// validateBYOAddresses — sync-precheck принесённых BYO-адресов: каждый Address
-// принадлежит проекту LB И его семейство совпадает с заявленным. Резолв через
-// публичный AddressService.Get под tenant-identity (authz-gate `v_get`
-// изолирует по tenant'у). Анти-oracle: mismatch / not-found / no-access →
-// generic InvalidArgument "Illegal argument addressId" (не раскрываем чужой
-// ownership/существование); vpc недоступен → Unavailable. nil addressReader
-// (dev/стенд без vpc) → пропуск. auto-семейства (subnet_id) не проверяются здесь.
-func (u *CreateLoadBalancerUseCase) validateBYOAddresses(ctx context.Context, lb domain.LoadBalancer, specs []familyVIPSpec) error {
-	if u.addressReader == nil {
-		return nil
-	}
-	for _, fs := range specs {
-		if !fs.byo {
-			continue
-		}
-		addr, err := u.addressReader.Get(ctx, fs.addressID)
-		if err != nil {
-			return byoAddressErr(err)
-		}
-		if addr.ProjectID != string(lb.ProjectID) || addr.Family != string(fs.family) {
-			return status.Error(codes.InvalidArgument, "Illegal argument addressId")
-		}
-	}
-	return nil
-}
-
-// byoAddressErr — маппинг ошибок AddressService.Get в BYO-precheck. Анти-oracle:
-// любое not-found/no-access/bad-input → generic InvalidArgument (не раскрываем,
-// существует ли адрес и чей он); vpc недоступен → Unavailable (fail-closed);
-// прочее → Internal (без leak'а).
-func byoAddressErr(err error) error {
+// allocAcquireErr — анти-oracle маппинг ошибок auto-аллокации (ёмкость/недоступность).
+func allocAcquireErr(err error) error {
 	switch {
-	case errors.Is(err, domain.ErrNotFound), errors.Is(err, domain.ErrInvalidArg):
-		return status.Error(codes.InvalidArgument, "Illegal argument addressId")
 	case errors.Is(err, domain.ErrUnavailable):
+		return status.Error(codes.Unavailable, "load balancer address allocation unavailable")
+	}
+	// ErrFailedPrecondition (пул/подсеть исчерпаны) и прочее → generic (без ёмкости).
+	return status.Error(codes.FailedPrecondition, "could not allocate load balancer address")
+}
+
+// linkAcquireErr — анти-oracle маппинг ошибок link-CAS (адрес занят → generic).
+func linkAcquireErr(err error) error {
+	if errors.Is(err, domain.ErrUnavailable) {
 		return status.Error(codes.Unavailable, "address lookup unavailable")
 	}
-	return status.Error(codes.Internal, "address lookup failed")
+	return status.Error(codes.FailedPrecondition, "Illegal argument addressId")
+}
+
+// validateDisabledAnnounceZones/resolveSources используют этот маппер зон.
+func zonePeerErr(err error) error {
+	if errors.Is(err, domain.ErrUnavailable) {
+		return status.Error(codes.Unavailable, "zone lookup unavailable")
+	}
+	return status.Error(codes.InvalidArgument, "Illegal argument disabledAnnounceZones")
 }
 
 // insertHandle — TX-1: INSERT durable-handle строки LB (status='CREATING').
+// UNIQUE (project_id,name) 23505 → каноничный ALREADY_EXISTS-текст (name-dup).
 func (u *CreateLoadBalancerUseCase) insertHandle(ctx context.Context, lb *domain.LoadBalancer) error {
 	w, err := u.repo.Writer(ctx)
 	if err != nil {
-		return err
+		return mapDomainErr(err)
 	}
 	committed := false
 	defer func() {
@@ -419,10 +607,14 @@ func (u *CreateLoadBalancerUseCase) insertHandle(ctx context.Context, lb *domain
 		}
 	}()
 	if _, err := w.LoadBalancers().Insert(ctx, lb); err != nil {
-		return err
+		if errors.Is(err, kachorepo.ErrAlreadyExists) || errors.Is(err, domain.ErrAlreadyExists) {
+			return status.Errorf(codes.AlreadyExists,
+				"NetworkLoadBalancer with name %s already exists in project", lb.Name)
+		}
+		return mapDomainErr(err)
 	}
 	if err := w.Commit(); err != nil {
-		return err
+		return mapDomainErr(err)
 	}
 	committed = true
 	return nil
@@ -491,9 +683,8 @@ func (u *CreateLoadBalancerUseCase) finalizeCreate(
 }
 
 // compensateCreate — best-effort откат до finalize: освобождает каждый
-// аллоцированный VIP (auto → FreeIP, byo → ClearReference) и удаляет handle.
-// Ошибки логируются, не пробрасываются (worker уже вернул исходную ошибку);
-// краш раньше — handle добивает free_ip_runner.
+// аллоцированный VIP по origin (auto → two-step ClearReference→FreeIP, linked →
+// ClearReference) и удаляет handle. Ошибки логируются; краш раньше — free_ip_runner.
 func (u *CreateLoadBalancerUseCase) compensateCreate(ctx context.Context, lbID string, allocated map[domain.IPVersion]vipAllocResult) {
 	logger := u.logger
 	if logger == nil {
@@ -507,13 +698,7 @@ func (u *CreateLoadBalancerUseCase) compensateCreate(ctx context.Context, lbID s
 			if alloc.addressID == "" {
 				continue
 			}
-			var rerr error
-			if alloc.origin == domain.VipOriginBYO {
-				rerr = u.addressClient.ClearReference(ctx, alloc.addressID, owner)
-			} else {
-				rerr = u.addressClient.FreeIP(ctx, alloc.addressID, owner)
-			}
-			if rerr != nil {
+			if rerr := u.releaseAddress(ctx, alloc.addressID, owner, alloc.origin); rerr != nil {
 				logger.Warn("LoadBalancer.Create compensation release failed",
 					"err", rerr, "address_id", alloc.addressID, "family", string(family))
 			}
@@ -522,6 +707,23 @@ func (u *CreateLoadBalancerUseCase) compensateCreate(ctx context.Context, lbID s
 	if err := u.deleteHandle(ctx, lbID); err != nil {
 		logger.Warn("LoadBalancer.Create compensation delete handle failed; free_ip_runner will reconcile", "err", err)
 	}
+}
+
+// releaseAddress — release одного Address по origin (§3.9): owned (auto) →
+// two-step owner-scoped ClearReference → FreeIP (иначе FreeIP==Delete упрётся в
+// собственный guard); linked → ClearReference без Delete. Идемпотентно.
+func (u *CreateLoadBalancerUseCase) releaseAddress(ctx context.Context, addressID string, owner vpcclient.AddressOwner, origin domain.VipOrigin) error {
+	if u.addressClient == nil {
+		return status.Error(codes.Unavailable, "vpc internal address client not configured")
+	}
+	if origin == domain.VipOriginLinked {
+		return u.addressClient.ClearReference(ctx, addressID, owner)
+	}
+	// owned (auto): снять собственный owned-референс, затем удалить адрес.
+	if err := u.addressClient.ClearReference(ctx, addressID, owner); err != nil {
+		return err
+	}
+	return u.addressClient.FreeIP(ctx, addressID, owner)
 }
 
 // deleteHandle — best-effort DELETE durable-handle строки LB в собственной TX.
@@ -549,67 +751,7 @@ func (u *CreateLoadBalancerUseCase) deleteHandle(ctx context.Context, id string)
 	return nil
 }
 
-// familyVIPSpec — разобранный per-family источник VIP (auto/byo) из address_spec.
-type familyVIPSpec struct {
-	family    domain.IPVersion // IPV4 / IPV6
-	byo       bool             // true → BYO addressID, false → auto-alloc
-	addressID string           // BYO
-	subnetID  string           // auto — REGIONAL-подсеть, из которой аллоцируется VIP
-}
-
-// resolveAddressSpec — разбирает NetworkLoadBalancerAddressSpec в упорядоченный
-// (v4, затем v6) набор familyVIPSpec. ≥1 семейство обязательно; malformed BYO
-// addressId / auto subnet_id ловится синхронно. auto без subnet_id → InvalidArgument
-// (subnet_id обязателен). Источник без auto/byo → InvalidArgument.
-func resolveAddressSpec(spec *lbv1.NetworkLoadBalancerAddressSpec) ([]familyVIPSpec, error) {
-	var out []familyVIPSpec
-	add := func(family domain.IPVersion, fam *lbv1.FamilyAddressSpec) error {
-		if fam == nil {
-			return nil
-		}
-		fs := familyVIPSpec{family: family}
-		switch {
-		case fam.GetByo() != nil:
-			addressID := fam.GetByo().GetAddressId()
-			if err := corevalidate.ResourceID("address", ids.PrefixAddress, addressID); err != nil {
-				return err
-			}
-			fs.byo = true
-			fs.addressID = addressID
-		case fam.GetAuto() != nil:
-			subnetID := fam.GetAuto().GetSubnetId()
-			if subnetID == "" {
-				return status.Errorf(codes.InvalidArgument,
-					"address_spec.%s.auto.subnet_id is required", familyTag(family))
-			}
-			if err := corevalidate.ResourceID("subnet", ids.PrefixSubnet, subnetID); err != nil {
-				return err
-			}
-			fs.subnetID = subnetID
-		default:
-			return status.Errorf(codes.InvalidArgument,
-				"address_spec.%s.source is not set", familyTag(family))
-		}
-		out = append(out, fs)
-		return nil
-	}
-	if spec != nil {
-		if err := add(domain.IPVersionV4, spec.GetV4()); err != nil {
-			return nil, err
-		}
-		if err := add(domain.IPVersionV6, spec.GetV6()); err != nil {
-			return nil, err
-		}
-	}
-	if len(out) == 0 {
-		return nil, status.Error(codes.InvalidArgument,
-			"address_spec must declare at least one ip family for INTERNAL load balancer")
-	}
-	return out, nil
-}
-
-// familiesFromSpecs — список заявленных семейств (точные токены IPV4/IPV6) для
-// ip_families в порядке fan-out.
+// familiesFromSpecs — список заявленных семейств в порядке fan-out.
 func familiesFromSpecs(specs []familyVIPSpec) []domain.IPVersion {
 	out := make([]domain.IPVersion, 0, len(specs))
 	for _, fs := range specs {
@@ -618,7 +760,30 @@ func familiesFromSpecs(specs []familyVIPSpec) []domain.IPVersion {
 	return out
 }
 
-// familyTag — короткий тег семейства для error-текста ("v4"/"v6").
+// normalizeZones — dedup + стабильный порядок набора зон (для DB-записи и Equal).
+func normalizeZones(zones []string) []string {
+	if len(zones) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(zones))
+	out := make([]string, 0, len(zones))
+	for _, z := range zones {
+		if z == "" {
+			continue
+		}
+		if _, ok := seen[z]; ok {
+			continue
+		}
+		seen[z] = struct{}{}
+		out = append(out, z)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// familyTag — короткий тег семейства ("v4"/"v6").
 func familyTag(family domain.IPVersion) string {
 	if family == domain.IPVersionV6 {
 		return "v6"
@@ -626,17 +791,15 @@ func familyTag(family domain.IPVersion) string {
 	return "v4"
 }
 
-// lbAddressOwner — owner-tuple для vpc.Address used_by ("nlb_load_balancer:<id>").
+// lbAddressOwner — owner-tuple для vpc.Address referrer ("network_load_balancer:<id>").
 func lbAddressOwner(lbID string) vpcclient.AddressOwner {
 	return vpcclient.AddressOwner{Kind: lbAddressOwnerKind, ID: lbID}
 }
 
-// lbAddressOwnerKind — Reference.kind для NLB LoadBalancer в vpc.Address used_by.
-const lbAddressOwnerKind = "nlb_load_balancer"
+// lbAddressOwnerKind — Reference.type для NLB LoadBalancer в vpc.Address referrer.
+const lbAddressOwnerKind = "network_load_balancer"
 
-// assertNameUnique — sync precheck дубликата (project_id, name). UNIQUE-violation
-// в Insert — атомарный backstop, но sync-fail-fast → "лучше UX" (operation не
-// создаётся; client не ждёт worker).
+// assertNameUnique — sync precheck дубликата (project_id, name).
 func (u *CreateLoadBalancerUseCase) assertNameUnique(ctx context.Context, projectID, name string) error {
 	rd, err := u.repo.Reader(ctx)
 	if err != nil {
@@ -653,16 +816,13 @@ func (u *CreateLoadBalancerUseCase) assertNameUnique(ctx context.Context, projec
 	}
 	if len(existing) > 0 {
 		return status.Errorf(codes.AlreadyExists,
-			"NetworkLoadBalancer with name %s already exists", name)
+			"NetworkLoadBalancer with name %s already exists in project", name)
 	}
 	return nil
 }
 
-// lbRegisterIntent builds the FGA-register-intent for a freshly created
-// LoadBalancer: a project-hierarchy tuple plus, if the principal is an
-// authenticated (non-system) user, a creator (admin) tuple. The empty-subject
-// creator tuple is skipped (parity with the former EmitCreator skip-on-empty-
-// subject — system-initiated resources have no human owner).
+// lbRegisterIntent — FGA-register-intent свежесозданного LB (project-hierarchy +
+// creator-tuple, если principal — аутентифицированный пользователь).
 func lbRegisterIntent(lb *kachorepo.LoadBalancerRecord, principal operations.Principal) domain.FGARegisterIntent {
 	id := string(lb.ID)
 	tuples := []domain.FGATuple{
@@ -671,9 +831,6 @@ func lbRegisterIntent(lb *kachorepo.LoadBalancerRecord, principal operations.Pri
 	if subject := domain.FGASubjectFromPrincipal(principal.Type, principal.ID); subject != "" {
 		tuples = append(tuples, domain.FGACreatorTuple(subject, domain.FGAObjectTypeLoadBalancer, id))
 	}
-	// carry tenant labels + parent-project so kacho-iam feeds its
-	// resource_mirror (γ selector matchLabels / containment). source_version is
-	// stamped by the outbox emitter from the DB clock inside the writer-tx.
 	return domain.FGARegisterIntent{
 		Kind:            "NetworkLoadBalancer",
 		ResourceID:      id,
@@ -683,11 +840,8 @@ func lbRegisterIntent(lb *kachorepo.LoadBalancerRecord, principal operations.Pri
 	}
 }
 
-// lbMirrorIntent builds the mirror-feed register-intent for an
-// UPDATED LoadBalancer: the project-hierarchy tuple (re-register is idempotent in
-// IAM) carrying the refreshed labels + parent so kacho-iam updates its
-// resource_mirror. No creator tuple — Update never re-assigns ownership; this is a
-// pure labels-refresh feed. source_version is stamped by the outbox emitter.
+// lbMirrorIntent — mirror-feed register-intent для UPDATED LB (project-hierarchy
+// re-register с обновлёнными labels; без creator-tuple).
 func lbMirrorIntent(lb *kachorepo.LoadBalancerRecord) domain.FGARegisterIntent {
 	id := string(lb.ID)
 	return domain.FGARegisterIntent{
@@ -714,10 +868,7 @@ func lbTypeFromPb(t lbv1.NetworkLoadBalancer_Type) (domain.LBType, error) {
 	return "", errInvalidArg("type", "type must be one of: EXTERNAL, INTERNAL")
 }
 
-// domainSessionAffinity — proto enum → domain.SessionAffinity. UNSPECIFIED →
-// FIVE_TUPLE (DB DEFAULT); out-of-domain numeric value переносится своей
-// строкой, чтобы Validate отверг его каноничным field-сообщением (зеркало
-// DB CHECK IN ('FIVE_TUPLE','CLIENT_IP_ONLY')).
+// domainSessionAffinity — proto enum → domain.SessionAffinity.
 func domainSessionAffinity(a lbv1.NetworkLoadBalancer_SessionAffinity) domain.SessionAffinity {
 	switch a {
 	case lbv1.NetworkLoadBalancer_SESSION_AFFINITY_UNSPECIFIED, lbv1.NetworkLoadBalancer_FIVE_TUPLE:
@@ -728,8 +879,7 @@ func domainSessionAffinity(a lbv1.NetworkLoadBalancer_SessionAffinity) domain.Se
 	return domain.SessionAffinity(a.String())
 }
 
-// lbSessionAffinityFromPb — fail-fast вариант domainSessionAffinity: возвращает
-// каноничную InvalidArgument-ошибку на значение вне домена.
+// lbSessionAffinityFromPb — fail-fast вариант: каноничная InvalidArgument на out-of-domain.
 func lbSessionAffinityFromPb(a lbv1.NetworkLoadBalancer_SessionAffinity) (domain.SessionAffinity, error) {
 	sa := domainSessionAffinity(a)
 	if err := sa.Validate(); err != nil {
@@ -739,13 +889,6 @@ func lbSessionAffinityFromPb(a lbv1.NetworkLoadBalancer_SessionAffinity) (domain
 }
 
 // peerErrToStatus — маппинг ошибок peer-client (project/region) в gRPC-status.
-// Peer-clients оборачивают grpc-status в domain-sentinel ошибки:
-//
-//	domain.ErrNotFound          → InvalidArgument (peer-resource missing на input-time)
-//	domain.ErrInvalidArg        → InvalidArgument
-//	domain.ErrFailedPrecondition→ FailedPrecondition (e.g. project deleted)
-//	domain.ErrUnavailable       → Unavailable
-//	прочее                       → Internal
 func peerErrToStatus(err error, kind, id string) error {
 	if err == nil {
 		return nil
@@ -763,24 +906,7 @@ func peerErrToStatus(err error, kind, id string) error {
 	return status.Errorf(codes.Internal, "%s lookup failed", kind)
 }
 
-// networkPeerErr — sync-precheck network_id через vpc.NetworkService.Get. Клиент
-// оборачивает grpc-status в domain-sentinel: NotFound/InvalidArgument peer'а — это
-// bad-input на request-time → InvalidArgument "network <id> not found"; недоступность
-// → Unavailable (fail-closed для мутации); прочее → Internal (без leak'а).
-func networkPeerErr(err error, id string) error {
-	switch {
-	case errors.Is(err, domain.ErrNotFound), errors.Is(err, domain.ErrInvalidArg):
-		return status.Errorf(codes.InvalidArgument, "network %s not found", id)
-	case errors.Is(err, domain.ErrUnavailable):
-		return status.Errorf(codes.Unavailable, "network lookup unavailable")
-	}
-	return status.Errorf(codes.Internal, "network lookup failed")
-}
-
-// subnetPeerErr — sync-precheck subnet_id через vpc.SubnetService.Get. Клиент
-// оборачивает grpc-status в domain-sentinel: NotFound/InvalidArgument peer'а — это
-// bad-input на request-time → InvalidArgument "subnet <id> not found"; недоступность
-// → Unavailable (fail-closed для мутации); прочее → Internal (без leak'а).
+// subnetPeerErr — sync-precheck subnet_id через vpc.SubnetService.Get.
 func subnetPeerErr(err error, id string) error {
 	switch {
 	case errors.Is(err, domain.ErrNotFound), errors.Is(err, domain.ErrInvalidArg):
@@ -789,6 +915,17 @@ func subnetPeerErr(err error, id string) error {
 		return status.Errorf(codes.Unavailable, "subnet lookup unavailable")
 	}
 	return status.Errorf(codes.Internal, "subnet lookup failed")
+}
+
+// linkedAddressErr — анти-oracle маппинг AddressService.Get в link-precheck.
+func linkedAddressErr(err error) error {
+	switch {
+	case errors.Is(err, domain.ErrNotFound), errors.Is(err, domain.ErrInvalidArg):
+		return status.Error(codes.InvalidArgument, "Illegal argument addressId")
+	case errors.Is(err, domain.ErrUnavailable):
+		return status.Error(codes.Unavailable, "address lookup unavailable")
+	}
+	return status.Error(codes.Internal, "address lookup failed")
 }
 
 // caser — Title-case 1-char для kind ("project" → "Project").

@@ -56,6 +56,33 @@ func (s LBStatus) Validate() error {
 		Err()
 }
 
+// ---- PlacementType ---------------------------------------------------------
+// PlacementType — размещение INTERNAL-LB. Пусто для EXTERNAL (placement
+// неприменим). ZONAL — unicast-VIP в одной зоне; REGIONAL — anycast-VIP,
+// region-scoped. Coupling placement↔type и drain↔placement энфорсится sync-
+// прекcheck'ом use-case'а и DB CHECK (не в LB.Validate — чтобы точный текст
+// сообщения матрицы задавался в одном месте).
+
+type PlacementType string
+
+const (
+	PlacementUnspecified PlacementType = ""
+	PlacementZonal       PlacementType = "ZONAL"
+	PlacementRegional    PlacementType = "REGIONAL"
+)
+
+// Validate — значение placement пустое (EXTERNAL) либо ZONAL/REGIONAL. Coupling
+// placement с type проверяется отдельно (use-case).
+func (p PlacementType) Validate() error {
+	switch p {
+	case PlacementUnspecified, PlacementZonal, PlacementRegional:
+		return nil
+	}
+	return coreerrors.InvalidArgument().
+		AddFieldViolation("placement_type", "placement_type must be one of: ZONAL, REGIONAL").
+		Err()
+}
+
 // ---- SessionAffinity -------------------------------------------------------
 
 type SessionAffinity string
@@ -109,17 +136,24 @@ func (s ListenerStatus) Validate() error {
 type VipOrigin string
 
 const (
+	// VipOriginAuto — Address заказан LB неявно (subnet-auto / platform-public);
+	// lifecycle связан с LB → release = FreeIP (owned).
 	VipOriginAuto VipOrigin = "auto"
-	VipOriginBYO  VipOrigin = "byo"
+	// VipOriginLinked — Address создан tenant'ом заранее и залинкован
+	// (address_id); tenant-owned → release = ClearReference (адрес уцелевает).
+	VipOriginLinked VipOrigin = "linked"
+	// VipOriginBYO — legacy-дискриминатор listeners.vip_origin (BYO attach в
+	// Listener); сохранён для листенерной ветки release.
+	VipOriginBYO VipOrigin = "byo"
 )
 
 func (o VipOrigin) Validate() error {
 	switch o {
-	case VipOriginAuto, VipOriginBYO:
+	case VipOriginAuto, VipOriginLinked, VipOriginBYO:
 		return nil
 	}
 	return coreerrors.InvalidArgument().
-		AddFieldViolation("vip_origin", "vip_origin must be one of: auto, byo").
+		AddFieldViolation("vip_origin", "vip_origin must be one of: auto, linked, byo").
 		Err()
 }
 

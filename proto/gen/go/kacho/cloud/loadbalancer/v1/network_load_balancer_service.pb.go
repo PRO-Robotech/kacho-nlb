@@ -194,147 +194,6 @@ func (x *ListNetworkLoadBalancersResponse) GetNextPageToken() string {
 	return ""
 }
 
-// NetworkLoadBalancerAddressSpec — per-family источник VIP для LoadBalancer
-// (design §4.1). Присутствие семейства (v4/v6) задаёт его в ip_families
-// (dualstack = оба). Для INTERNAL хотя бы одно семейство обязательно.
-type NetworkLoadBalancerAddressSpec struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	V4            *FamilyAddressSpec     `protobuf:"bytes,1,opt,name=v4,proto3" json:"v4,omitempty"`
-	V6            *FamilyAddressSpec     `protobuf:"bytes,2,opt,name=v6,proto3" json:"v6,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *NetworkLoadBalancerAddressSpec) Reset() {
-	*x = NetworkLoadBalancerAddressSpec{}
-	mi := &file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_msgTypes[3]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *NetworkLoadBalancerAddressSpec) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*NetworkLoadBalancerAddressSpec) ProtoMessage() {}
-
-func (x *NetworkLoadBalancerAddressSpec) ProtoReflect() protoreflect.Message {
-	mi := &file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_msgTypes[3]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use NetworkLoadBalancerAddressSpec.ProtoReflect.Descriptor instead.
-func (*NetworkLoadBalancerAddressSpec) Descriptor() ([]byte, []int) {
-	return file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_rawDescGZIP(), []int{3}
-}
-
-func (x *NetworkLoadBalancerAddressSpec) GetV4() *FamilyAddressSpec {
-	if x != nil {
-		return x.V4
-	}
-	return nil
-}
-
-func (x *NetworkLoadBalancerAddressSpec) GetV6() *FamilyAddressSpec {
-	if x != nil {
-		return x.V6
-	}
-	return nil
-}
-
-// FamilyAddressSpec — источник VIP одного семейства: auto-аллокация anycast VIP
-// из REGIONAL-подсети kacho-vpc либо BYO заранее созданный anycast Address.
-type FamilyAddressSpec struct {
-	state protoimpl.MessageState `protogen:"open.v1"`
-	// Types that are valid to be assigned to Source:
-	//
-	//	*FamilyAddressSpec_Auto
-	//	*FamilyAddressSpec_Byo
-	Source        isFamilyAddressSpec_Source `protobuf_oneof:"source"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *FamilyAddressSpec) Reset() {
-	*x = FamilyAddressSpec{}
-	mi := &file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_msgTypes[4]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *FamilyAddressSpec) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*FamilyAddressSpec) ProtoMessage() {}
-
-func (x *FamilyAddressSpec) ProtoReflect() protoreflect.Message {
-	mi := &file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_msgTypes[4]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use FamilyAddressSpec.ProtoReflect.Descriptor instead.
-func (*FamilyAddressSpec) Descriptor() ([]byte, []int) {
-	return file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_rawDescGZIP(), []int{4}
-}
-
-func (x *FamilyAddressSpec) GetSource() isFamilyAddressSpec_Source {
-	if x != nil {
-		return x.Source
-	}
-	return nil
-}
-
-func (x *FamilyAddressSpec) GetAuto() *FamilyAddressSpec_AnycastAllocate {
-	if x != nil {
-		if x, ok := x.Source.(*FamilyAddressSpec_Auto); ok {
-			return x.Auto
-		}
-	}
-	return nil
-}
-
-func (x *FamilyAddressSpec) GetByo() *FamilyAddressSpec_AnycastByo {
-	if x != nil {
-		if x, ok := x.Source.(*FamilyAddressSpec_Byo); ok {
-			return x.Byo
-		}
-	}
-	return nil
-}
-
-type isFamilyAddressSpec_Source interface {
-	isFamilyAddressSpec_Source()
-}
-
-type FamilyAddressSpec_Auto struct {
-	// Auto-аллокация anycast VIP из REGIONAL-подсети kacho-vpc.
-	Auto *FamilyAddressSpec_AnycastAllocate `protobuf:"bytes,1,opt,name=auto,proto3,oneof"`
-}
-
-type FamilyAddressSpec_Byo struct {
-	// BYO — заранее созданный тенантом anycast Address.
-	Byo *FamilyAddressSpec_AnycastByo `protobuf:"bytes,2,opt,name=byo,proto3,oneof"`
-}
-
-func (*FamilyAddressSpec_Auto) isFamilyAddressSpec_Source() {}
-
-func (*FamilyAddressSpec_Byo) isFamilyAddressSpec_Source() {}
-
 type CreateNetworkLoadBalancerRequest struct {
 	state              protoimpl.MessageState   `protogen:"open.v1"`
 	ProjectId          string                   `protobuf:"bytes,1,opt,name=project_id,json=projectId,proto3" json:"project_id,omitempty"`
@@ -347,32 +206,24 @@ type CreateNetworkLoadBalancerRequest struct {
 	// session_affinity — UNSPECIFIED is accepted and persisted as the FIVE_TUPLE
 	// default; FIVE_TUPLE / CLIENT_IP_ONLY are persisted verbatim.
 	SessionAffinity NetworkLoadBalancer_SessionAffinity `protobuf:"varint,11,opt,name=session_affinity,json=sessionAffinity,proto3,enum=kacho.cloud.loadbalancer.v1.NetworkLoadBalancer_SessionAffinity" json:"session_affinity,omitempty"`
-	// cross_zone_enabled — optional so an omitted field keeps the DB default
-	// (true); an explicit false is honoured.
-	CrossZoneEnabled *bool `protobuf:"varint,12,opt,name=cross_zone_enabled,json=crossZoneEnabled,proto3,oneof" json:"cross_zone_enabled,omitempty"`
-	// network_id — required for INTERNAL scheme (private VIP inside this VPC
-	// network), rejected for EXTERNAL. Validated against vpc.NetworkService.Get.
-	NetworkId string `protobuf:"bytes,13,opt,name=network_id,json=networkId,proto3" json:"network_id,omitempty"`
-	// security_group_ids — set of vpc.SecurityGroup ids describing the allowed
-	// inbound to the VIP (control-plane intent). Only valid for INTERNAL; each id
-	// must exist and belong to network_id. Validated against
-	// vpc.SecurityGroupService.Get.
-	SecurityGroupIds []string `protobuf:"bytes,14,rep,name=security_group_ids,json=securityGroupIds,proto3" json:"security_group_ids,omitempty"`
-	// address_spec — per-family источник VIP (design §4.1). Присутствие v4/v6
-	// задаёт семейство в ip_families. Для INTERNAL обязательно хотя бы одно
-	// семейство. Результат (address_v4/v6 на ресурсе) — output-only, назначается
-	// worker'ом; здесь задаётся только origin (auto/byo + subnet_id/address_id).
-	AddressSpec *NetworkLoadBalancerAddressSpec `protobuf:"bytes,15,opt,name=address_spec,json=addressSpec,proto3" json:"address_spec,omitempty"`
-	// ip_families — заявленные семейства адресов VIP. Согласуется с присутствием
-	// v4/v6 в address_spec.
-	IpFamilies    []IpVersion `protobuf:"varint,16,rep,packed,name=ip_families,json=ipFamilies,proto3,enum=kacho.cloud.loadbalancer.v1.IpVersion" json:"ip_families,omitempty"`
+	// placement_type — обязателен и явен для INTERNAL (ZONAL|REGIONAL);
+	// запрещён для EXTERNAL.
+	PlacementType NetworkLoadBalancer_PlacementType `protobuf:"varint,17,opt,name=placement_type,json=placementType,proto3,enum=kacho.cloud.loadbalancer.v1.NetworkLoadBalancer_PlacementType" json:"placement_type,omitempty"`
+	// disabled_announce_zones — только для REGIONAL: зоны, из которых anycast-VIP
+	// не анонсируется (drain). Каждая зона ∈ регион LB; набор не покрывает все зоны.
+	DisabledAnnounceZones []string `protobuf:"bytes,18,rep,name=disabled_announce_zones,json=disabledAnnounceZones,proto3" json:"disabled_announce_zones,omitempty"`
+	// v4_source / v6_source — per-family источник VIP. Хотя бы одно семейство
+	// обязательно. subnet_id ⟹ INTERNAL auto; address_id ⟹ link по kind;
+	// public ⟹ EXTERNAL auto.
+	V4Source      *VipSource `protobuf:"bytes,19,opt,name=v4_source,json=v4Source,proto3" json:"v4_source,omitempty"`
+	V6Source      *VipSource `protobuf:"bytes,20,opt,name=v6_source,json=v6Source,proto3" json:"v6_source,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *CreateNetworkLoadBalancerRequest) Reset() {
 	*x = CreateNetworkLoadBalancerRequest{}
-	mi := &file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_msgTypes[5]
+	mi := &file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -384,7 +235,7 @@ func (x *CreateNetworkLoadBalancerRequest) String() string {
 func (*CreateNetworkLoadBalancerRequest) ProtoMessage() {}
 
 func (x *CreateNetworkLoadBalancerRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_msgTypes[5]
+	mi := &file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -397,7 +248,7 @@ func (x *CreateNetworkLoadBalancerRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateNetworkLoadBalancerRequest.ProtoReflect.Descriptor instead.
 func (*CreateNetworkLoadBalancerRequest) Descriptor() ([]byte, []int) {
-	return file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_rawDescGZIP(), []int{5}
+	return file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *CreateNetworkLoadBalancerRequest) GetProjectId() string {
@@ -456,37 +307,30 @@ func (x *CreateNetworkLoadBalancerRequest) GetSessionAffinity() NetworkLoadBalan
 	return NetworkLoadBalancer_SESSION_AFFINITY_UNSPECIFIED
 }
 
-func (x *CreateNetworkLoadBalancerRequest) GetCrossZoneEnabled() bool {
-	if x != nil && x.CrossZoneEnabled != nil {
-		return *x.CrossZoneEnabled
+func (x *CreateNetworkLoadBalancerRequest) GetPlacementType() NetworkLoadBalancer_PlacementType {
+	if x != nil {
+		return x.PlacementType
 	}
-	return false
+	return NetworkLoadBalancer_PLACEMENT_TYPE_UNSPECIFIED
 }
 
-func (x *CreateNetworkLoadBalancerRequest) GetNetworkId() string {
+func (x *CreateNetworkLoadBalancerRequest) GetDisabledAnnounceZones() []string {
 	if x != nil {
-		return x.NetworkId
-	}
-	return ""
-}
-
-func (x *CreateNetworkLoadBalancerRequest) GetSecurityGroupIds() []string {
-	if x != nil {
-		return x.SecurityGroupIds
+		return x.DisabledAnnounceZones
 	}
 	return nil
 }
 
-func (x *CreateNetworkLoadBalancerRequest) GetAddressSpec() *NetworkLoadBalancerAddressSpec {
+func (x *CreateNetworkLoadBalancerRequest) GetV4Source() *VipSource {
 	if x != nil {
-		return x.AddressSpec
+		return x.V4Source
 	}
 	return nil
 }
 
-func (x *CreateNetworkLoadBalancerRequest) GetIpFamilies() []IpVersion {
+func (x *CreateNetworkLoadBalancerRequest) GetV6Source() *VipSource {
 	if x != nil {
-		return x.IpFamilies
+		return x.V6Source
 	}
 	return nil
 }
@@ -500,7 +344,7 @@ type CreateNetworkLoadBalancerMetadata struct {
 
 func (x *CreateNetworkLoadBalancerMetadata) Reset() {
 	*x = CreateNetworkLoadBalancerMetadata{}
-	mi := &file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_msgTypes[6]
+	mi := &file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -512,7 +356,7 @@ func (x *CreateNetworkLoadBalancerMetadata) String() string {
 func (*CreateNetworkLoadBalancerMetadata) ProtoMessage() {}
 
 func (x *CreateNetworkLoadBalancerMetadata) ProtoReflect() protoreflect.Message {
-	mi := &file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_msgTypes[6]
+	mi := &file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -525,7 +369,7 @@ func (x *CreateNetworkLoadBalancerMetadata) ProtoReflect() protoreflect.Message 
 
 // Deprecated: Use CreateNetworkLoadBalancerMetadata.ProtoReflect.Descriptor instead.
 func (*CreateNetworkLoadBalancerMetadata) Descriptor() ([]byte, []int) {
-	return file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_rawDescGZIP(), []int{6}
+	return file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *CreateNetworkLoadBalancerMetadata) GetNetworkLoadBalancerId() string {
@@ -543,32 +387,19 @@ type UpdateNetworkLoadBalancerRequest struct {
 	Description           string                 `protobuf:"bytes,4,opt,name=description,proto3" json:"description,omitempty"`
 	Labels                map[string]string      `protobuf:"bytes,5,rep,name=labels,proto3" json:"labels,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	DeletionProtection    bool                   `protobuf:"varint,8,opt,name=deletion_protection,json=deletionProtection,proto3" json:"deletion_protection,omitempty"`
-	// session_affinity / cross_zone_enabled — mutable; applied when present in
-	// update_mask (or under an empty mask full-PATCH).
-	SessionAffinity  NetworkLoadBalancer_SessionAffinity `protobuf:"varint,10,opt,name=session_affinity,json=sessionAffinity,proto3,enum=kacho.cloud.loadbalancer.v1.NetworkLoadBalancer_SessionAffinity" json:"session_affinity,omitempty"`
-	CrossZoneEnabled bool                                `protobuf:"varint,11,opt,name=cross_zone_enabled,json=crossZoneEnabled,proto3" json:"cross_zone_enabled,omitempty"`
-	// network_id — immutable after Create; present so a client can address it in
-	// update_mask (which is rejected with InvalidArgument). Never applied.
-	NetworkId string `protobuf:"bytes,12,opt,name=network_id,json=networkId,proto3" json:"network_id,omitempty"`
-	// security_group_ids — mutable; full-replace of the SG set when present in
-	// update_mask (or under an empty mask full-PATCH). Each id must exist and
-	// belong to the LB network_id. Validated against vpc.SecurityGroupService.Get.
-	SecurityGroupIds []string `protobuf:"bytes,13,rep,name=security_group_ids,json=securityGroupIds,proto3" json:"security_group_ids,omitempty"`
-	// address_id_v4 / address_id_v6 / ip_families — immutable after Create
-	// (VIP-binding и заявленные семейства фиксируются Create-сагой). Присутствуют
-	// в запросе только чтобы клиент мог адресовать их в update_mask — что
-	// отклоняется InvalidArgument. Никогда не применяются. address_v4/v6 —
-	// output-only результат, во вход Update не входят вообще.
-	AddressIdV4   string      `protobuf:"bytes,14,opt,name=address_id_v4,json=addressIdV4,proto3" json:"address_id_v4,omitempty"`
-	AddressIdV6   string      `protobuf:"bytes,15,opt,name=address_id_v6,json=addressIdV6,proto3" json:"address_id_v6,omitempty"`
-	IpFamilies    []IpVersion `protobuf:"varint,16,rep,packed,name=ip_families,json=ipFamilies,proto3,enum=kacho.cloud.loadbalancer.v1.IpVersion" json:"ip_families,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	// session_affinity — mutable; applied when present in update_mask (or under an
+	// empty mask full-PATCH).
+	SessionAffinity NetworkLoadBalancer_SessionAffinity `protobuf:"varint,10,opt,name=session_affinity,json=sessionAffinity,proto3,enum=kacho.cloud.loadbalancer.v1.NetworkLoadBalancer_SessionAffinity" json:"session_affinity,omitempty"`
+	// disabled_announce_zones — mutable (REGIONAL only): drain / re-enable зон.
+	// Валидируется по тем же правилам, что Create (зоны ∈ регион, не все зоны).
+	DisabledAnnounceZones []string `protobuf:"bytes,17,rep,name=disabled_announce_zones,json=disabledAnnounceZones,proto3" json:"disabled_announce_zones,omitempty"`
+	unknownFields         protoimpl.UnknownFields
+	sizeCache             protoimpl.SizeCache
 }
 
 func (x *UpdateNetworkLoadBalancerRequest) Reset() {
 	*x = UpdateNetworkLoadBalancerRequest{}
-	mi := &file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_msgTypes[7]
+	mi := &file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -580,7 +411,7 @@ func (x *UpdateNetworkLoadBalancerRequest) String() string {
 func (*UpdateNetworkLoadBalancerRequest) ProtoMessage() {}
 
 func (x *UpdateNetworkLoadBalancerRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_msgTypes[7]
+	mi := &file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -593,7 +424,7 @@ func (x *UpdateNetworkLoadBalancerRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateNetworkLoadBalancerRequest.ProtoReflect.Descriptor instead.
 func (*UpdateNetworkLoadBalancerRequest) Descriptor() ([]byte, []int) {
-	return file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_rawDescGZIP(), []int{7}
+	return file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *UpdateNetworkLoadBalancerRequest) GetNetworkLoadBalancerId() string {
@@ -645,44 +476,9 @@ func (x *UpdateNetworkLoadBalancerRequest) GetSessionAffinity() NetworkLoadBalan
 	return NetworkLoadBalancer_SESSION_AFFINITY_UNSPECIFIED
 }
 
-func (x *UpdateNetworkLoadBalancerRequest) GetCrossZoneEnabled() bool {
+func (x *UpdateNetworkLoadBalancerRequest) GetDisabledAnnounceZones() []string {
 	if x != nil {
-		return x.CrossZoneEnabled
-	}
-	return false
-}
-
-func (x *UpdateNetworkLoadBalancerRequest) GetNetworkId() string {
-	if x != nil {
-		return x.NetworkId
-	}
-	return ""
-}
-
-func (x *UpdateNetworkLoadBalancerRequest) GetSecurityGroupIds() []string {
-	if x != nil {
-		return x.SecurityGroupIds
-	}
-	return nil
-}
-
-func (x *UpdateNetworkLoadBalancerRequest) GetAddressIdV4() string {
-	if x != nil {
-		return x.AddressIdV4
-	}
-	return ""
-}
-
-func (x *UpdateNetworkLoadBalancerRequest) GetAddressIdV6() string {
-	if x != nil {
-		return x.AddressIdV6
-	}
-	return ""
-}
-
-func (x *UpdateNetworkLoadBalancerRequest) GetIpFamilies() []IpVersion {
-	if x != nil {
-		return x.IpFamilies
+		return x.DisabledAnnounceZones
 	}
 	return nil
 }
@@ -696,7 +492,7 @@ type UpdateNetworkLoadBalancerMetadata struct {
 
 func (x *UpdateNetworkLoadBalancerMetadata) Reset() {
 	*x = UpdateNetworkLoadBalancerMetadata{}
-	mi := &file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_msgTypes[8]
+	mi := &file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -708,7 +504,7 @@ func (x *UpdateNetworkLoadBalancerMetadata) String() string {
 func (*UpdateNetworkLoadBalancerMetadata) ProtoMessage() {}
 
 func (x *UpdateNetworkLoadBalancerMetadata) ProtoReflect() protoreflect.Message {
-	mi := &file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_msgTypes[8]
+	mi := &file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -721,7 +517,7 @@ func (x *UpdateNetworkLoadBalancerMetadata) ProtoReflect() protoreflect.Message 
 
 // Deprecated: Use UpdateNetworkLoadBalancerMetadata.ProtoReflect.Descriptor instead.
 func (*UpdateNetworkLoadBalancerMetadata) Descriptor() ([]byte, []int) {
-	return file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_rawDescGZIP(), []int{8}
+	return file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *UpdateNetworkLoadBalancerMetadata) GetNetworkLoadBalancerId() string {
@@ -740,7 +536,7 @@ type DeleteNetworkLoadBalancerRequest struct {
 
 func (x *DeleteNetworkLoadBalancerRequest) Reset() {
 	*x = DeleteNetworkLoadBalancerRequest{}
-	mi := &file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_msgTypes[9]
+	mi := &file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -752,7 +548,7 @@ func (x *DeleteNetworkLoadBalancerRequest) String() string {
 func (*DeleteNetworkLoadBalancerRequest) ProtoMessage() {}
 
 func (x *DeleteNetworkLoadBalancerRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_msgTypes[9]
+	mi := &file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -765,7 +561,7 @@ func (x *DeleteNetworkLoadBalancerRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteNetworkLoadBalancerRequest.ProtoReflect.Descriptor instead.
 func (*DeleteNetworkLoadBalancerRequest) Descriptor() ([]byte, []int) {
-	return file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_rawDescGZIP(), []int{9}
+	return file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *DeleteNetworkLoadBalancerRequest) GetNetworkLoadBalancerId() string {
@@ -784,7 +580,7 @@ type DeleteNetworkLoadBalancerMetadata struct {
 
 func (x *DeleteNetworkLoadBalancerMetadata) Reset() {
 	*x = DeleteNetworkLoadBalancerMetadata{}
-	mi := &file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_msgTypes[10]
+	mi := &file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -796,7 +592,7 @@ func (x *DeleteNetworkLoadBalancerMetadata) String() string {
 func (*DeleteNetworkLoadBalancerMetadata) ProtoMessage() {}
 
 func (x *DeleteNetworkLoadBalancerMetadata) ProtoReflect() protoreflect.Message {
-	mi := &file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_msgTypes[10]
+	mi := &file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -809,7 +605,7 @@ func (x *DeleteNetworkLoadBalancerMetadata) ProtoReflect() protoreflect.Message 
 
 // Deprecated: Use DeleteNetworkLoadBalancerMetadata.ProtoReflect.Descriptor instead.
 func (*DeleteNetworkLoadBalancerMetadata) Descriptor() ([]byte, []int) {
-	return file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_rawDescGZIP(), []int{10}
+	return file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *DeleteNetworkLoadBalancerMetadata) GetNetworkLoadBalancerId() string {
@@ -828,7 +624,7 @@ type StartNetworkLoadBalancerRequest struct {
 
 func (x *StartNetworkLoadBalancerRequest) Reset() {
 	*x = StartNetworkLoadBalancerRequest{}
-	mi := &file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_msgTypes[11]
+	mi := &file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -840,7 +636,7 @@ func (x *StartNetworkLoadBalancerRequest) String() string {
 func (*StartNetworkLoadBalancerRequest) ProtoMessage() {}
 
 func (x *StartNetworkLoadBalancerRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_msgTypes[11]
+	mi := &file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -853,7 +649,7 @@ func (x *StartNetworkLoadBalancerRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StartNetworkLoadBalancerRequest.ProtoReflect.Descriptor instead.
 func (*StartNetworkLoadBalancerRequest) Descriptor() ([]byte, []int) {
-	return file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_rawDescGZIP(), []int{11}
+	return file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *StartNetworkLoadBalancerRequest) GetNetworkLoadBalancerId() string {
@@ -872,7 +668,7 @@ type StartNetworkLoadBalancerMetadata struct {
 
 func (x *StartNetworkLoadBalancerMetadata) Reset() {
 	*x = StartNetworkLoadBalancerMetadata{}
-	mi := &file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_msgTypes[12]
+	mi := &file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -884,7 +680,7 @@ func (x *StartNetworkLoadBalancerMetadata) String() string {
 func (*StartNetworkLoadBalancerMetadata) ProtoMessage() {}
 
 func (x *StartNetworkLoadBalancerMetadata) ProtoReflect() protoreflect.Message {
-	mi := &file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_msgTypes[12]
+	mi := &file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -897,7 +693,7 @@ func (x *StartNetworkLoadBalancerMetadata) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StartNetworkLoadBalancerMetadata.ProtoReflect.Descriptor instead.
 func (*StartNetworkLoadBalancerMetadata) Descriptor() ([]byte, []int) {
-	return file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_rawDescGZIP(), []int{12}
+	return file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *StartNetworkLoadBalancerMetadata) GetNetworkLoadBalancerId() string {
@@ -916,7 +712,7 @@ type StopNetworkLoadBalancerRequest struct {
 
 func (x *StopNetworkLoadBalancerRequest) Reset() {
 	*x = StopNetworkLoadBalancerRequest{}
-	mi := &file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_msgTypes[13]
+	mi := &file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -928,7 +724,7 @@ func (x *StopNetworkLoadBalancerRequest) String() string {
 func (*StopNetworkLoadBalancerRequest) ProtoMessage() {}
 
 func (x *StopNetworkLoadBalancerRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_msgTypes[13]
+	mi := &file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -941,7 +737,7 @@ func (x *StopNetworkLoadBalancerRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StopNetworkLoadBalancerRequest.ProtoReflect.Descriptor instead.
 func (*StopNetworkLoadBalancerRequest) Descriptor() ([]byte, []int) {
-	return file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_rawDescGZIP(), []int{13}
+	return file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *StopNetworkLoadBalancerRequest) GetNetworkLoadBalancerId() string {
@@ -960,7 +756,7 @@ type StopNetworkLoadBalancerMetadata struct {
 
 func (x *StopNetworkLoadBalancerMetadata) Reset() {
 	*x = StopNetworkLoadBalancerMetadata{}
-	mi := &file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_msgTypes[14]
+	mi := &file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -972,7 +768,7 @@ func (x *StopNetworkLoadBalancerMetadata) String() string {
 func (*StopNetworkLoadBalancerMetadata) ProtoMessage() {}
 
 func (x *StopNetworkLoadBalancerMetadata) ProtoReflect() protoreflect.Message {
-	mi := &file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_msgTypes[14]
+	mi := &file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -985,7 +781,7 @@ func (x *StopNetworkLoadBalancerMetadata) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StopNetworkLoadBalancerMetadata.ProtoReflect.Descriptor instead.
 func (*StopNetworkLoadBalancerMetadata) Descriptor() ([]byte, []int) {
-	return file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_rawDescGZIP(), []int{14}
+	return file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *StopNetworkLoadBalancerMetadata) GetNetworkLoadBalancerId() string {
@@ -1006,7 +802,7 @@ type MoveNetworkLoadBalancerRequest struct {
 
 func (x *MoveNetworkLoadBalancerRequest) Reset() {
 	*x = MoveNetworkLoadBalancerRequest{}
-	mi := &file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_msgTypes[15]
+	mi := &file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1018,7 +814,7 @@ func (x *MoveNetworkLoadBalancerRequest) String() string {
 func (*MoveNetworkLoadBalancerRequest) ProtoMessage() {}
 
 func (x *MoveNetworkLoadBalancerRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_msgTypes[15]
+	mi := &file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1031,7 +827,7 @@ func (x *MoveNetworkLoadBalancerRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MoveNetworkLoadBalancerRequest.ProtoReflect.Descriptor instead.
 func (*MoveNetworkLoadBalancerRequest) Descriptor() ([]byte, []int) {
-	return file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_rawDescGZIP(), []int{15}
+	return file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *MoveNetworkLoadBalancerRequest) GetNetworkLoadBalancerId() string {
@@ -1058,7 +854,7 @@ type MoveNetworkLoadBalancerMetadata struct {
 
 func (x *MoveNetworkLoadBalancerMetadata) Reset() {
 	*x = MoveNetworkLoadBalancerMetadata{}
-	mi := &file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_msgTypes[16]
+	mi := &file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1070,7 +866,7 @@ func (x *MoveNetworkLoadBalancerMetadata) String() string {
 func (*MoveNetworkLoadBalancerMetadata) ProtoMessage() {}
 
 func (x *MoveNetworkLoadBalancerMetadata) ProtoReflect() protoreflect.Message {
-	mi := &file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_msgTypes[16]
+	mi := &file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1083,7 +879,7 @@ func (x *MoveNetworkLoadBalancerMetadata) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MoveNetworkLoadBalancerMetadata.ProtoReflect.Descriptor instead.
 func (*MoveNetworkLoadBalancerMetadata) Descriptor() ([]byte, []int) {
-	return file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_rawDescGZIP(), []int{16}
+	return file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *MoveNetworkLoadBalancerMetadata) GetNetworkLoadBalancerId() string {
@@ -1110,7 +906,7 @@ type AttachNetworkLoadBalancerTargetGroupRequest struct {
 
 func (x *AttachNetworkLoadBalancerTargetGroupRequest) Reset() {
 	*x = AttachNetworkLoadBalancerTargetGroupRequest{}
-	mi := &file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_msgTypes[17]
+	mi := &file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1122,7 +918,7 @@ func (x *AttachNetworkLoadBalancerTargetGroupRequest) String() string {
 func (*AttachNetworkLoadBalancerTargetGroupRequest) ProtoMessage() {}
 
 func (x *AttachNetworkLoadBalancerTargetGroupRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_msgTypes[17]
+	mi := &file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1135,7 +931,7 @@ func (x *AttachNetworkLoadBalancerTargetGroupRequest) ProtoReflect() protoreflec
 
 // Deprecated: Use AttachNetworkLoadBalancerTargetGroupRequest.ProtoReflect.Descriptor instead.
 func (*AttachNetworkLoadBalancerTargetGroupRequest) Descriptor() ([]byte, []int) {
-	return file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_rawDescGZIP(), []int{17}
+	return file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *AttachNetworkLoadBalancerTargetGroupRequest) GetNetworkLoadBalancerId() string {
@@ -1162,7 +958,7 @@ type AttachNetworkLoadBalancerTargetGroupMetadata struct {
 
 func (x *AttachNetworkLoadBalancerTargetGroupMetadata) Reset() {
 	*x = AttachNetworkLoadBalancerTargetGroupMetadata{}
-	mi := &file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_msgTypes[18]
+	mi := &file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1174,7 +970,7 @@ func (x *AttachNetworkLoadBalancerTargetGroupMetadata) String() string {
 func (*AttachNetworkLoadBalancerTargetGroupMetadata) ProtoMessage() {}
 
 func (x *AttachNetworkLoadBalancerTargetGroupMetadata) ProtoReflect() protoreflect.Message {
-	mi := &file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_msgTypes[18]
+	mi := &file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1187,7 +983,7 @@ func (x *AttachNetworkLoadBalancerTargetGroupMetadata) ProtoReflect() protorefle
 
 // Deprecated: Use AttachNetworkLoadBalancerTargetGroupMetadata.ProtoReflect.Descriptor instead.
 func (*AttachNetworkLoadBalancerTargetGroupMetadata) Descriptor() ([]byte, []int) {
-	return file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_rawDescGZIP(), []int{18}
+	return file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *AttachNetworkLoadBalancerTargetGroupMetadata) GetNetworkLoadBalancerId() string {
@@ -1214,7 +1010,7 @@ type DetachNetworkLoadBalancerTargetGroupRequest struct {
 
 func (x *DetachNetworkLoadBalancerTargetGroupRequest) Reset() {
 	*x = DetachNetworkLoadBalancerTargetGroupRequest{}
-	mi := &file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_msgTypes[19]
+	mi := &file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1226,7 +1022,7 @@ func (x *DetachNetworkLoadBalancerTargetGroupRequest) String() string {
 func (*DetachNetworkLoadBalancerTargetGroupRequest) ProtoMessage() {}
 
 func (x *DetachNetworkLoadBalancerTargetGroupRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_msgTypes[19]
+	mi := &file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1239,7 +1035,7 @@ func (x *DetachNetworkLoadBalancerTargetGroupRequest) ProtoReflect() protoreflec
 
 // Deprecated: Use DetachNetworkLoadBalancerTargetGroupRequest.ProtoReflect.Descriptor instead.
 func (*DetachNetworkLoadBalancerTargetGroupRequest) Descriptor() ([]byte, []int) {
-	return file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_rawDescGZIP(), []int{19}
+	return file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *DetachNetworkLoadBalancerTargetGroupRequest) GetNetworkLoadBalancerId() string {
@@ -1266,7 +1062,7 @@ type DetachNetworkLoadBalancerTargetGroupMetadata struct {
 
 func (x *DetachNetworkLoadBalancerTargetGroupMetadata) Reset() {
 	*x = DetachNetworkLoadBalancerTargetGroupMetadata{}
-	mi := &file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_msgTypes[20]
+	mi := &file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1278,7 +1074,7 @@ func (x *DetachNetworkLoadBalancerTargetGroupMetadata) String() string {
 func (*DetachNetworkLoadBalancerTargetGroupMetadata) ProtoMessage() {}
 
 func (x *DetachNetworkLoadBalancerTargetGroupMetadata) ProtoReflect() protoreflect.Message {
-	mi := &file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_msgTypes[20]
+	mi := &file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1291,7 +1087,7 @@ func (x *DetachNetworkLoadBalancerTargetGroupMetadata) ProtoReflect() protorefle
 
 // Deprecated: Use DetachNetworkLoadBalancerTargetGroupMetadata.ProtoReflect.Descriptor instead.
 func (*DetachNetworkLoadBalancerTargetGroupMetadata) Descriptor() ([]byte, []int) {
-	return file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_rawDescGZIP(), []int{20}
+	return file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *DetachNetworkLoadBalancerTargetGroupMetadata) GetNetworkLoadBalancerId() string {
@@ -1319,7 +1115,7 @@ type ListNetworkLoadBalancerOperationsRequest struct {
 
 func (x *ListNetworkLoadBalancerOperationsRequest) Reset() {
 	*x = ListNetworkLoadBalancerOperationsRequest{}
-	mi := &file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_msgTypes[21]
+	mi := &file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1331,7 +1127,7 @@ func (x *ListNetworkLoadBalancerOperationsRequest) String() string {
 func (*ListNetworkLoadBalancerOperationsRequest) ProtoMessage() {}
 
 func (x *ListNetworkLoadBalancerOperationsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_msgTypes[21]
+	mi := &file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1344,7 +1140,7 @@ func (x *ListNetworkLoadBalancerOperationsRequest) ProtoReflect() protoreflect.M
 
 // Deprecated: Use ListNetworkLoadBalancerOperationsRequest.ProtoReflect.Descriptor instead.
 func (*ListNetworkLoadBalancerOperationsRequest) Descriptor() ([]byte, []int) {
-	return file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_rawDescGZIP(), []int{21}
+	return file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *ListNetworkLoadBalancerOperationsRequest) GetNetworkLoadBalancerId() string {
@@ -1378,7 +1174,7 @@ type ListNetworkLoadBalancerOperationsResponse struct {
 
 func (x *ListNetworkLoadBalancerOperationsResponse) Reset() {
 	*x = ListNetworkLoadBalancerOperationsResponse{}
-	mi := &file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_msgTypes[22]
+	mi := &file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1390,7 +1186,7 @@ func (x *ListNetworkLoadBalancerOperationsResponse) String() string {
 func (*ListNetworkLoadBalancerOperationsResponse) ProtoMessage() {}
 
 func (x *ListNetworkLoadBalancerOperationsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_msgTypes[22]
+	mi := &file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1403,7 +1199,7 @@ func (x *ListNetworkLoadBalancerOperationsResponse) ProtoReflect() protoreflect.
 
 // Deprecated: Use ListNetworkLoadBalancerOperationsResponse.ProtoReflect.Descriptor instead.
 func (*ListNetworkLoadBalancerOperationsResponse) Descriptor() ([]byte, []int) {
-	return file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_rawDescGZIP(), []int{22}
+	return file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *ListNetworkLoadBalancerOperationsResponse) GetOperations() []*operation.Operation {
@@ -1430,7 +1226,7 @@ type GetTargetStatesRequest struct {
 
 func (x *GetTargetStatesRequest) Reset() {
 	*x = GetTargetStatesRequest{}
-	mi := &file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_msgTypes[23]
+	mi := &file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1442,7 +1238,7 @@ func (x *GetTargetStatesRequest) String() string {
 func (*GetTargetStatesRequest) ProtoMessage() {}
 
 func (x *GetTargetStatesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_msgTypes[23]
+	mi := &file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1455,7 +1251,7 @@ func (x *GetTargetStatesRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetTargetStatesRequest.ProtoReflect.Descriptor instead.
 func (*GetTargetStatesRequest) Descriptor() ([]byte, []int) {
-	return file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_rawDescGZIP(), []int{23}
+	return file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *GetTargetStatesRequest) GetNetworkLoadBalancerId() string {
@@ -1481,7 +1277,7 @@ type GetTargetStatesResponse struct {
 
 func (x *GetTargetStatesResponse) Reset() {
 	*x = GetTargetStatesResponse{}
-	mi := &file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_msgTypes[24]
+	mi := &file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1493,7 +1289,7 @@ func (x *GetTargetStatesResponse) String() string {
 func (*GetTargetStatesResponse) ProtoMessage() {}
 
 func (x *GetTargetStatesResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_msgTypes[24]
+	mi := &file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1506,7 +1302,7 @@ func (x *GetTargetStatesResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetTargetStatesResponse.ProtoReflect.Descriptor instead.
 func (*GetTargetStatesResponse) Descriptor() ([]byte, []int) {
-	return file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_rawDescGZIP(), []int{24}
+	return file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *GetTargetStatesResponse) GetTargetStates() []*TargetState {
@@ -1514,101 +1310,6 @@ func (x *GetTargetStatesResponse) GetTargetStates() []*TargetState {
 		return x.TargetStates
 	}
 	return nil
-}
-
-type FamilyAddressSpec_AnycastAllocate struct {
-	state protoimpl.MessageState `protogen:"open.v1"`
-	// ID REGIONAL-подсети kacho-vpc (placement_type=REGIONAL), из которой
-	// аллоцируется VIP. Обязателен для auto. VIP получается anycast именно
-	// потому, что подсеть region-scoped (анонсируется active-active из здоровых
-	// зон региона), а не привязана к одной зоне.
-	SubnetId      string `protobuf:"bytes,1,opt,name=subnet_id,json=subnetId,proto3" json:"subnet_id,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *FamilyAddressSpec_AnycastAllocate) Reset() {
-	*x = FamilyAddressSpec_AnycastAllocate{}
-	mi := &file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_msgTypes[25]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *FamilyAddressSpec_AnycastAllocate) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*FamilyAddressSpec_AnycastAllocate) ProtoMessage() {}
-
-func (x *FamilyAddressSpec_AnycastAllocate) ProtoReflect() protoreflect.Message {
-	mi := &file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_msgTypes[25]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use FamilyAddressSpec_AnycastAllocate.ProtoReflect.Descriptor instead.
-func (*FamilyAddressSpec_AnycastAllocate) Descriptor() ([]byte, []int) {
-	return file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_rawDescGZIP(), []int{4, 0}
-}
-
-func (x *FamilyAddressSpec_AnycastAllocate) GetSubnetId() string {
-	if x != nil {
-		return x.SubnetId
-	}
-	return ""
-}
-
-type FamilyAddressSpec_AnycastByo struct {
-	state protoimpl.MessageState `protogen:"open.v1"`
-	// ID заранее созданного anycast kacho-vpc Address (только свой). Ownership и
-	// family проверяются server-side CAS в vpc (expect_project_id /
-	// expect_ip_version в SetAddressReference), не client-side TOCTOU.
-	AddressId     string `protobuf:"bytes,1,opt,name=address_id,json=addressId,proto3" json:"address_id,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *FamilyAddressSpec_AnycastByo) Reset() {
-	*x = FamilyAddressSpec_AnycastByo{}
-	mi := &file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_msgTypes[26]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *FamilyAddressSpec_AnycastByo) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*FamilyAddressSpec_AnycastByo) ProtoMessage() {}
-
-func (x *FamilyAddressSpec_AnycastByo) ProtoReflect() protoreflect.Message {
-	mi := &file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_msgTypes[26]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use FamilyAddressSpec_AnycastByo.ProtoReflect.Descriptor instead.
-func (*FamilyAddressSpec_AnycastByo) Descriptor() ([]byte, []int) {
-	return file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_rawDescGZIP(), []int{4, 1}
-}
-
-func (x *FamilyAddressSpec_AnycastByo) GetAddressId() string {
-	if x != nil {
-		return x.AddressId
-	}
-	return ""
 }
 
 var File_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto protoreflect.FileDescriptor
@@ -1629,20 +1330,7 @@ const file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_rawDe
 	"\x8a\xc81\x06<=1000R\x06filter\"\xb2\x01\n" +
 	" ListNetworkLoadBalancersResponse\x12f\n" +
 	"\x16network_load_balancers\x18\x01 \x03(\v20.kacho.cloud.loadbalancer.v1.NetworkLoadBalancerR\x14networkLoadBalancers\x12&\n" +
-	"\x0fnext_page_token\x18\x02 \x01(\tR\rnextPageToken\"\xa0\x01\n" +
-	"\x1eNetworkLoadBalancerAddressSpec\x12>\n" +
-	"\x02v4\x18\x01 \x01(\v2..kacho.cloud.loadbalancer.v1.FamilyAddressSpecR\x02v4\x12>\n" +
-	"\x02v6\x18\x02 \x01(\v2..kacho.cloud.loadbalancer.v1.FamilyAddressSpecR\x02v6\"\xb3\x02\n" +
-	"\x11FamilyAddressSpec\x12T\n" +
-	"\x04auto\x18\x01 \x01(\v2>.kacho.cloud.loadbalancer.v1.FamilyAddressSpec.AnycastAllocateH\x00R\x04auto\x12M\n" +
-	"\x03byo\x18\x02 \x01(\v29.kacho.cloud.loadbalancer.v1.FamilyAddressSpec.AnycastByoH\x00R\x03byo\x1a8\n" +
-	"\x0fAnycastAllocate\x12%\n" +
-	"\tsubnet_id\x18\x01 \x01(\tB\b\x8a\xc81\x04<=50R\bsubnetId\x1a5\n" +
-	"\n" +
-	"AnycastByo\x12'\n" +
-	"\n" +
-	"address_id\x18\x01 \x01(\tB\b\x8a\xc81\x04<=50R\taddressIdB\b\n" +
-	"\x06source\"\xc6\b\n" +
+	"\x0fnext_page_token\x18\x02 \x01(\tR\rnextPageToken\"\x92\t\n" +
 	" CreateNetworkLoadBalancerRequest\x12+\n" +
 	"\n" +
 	"project_id\x18\x01 \x01(\tB\f\xe8\xc71\x01\x8a\xc81\x04<=50R\tprojectId\x125\n" +
@@ -1652,21 +1340,18 @@ const file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_rawDe
 	"\tregion_id\x18\x05 \x01(\tB\b\x8a\xc81\x04<=50R\bregionId\x12O\n" +
 	"\x04type\x18\x06 \x01(\x0e25.kacho.cloud.loadbalancer.v1.NetworkLoadBalancer.TypeB\x04\xe8\xc71\x01R\x04type\x12/\n" +
 	"\x13deletion_protection\x18\t \x01(\bR\x12deletionProtection\x12k\n" +
-	"\x10session_affinity\x18\v \x01(\x0e2@.kacho.cloud.loadbalancer.v1.NetworkLoadBalancer.SessionAffinityR\x0fsessionAffinity\x121\n" +
-	"\x12cross_zone_enabled\x18\f \x01(\bH\x00R\x10crossZoneEnabled\x88\x01\x01\x12'\n" +
-	"\n" +
-	"network_id\x18\r \x01(\tB\b\x8a\xc81\x04<=50R\tnetworkId\x126\n" +
-	"\x12security_group_ids\x18\x0e \x03(\tB\b\x8a\xc81\x04<=50R\x10securityGroupIds\x12^\n" +
-	"\faddress_spec\x18\x0f \x01(\v2;.kacho.cloud.loadbalancer.v1.NetworkLoadBalancerAddressSpecR\vaddressSpec\x12G\n" +
-	"\vip_families\x18\x10 \x03(\x0e2&.kacho.cloud.loadbalancer.v1.IpVersionR\n" +
-	"ipFamilies\x1a9\n" +
+	"\x10session_affinity\x18\v \x01(\x0e2@.kacho.cloud.loadbalancer.v1.NetworkLoadBalancer.SessionAffinityR\x0fsessionAffinity\x12e\n" +
+	"\x0eplacement_type\x18\x11 \x01(\x0e2>.kacho.cloud.loadbalancer.v1.NetworkLoadBalancer.PlacementTypeR\rplacementType\x12@\n" +
+	"\x17disabled_announce_zones\x18\x12 \x03(\tB\b\x8a\xc81\x04<=50R\x15disabledAnnounceZones\x12C\n" +
+	"\tv4_source\x18\x13 \x01(\v2&.kacho.cloud.loadbalancer.v1.VipSourceR\bv4Source\x12C\n" +
+	"\tv6_source\x18\x14 \x01(\v2&.kacho.cloud.loadbalancer.v1.VipSourceR\bv6Source\x1a9\n" +
 	"\vLabelsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01B\x15\n" +
-	"\x13_cross_zone_enabledJ\x04\b\a\x10\bJ\x04\b\b\x10\tJ\x04\b\n" +
-	"\x10\vR\x0elistener_specsR\x16attached_target_groupsR\x11allow_zonal_shift\"\\\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01J\x04\b\a\x10\bJ\x04\b\b\x10\tJ\x04\b\n" +
+	"\x10\vJ\x04\b\f\x10\rJ\x04\b\r\x10\x0eJ\x04\b\x0e\x10\x0fJ\x04\b\x0f\x10\x10J\x04\b\x10\x10\x11R\x0elistener_specsR\x16attached_target_groupsR\x11allow_zonal_shiftR\x12cross_zone_enabledR\n" +
+	"network_idR\x12security_group_idsR\faddress_specR\vip_families\"\\\n" +
 	"!CreateNetworkLoadBalancerMetadata\x127\n" +
-	"\x18network_load_balancer_id\x18\x01 \x01(\tR\x15networkLoadBalancerId\"\x85\b\n" +
+	"\x18network_load_balancer_id\x18\x01 \x01(\tR\x15networkLoadBalancerId\"\x96\a\n" +
 	" UpdateNetworkLoadBalancerRequest\x12E\n" +
 	"\x18network_load_balancer_id\x18\x01 \x01(\tB\f\xe8\xc71\x01\x8a\xc81\x04<=50R\x15networkLoadBalancerId\x12;\n" +
 	"\vupdate_mask\x18\x02 \x01(\v2\x1a.google.protobuf.FieldMaskR\n" +
@@ -1676,19 +1361,13 @@ const file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_rawDe
 	"\x06labels\x18\x05 \x03(\v2I.kacho.cloud.loadbalancer.v1.UpdateNetworkLoadBalancerRequest.LabelsEntryB;\xf2\xc71\v[-_0-9a-z]*\x82\xc81\x04<=64\x8a\xc81\x04<=63\xb2\xc81\x18\x12\x10[a-z][-_0-9a-z]*\x1a\x041-63R\x06labels\x12/\n" +
 	"\x13deletion_protection\x18\b \x01(\bR\x12deletionProtection\x12k\n" +
 	"\x10session_affinity\x18\n" +
-	" \x01(\x0e2@.kacho.cloud.loadbalancer.v1.NetworkLoadBalancer.SessionAffinityR\x0fsessionAffinity\x12,\n" +
-	"\x12cross_zone_enabled\x18\v \x01(\bR\x10crossZoneEnabled\x12'\n" +
-	"\n" +
-	"network_id\x18\f \x01(\tB\b\x8a\xc81\x04<=50R\tnetworkId\x126\n" +
-	"\x12security_group_ids\x18\r \x03(\tB\b\x8a\xc81\x04<=50R\x10securityGroupIds\x12,\n" +
-	"\raddress_id_v4\x18\x0e \x01(\tB\b\x8a\xc81\x04<=50R\vaddressIdV4\x12,\n" +
-	"\raddress_id_v6\x18\x0f \x01(\tB\b\x8a\xc81\x04<=50R\vaddressIdV6\x12G\n" +
-	"\vip_families\x18\x10 \x03(\x0e2&.kacho.cloud.loadbalancer.v1.IpVersionR\n" +
-	"ipFamilies\x1a9\n" +
+	" \x01(\x0e2@.kacho.cloud.loadbalancer.v1.NetworkLoadBalancer.SessionAffinityR\x0fsessionAffinity\x12@\n" +
+	"\x17disabled_announce_zones\x18\x11 \x03(\tB\b\x8a\xc81\x04<=50R\x15disabledAnnounceZones\x1a9\n" +
 	"\vLabelsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01J\x04\b\x06\x10\aJ\x04\b\a\x10\bJ\x04\b\t\x10\n" +
-	"R\x0elistener_specsR\x16attached_target_groupsR\x11allow_zonal_shift\"\\\n" +
+	"J\x04\b\v\x10\fJ\x04\b\f\x10\rJ\x04\b\r\x10\x0eJ\x04\b\x0e\x10\x0fJ\x04\b\x0f\x10\x10J\x04\b\x10\x10\x11R\x0elistener_specsR\x16attached_target_groupsR\x11allow_zonal_shiftR\x12cross_zone_enabledR\n" +
+	"network_idR\x12security_group_idsR\raddress_id_v4R\raddress_id_v6R\vip_families\"\\\n" +
 	"!UpdateNetworkLoadBalancerMetadata\x127\n" +
 	"\x18network_load_balancer_id\x18\x01 \x01(\tR\x15networkLoadBalancerId\"i\n" +
 	" DeleteNetworkLoadBalancerRequest\x12E\n" +
@@ -1783,93 +1462,86 @@ func file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_rawDes
 	return file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_rawDescData
 }
 
-var file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_msgTypes = make([]protoimpl.MessageInfo, 29)
+var file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_msgTypes = make([]protoimpl.MessageInfo, 25)
 var file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_goTypes = []any{
 	(*GetNetworkLoadBalancerRequest)(nil),                // 0: kacho.cloud.loadbalancer.v1.GetNetworkLoadBalancerRequest
 	(*ListNetworkLoadBalancersRequest)(nil),              // 1: kacho.cloud.loadbalancer.v1.ListNetworkLoadBalancersRequest
 	(*ListNetworkLoadBalancersResponse)(nil),             // 2: kacho.cloud.loadbalancer.v1.ListNetworkLoadBalancersResponse
-	(*NetworkLoadBalancerAddressSpec)(nil),               // 3: kacho.cloud.loadbalancer.v1.NetworkLoadBalancerAddressSpec
-	(*FamilyAddressSpec)(nil),                            // 4: kacho.cloud.loadbalancer.v1.FamilyAddressSpec
-	(*CreateNetworkLoadBalancerRequest)(nil),             // 5: kacho.cloud.loadbalancer.v1.CreateNetworkLoadBalancerRequest
-	(*CreateNetworkLoadBalancerMetadata)(nil),            // 6: kacho.cloud.loadbalancer.v1.CreateNetworkLoadBalancerMetadata
-	(*UpdateNetworkLoadBalancerRequest)(nil),             // 7: kacho.cloud.loadbalancer.v1.UpdateNetworkLoadBalancerRequest
-	(*UpdateNetworkLoadBalancerMetadata)(nil),            // 8: kacho.cloud.loadbalancer.v1.UpdateNetworkLoadBalancerMetadata
-	(*DeleteNetworkLoadBalancerRequest)(nil),             // 9: kacho.cloud.loadbalancer.v1.DeleteNetworkLoadBalancerRequest
-	(*DeleteNetworkLoadBalancerMetadata)(nil),            // 10: kacho.cloud.loadbalancer.v1.DeleteNetworkLoadBalancerMetadata
-	(*StartNetworkLoadBalancerRequest)(nil),              // 11: kacho.cloud.loadbalancer.v1.StartNetworkLoadBalancerRequest
-	(*StartNetworkLoadBalancerMetadata)(nil),             // 12: kacho.cloud.loadbalancer.v1.StartNetworkLoadBalancerMetadata
-	(*StopNetworkLoadBalancerRequest)(nil),               // 13: kacho.cloud.loadbalancer.v1.StopNetworkLoadBalancerRequest
-	(*StopNetworkLoadBalancerMetadata)(nil),              // 14: kacho.cloud.loadbalancer.v1.StopNetworkLoadBalancerMetadata
-	(*MoveNetworkLoadBalancerRequest)(nil),               // 15: kacho.cloud.loadbalancer.v1.MoveNetworkLoadBalancerRequest
-	(*MoveNetworkLoadBalancerMetadata)(nil),              // 16: kacho.cloud.loadbalancer.v1.MoveNetworkLoadBalancerMetadata
-	(*AttachNetworkLoadBalancerTargetGroupRequest)(nil),  // 17: kacho.cloud.loadbalancer.v1.AttachNetworkLoadBalancerTargetGroupRequest
-	(*AttachNetworkLoadBalancerTargetGroupMetadata)(nil), // 18: kacho.cloud.loadbalancer.v1.AttachNetworkLoadBalancerTargetGroupMetadata
-	(*DetachNetworkLoadBalancerTargetGroupRequest)(nil),  // 19: kacho.cloud.loadbalancer.v1.DetachNetworkLoadBalancerTargetGroupRequest
-	(*DetachNetworkLoadBalancerTargetGroupMetadata)(nil), // 20: kacho.cloud.loadbalancer.v1.DetachNetworkLoadBalancerTargetGroupMetadata
-	(*ListNetworkLoadBalancerOperationsRequest)(nil),     // 21: kacho.cloud.loadbalancer.v1.ListNetworkLoadBalancerOperationsRequest
-	(*ListNetworkLoadBalancerOperationsResponse)(nil),    // 22: kacho.cloud.loadbalancer.v1.ListNetworkLoadBalancerOperationsResponse
-	(*GetTargetStatesRequest)(nil),                       // 23: kacho.cloud.loadbalancer.v1.GetTargetStatesRequest
-	(*GetTargetStatesResponse)(nil),                      // 24: kacho.cloud.loadbalancer.v1.GetTargetStatesResponse
-	(*FamilyAddressSpec_AnycastAllocate)(nil),            // 25: kacho.cloud.loadbalancer.v1.FamilyAddressSpec.AnycastAllocate
-	(*FamilyAddressSpec_AnycastByo)(nil),                 // 26: kacho.cloud.loadbalancer.v1.FamilyAddressSpec.AnycastByo
-	nil,                                                  // 27: kacho.cloud.loadbalancer.v1.CreateNetworkLoadBalancerRequest.LabelsEntry
-	nil,                                                  // 28: kacho.cloud.loadbalancer.v1.UpdateNetworkLoadBalancerRequest.LabelsEntry
-	(*NetworkLoadBalancer)(nil),                          // 29: kacho.cloud.loadbalancer.v1.NetworkLoadBalancer
-	(NetworkLoadBalancer_Type)(0),                        // 30: kacho.cloud.loadbalancer.v1.NetworkLoadBalancer.Type
-	(NetworkLoadBalancer_SessionAffinity)(0),             // 31: kacho.cloud.loadbalancer.v1.NetworkLoadBalancer.SessionAffinity
-	(IpVersion)(0),                                       // 32: kacho.cloud.loadbalancer.v1.IpVersion
-	(*fieldmaskpb.FieldMask)(nil),                        // 33: google.protobuf.FieldMask
-	(*AttachedTargetGroup)(nil),                          // 34: kacho.cloud.loadbalancer.v1.AttachedTargetGroup
-	(*operation.Operation)(nil),                          // 35: kacho.cloud.operation.Operation
-	(*TargetState)(nil),                                  // 36: kacho.cloud.loadbalancer.v1.TargetState
+	(*CreateNetworkLoadBalancerRequest)(nil),             // 3: kacho.cloud.loadbalancer.v1.CreateNetworkLoadBalancerRequest
+	(*CreateNetworkLoadBalancerMetadata)(nil),            // 4: kacho.cloud.loadbalancer.v1.CreateNetworkLoadBalancerMetadata
+	(*UpdateNetworkLoadBalancerRequest)(nil),             // 5: kacho.cloud.loadbalancer.v1.UpdateNetworkLoadBalancerRequest
+	(*UpdateNetworkLoadBalancerMetadata)(nil),            // 6: kacho.cloud.loadbalancer.v1.UpdateNetworkLoadBalancerMetadata
+	(*DeleteNetworkLoadBalancerRequest)(nil),             // 7: kacho.cloud.loadbalancer.v1.DeleteNetworkLoadBalancerRequest
+	(*DeleteNetworkLoadBalancerMetadata)(nil),            // 8: kacho.cloud.loadbalancer.v1.DeleteNetworkLoadBalancerMetadata
+	(*StartNetworkLoadBalancerRequest)(nil),              // 9: kacho.cloud.loadbalancer.v1.StartNetworkLoadBalancerRequest
+	(*StartNetworkLoadBalancerMetadata)(nil),             // 10: kacho.cloud.loadbalancer.v1.StartNetworkLoadBalancerMetadata
+	(*StopNetworkLoadBalancerRequest)(nil),               // 11: kacho.cloud.loadbalancer.v1.StopNetworkLoadBalancerRequest
+	(*StopNetworkLoadBalancerMetadata)(nil),              // 12: kacho.cloud.loadbalancer.v1.StopNetworkLoadBalancerMetadata
+	(*MoveNetworkLoadBalancerRequest)(nil),               // 13: kacho.cloud.loadbalancer.v1.MoveNetworkLoadBalancerRequest
+	(*MoveNetworkLoadBalancerMetadata)(nil),              // 14: kacho.cloud.loadbalancer.v1.MoveNetworkLoadBalancerMetadata
+	(*AttachNetworkLoadBalancerTargetGroupRequest)(nil),  // 15: kacho.cloud.loadbalancer.v1.AttachNetworkLoadBalancerTargetGroupRequest
+	(*AttachNetworkLoadBalancerTargetGroupMetadata)(nil), // 16: kacho.cloud.loadbalancer.v1.AttachNetworkLoadBalancerTargetGroupMetadata
+	(*DetachNetworkLoadBalancerTargetGroupRequest)(nil),  // 17: kacho.cloud.loadbalancer.v1.DetachNetworkLoadBalancerTargetGroupRequest
+	(*DetachNetworkLoadBalancerTargetGroupMetadata)(nil), // 18: kacho.cloud.loadbalancer.v1.DetachNetworkLoadBalancerTargetGroupMetadata
+	(*ListNetworkLoadBalancerOperationsRequest)(nil),     // 19: kacho.cloud.loadbalancer.v1.ListNetworkLoadBalancerOperationsRequest
+	(*ListNetworkLoadBalancerOperationsResponse)(nil),    // 20: kacho.cloud.loadbalancer.v1.ListNetworkLoadBalancerOperationsResponse
+	(*GetTargetStatesRequest)(nil),                       // 21: kacho.cloud.loadbalancer.v1.GetTargetStatesRequest
+	(*GetTargetStatesResponse)(nil),                      // 22: kacho.cloud.loadbalancer.v1.GetTargetStatesResponse
+	nil,                                                  // 23: kacho.cloud.loadbalancer.v1.CreateNetworkLoadBalancerRequest.LabelsEntry
+	nil,                                                  // 24: kacho.cloud.loadbalancer.v1.UpdateNetworkLoadBalancerRequest.LabelsEntry
+	(*NetworkLoadBalancer)(nil),                          // 25: kacho.cloud.loadbalancer.v1.NetworkLoadBalancer
+	(NetworkLoadBalancer_Type)(0),                        // 26: kacho.cloud.loadbalancer.v1.NetworkLoadBalancer.Type
+	(NetworkLoadBalancer_SessionAffinity)(0),             // 27: kacho.cloud.loadbalancer.v1.NetworkLoadBalancer.SessionAffinity
+	(NetworkLoadBalancer_PlacementType)(0),               // 28: kacho.cloud.loadbalancer.v1.NetworkLoadBalancer.PlacementType
+	(*VipSource)(nil),                                    // 29: kacho.cloud.loadbalancer.v1.VipSource
+	(*fieldmaskpb.FieldMask)(nil),                        // 30: google.protobuf.FieldMask
+	(*AttachedTargetGroup)(nil),                          // 31: kacho.cloud.loadbalancer.v1.AttachedTargetGroup
+	(*operation.Operation)(nil),                          // 32: kacho.cloud.operation.Operation
+	(*TargetState)(nil),                                  // 33: kacho.cloud.loadbalancer.v1.TargetState
 }
 var file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_depIdxs = []int32{
-	29, // 0: kacho.cloud.loadbalancer.v1.ListNetworkLoadBalancersResponse.network_load_balancers:type_name -> kacho.cloud.loadbalancer.v1.NetworkLoadBalancer
-	4,  // 1: kacho.cloud.loadbalancer.v1.NetworkLoadBalancerAddressSpec.v4:type_name -> kacho.cloud.loadbalancer.v1.FamilyAddressSpec
-	4,  // 2: kacho.cloud.loadbalancer.v1.NetworkLoadBalancerAddressSpec.v6:type_name -> kacho.cloud.loadbalancer.v1.FamilyAddressSpec
-	25, // 3: kacho.cloud.loadbalancer.v1.FamilyAddressSpec.auto:type_name -> kacho.cloud.loadbalancer.v1.FamilyAddressSpec.AnycastAllocate
-	26, // 4: kacho.cloud.loadbalancer.v1.FamilyAddressSpec.byo:type_name -> kacho.cloud.loadbalancer.v1.FamilyAddressSpec.AnycastByo
-	27, // 5: kacho.cloud.loadbalancer.v1.CreateNetworkLoadBalancerRequest.labels:type_name -> kacho.cloud.loadbalancer.v1.CreateNetworkLoadBalancerRequest.LabelsEntry
-	30, // 6: kacho.cloud.loadbalancer.v1.CreateNetworkLoadBalancerRequest.type:type_name -> kacho.cloud.loadbalancer.v1.NetworkLoadBalancer.Type
-	31, // 7: kacho.cloud.loadbalancer.v1.CreateNetworkLoadBalancerRequest.session_affinity:type_name -> kacho.cloud.loadbalancer.v1.NetworkLoadBalancer.SessionAffinity
-	3,  // 8: kacho.cloud.loadbalancer.v1.CreateNetworkLoadBalancerRequest.address_spec:type_name -> kacho.cloud.loadbalancer.v1.NetworkLoadBalancerAddressSpec
-	32, // 9: kacho.cloud.loadbalancer.v1.CreateNetworkLoadBalancerRequest.ip_families:type_name -> kacho.cloud.loadbalancer.v1.IpVersion
-	33, // 10: kacho.cloud.loadbalancer.v1.UpdateNetworkLoadBalancerRequest.update_mask:type_name -> google.protobuf.FieldMask
-	28, // 11: kacho.cloud.loadbalancer.v1.UpdateNetworkLoadBalancerRequest.labels:type_name -> kacho.cloud.loadbalancer.v1.UpdateNetworkLoadBalancerRequest.LabelsEntry
-	31, // 12: kacho.cloud.loadbalancer.v1.UpdateNetworkLoadBalancerRequest.session_affinity:type_name -> kacho.cloud.loadbalancer.v1.NetworkLoadBalancer.SessionAffinity
-	32, // 13: kacho.cloud.loadbalancer.v1.UpdateNetworkLoadBalancerRequest.ip_families:type_name -> kacho.cloud.loadbalancer.v1.IpVersion
-	34, // 14: kacho.cloud.loadbalancer.v1.AttachNetworkLoadBalancerTargetGroupRequest.attached_target_group:type_name -> kacho.cloud.loadbalancer.v1.AttachedTargetGroup
-	35, // 15: kacho.cloud.loadbalancer.v1.ListNetworkLoadBalancerOperationsResponse.operations:type_name -> kacho.cloud.operation.Operation
-	36, // 16: kacho.cloud.loadbalancer.v1.GetTargetStatesResponse.target_states:type_name -> kacho.cloud.loadbalancer.v1.TargetState
-	0,  // 17: kacho.cloud.loadbalancer.v1.NetworkLoadBalancerService.Get:input_type -> kacho.cloud.loadbalancer.v1.GetNetworkLoadBalancerRequest
-	1,  // 18: kacho.cloud.loadbalancer.v1.NetworkLoadBalancerService.List:input_type -> kacho.cloud.loadbalancer.v1.ListNetworkLoadBalancersRequest
-	5,  // 19: kacho.cloud.loadbalancer.v1.NetworkLoadBalancerService.Create:input_type -> kacho.cloud.loadbalancer.v1.CreateNetworkLoadBalancerRequest
-	7,  // 20: kacho.cloud.loadbalancer.v1.NetworkLoadBalancerService.Update:input_type -> kacho.cloud.loadbalancer.v1.UpdateNetworkLoadBalancerRequest
-	9,  // 21: kacho.cloud.loadbalancer.v1.NetworkLoadBalancerService.Delete:input_type -> kacho.cloud.loadbalancer.v1.DeleteNetworkLoadBalancerRequest
-	11, // 22: kacho.cloud.loadbalancer.v1.NetworkLoadBalancerService.Start:input_type -> kacho.cloud.loadbalancer.v1.StartNetworkLoadBalancerRequest
-	13, // 23: kacho.cloud.loadbalancer.v1.NetworkLoadBalancerService.Stop:input_type -> kacho.cloud.loadbalancer.v1.StopNetworkLoadBalancerRequest
-	15, // 24: kacho.cloud.loadbalancer.v1.NetworkLoadBalancerService.Move:input_type -> kacho.cloud.loadbalancer.v1.MoveNetworkLoadBalancerRequest
-	17, // 25: kacho.cloud.loadbalancer.v1.NetworkLoadBalancerService.AttachTargetGroup:input_type -> kacho.cloud.loadbalancer.v1.AttachNetworkLoadBalancerTargetGroupRequest
-	19, // 26: kacho.cloud.loadbalancer.v1.NetworkLoadBalancerService.DetachTargetGroup:input_type -> kacho.cloud.loadbalancer.v1.DetachNetworkLoadBalancerTargetGroupRequest
-	23, // 27: kacho.cloud.loadbalancer.v1.NetworkLoadBalancerService.GetTargetStates:input_type -> kacho.cloud.loadbalancer.v1.GetTargetStatesRequest
-	21, // 28: kacho.cloud.loadbalancer.v1.NetworkLoadBalancerService.ListOperations:input_type -> kacho.cloud.loadbalancer.v1.ListNetworkLoadBalancerOperationsRequest
-	29, // 29: kacho.cloud.loadbalancer.v1.NetworkLoadBalancerService.Get:output_type -> kacho.cloud.loadbalancer.v1.NetworkLoadBalancer
-	2,  // 30: kacho.cloud.loadbalancer.v1.NetworkLoadBalancerService.List:output_type -> kacho.cloud.loadbalancer.v1.ListNetworkLoadBalancersResponse
-	35, // 31: kacho.cloud.loadbalancer.v1.NetworkLoadBalancerService.Create:output_type -> kacho.cloud.operation.Operation
-	35, // 32: kacho.cloud.loadbalancer.v1.NetworkLoadBalancerService.Update:output_type -> kacho.cloud.operation.Operation
-	35, // 33: kacho.cloud.loadbalancer.v1.NetworkLoadBalancerService.Delete:output_type -> kacho.cloud.operation.Operation
-	35, // 34: kacho.cloud.loadbalancer.v1.NetworkLoadBalancerService.Start:output_type -> kacho.cloud.operation.Operation
-	35, // 35: kacho.cloud.loadbalancer.v1.NetworkLoadBalancerService.Stop:output_type -> kacho.cloud.operation.Operation
-	35, // 36: kacho.cloud.loadbalancer.v1.NetworkLoadBalancerService.Move:output_type -> kacho.cloud.operation.Operation
-	35, // 37: kacho.cloud.loadbalancer.v1.NetworkLoadBalancerService.AttachTargetGroup:output_type -> kacho.cloud.operation.Operation
-	35, // 38: kacho.cloud.loadbalancer.v1.NetworkLoadBalancerService.DetachTargetGroup:output_type -> kacho.cloud.operation.Operation
-	24, // 39: kacho.cloud.loadbalancer.v1.NetworkLoadBalancerService.GetTargetStates:output_type -> kacho.cloud.loadbalancer.v1.GetTargetStatesResponse
-	22, // 40: kacho.cloud.loadbalancer.v1.NetworkLoadBalancerService.ListOperations:output_type -> kacho.cloud.loadbalancer.v1.ListNetworkLoadBalancerOperationsResponse
-	29, // [29:41] is the sub-list for method output_type
-	17, // [17:29] is the sub-list for method input_type
-	17, // [17:17] is the sub-list for extension type_name
-	17, // [17:17] is the sub-list for extension extendee
-	0,  // [0:17] is the sub-list for field type_name
+	25, // 0: kacho.cloud.loadbalancer.v1.ListNetworkLoadBalancersResponse.network_load_balancers:type_name -> kacho.cloud.loadbalancer.v1.NetworkLoadBalancer
+	23, // 1: kacho.cloud.loadbalancer.v1.CreateNetworkLoadBalancerRequest.labels:type_name -> kacho.cloud.loadbalancer.v1.CreateNetworkLoadBalancerRequest.LabelsEntry
+	26, // 2: kacho.cloud.loadbalancer.v1.CreateNetworkLoadBalancerRequest.type:type_name -> kacho.cloud.loadbalancer.v1.NetworkLoadBalancer.Type
+	27, // 3: kacho.cloud.loadbalancer.v1.CreateNetworkLoadBalancerRequest.session_affinity:type_name -> kacho.cloud.loadbalancer.v1.NetworkLoadBalancer.SessionAffinity
+	28, // 4: kacho.cloud.loadbalancer.v1.CreateNetworkLoadBalancerRequest.placement_type:type_name -> kacho.cloud.loadbalancer.v1.NetworkLoadBalancer.PlacementType
+	29, // 5: kacho.cloud.loadbalancer.v1.CreateNetworkLoadBalancerRequest.v4_source:type_name -> kacho.cloud.loadbalancer.v1.VipSource
+	29, // 6: kacho.cloud.loadbalancer.v1.CreateNetworkLoadBalancerRequest.v6_source:type_name -> kacho.cloud.loadbalancer.v1.VipSource
+	30, // 7: kacho.cloud.loadbalancer.v1.UpdateNetworkLoadBalancerRequest.update_mask:type_name -> google.protobuf.FieldMask
+	24, // 8: kacho.cloud.loadbalancer.v1.UpdateNetworkLoadBalancerRequest.labels:type_name -> kacho.cloud.loadbalancer.v1.UpdateNetworkLoadBalancerRequest.LabelsEntry
+	27, // 9: kacho.cloud.loadbalancer.v1.UpdateNetworkLoadBalancerRequest.session_affinity:type_name -> kacho.cloud.loadbalancer.v1.NetworkLoadBalancer.SessionAffinity
+	31, // 10: kacho.cloud.loadbalancer.v1.AttachNetworkLoadBalancerTargetGroupRequest.attached_target_group:type_name -> kacho.cloud.loadbalancer.v1.AttachedTargetGroup
+	32, // 11: kacho.cloud.loadbalancer.v1.ListNetworkLoadBalancerOperationsResponse.operations:type_name -> kacho.cloud.operation.Operation
+	33, // 12: kacho.cloud.loadbalancer.v1.GetTargetStatesResponse.target_states:type_name -> kacho.cloud.loadbalancer.v1.TargetState
+	0,  // 13: kacho.cloud.loadbalancer.v1.NetworkLoadBalancerService.Get:input_type -> kacho.cloud.loadbalancer.v1.GetNetworkLoadBalancerRequest
+	1,  // 14: kacho.cloud.loadbalancer.v1.NetworkLoadBalancerService.List:input_type -> kacho.cloud.loadbalancer.v1.ListNetworkLoadBalancersRequest
+	3,  // 15: kacho.cloud.loadbalancer.v1.NetworkLoadBalancerService.Create:input_type -> kacho.cloud.loadbalancer.v1.CreateNetworkLoadBalancerRequest
+	5,  // 16: kacho.cloud.loadbalancer.v1.NetworkLoadBalancerService.Update:input_type -> kacho.cloud.loadbalancer.v1.UpdateNetworkLoadBalancerRequest
+	7,  // 17: kacho.cloud.loadbalancer.v1.NetworkLoadBalancerService.Delete:input_type -> kacho.cloud.loadbalancer.v1.DeleteNetworkLoadBalancerRequest
+	9,  // 18: kacho.cloud.loadbalancer.v1.NetworkLoadBalancerService.Start:input_type -> kacho.cloud.loadbalancer.v1.StartNetworkLoadBalancerRequest
+	11, // 19: kacho.cloud.loadbalancer.v1.NetworkLoadBalancerService.Stop:input_type -> kacho.cloud.loadbalancer.v1.StopNetworkLoadBalancerRequest
+	13, // 20: kacho.cloud.loadbalancer.v1.NetworkLoadBalancerService.Move:input_type -> kacho.cloud.loadbalancer.v1.MoveNetworkLoadBalancerRequest
+	15, // 21: kacho.cloud.loadbalancer.v1.NetworkLoadBalancerService.AttachTargetGroup:input_type -> kacho.cloud.loadbalancer.v1.AttachNetworkLoadBalancerTargetGroupRequest
+	17, // 22: kacho.cloud.loadbalancer.v1.NetworkLoadBalancerService.DetachTargetGroup:input_type -> kacho.cloud.loadbalancer.v1.DetachNetworkLoadBalancerTargetGroupRequest
+	21, // 23: kacho.cloud.loadbalancer.v1.NetworkLoadBalancerService.GetTargetStates:input_type -> kacho.cloud.loadbalancer.v1.GetTargetStatesRequest
+	19, // 24: kacho.cloud.loadbalancer.v1.NetworkLoadBalancerService.ListOperations:input_type -> kacho.cloud.loadbalancer.v1.ListNetworkLoadBalancerOperationsRequest
+	25, // 25: kacho.cloud.loadbalancer.v1.NetworkLoadBalancerService.Get:output_type -> kacho.cloud.loadbalancer.v1.NetworkLoadBalancer
+	2,  // 26: kacho.cloud.loadbalancer.v1.NetworkLoadBalancerService.List:output_type -> kacho.cloud.loadbalancer.v1.ListNetworkLoadBalancersResponse
+	32, // 27: kacho.cloud.loadbalancer.v1.NetworkLoadBalancerService.Create:output_type -> kacho.cloud.operation.Operation
+	32, // 28: kacho.cloud.loadbalancer.v1.NetworkLoadBalancerService.Update:output_type -> kacho.cloud.operation.Operation
+	32, // 29: kacho.cloud.loadbalancer.v1.NetworkLoadBalancerService.Delete:output_type -> kacho.cloud.operation.Operation
+	32, // 30: kacho.cloud.loadbalancer.v1.NetworkLoadBalancerService.Start:output_type -> kacho.cloud.operation.Operation
+	32, // 31: kacho.cloud.loadbalancer.v1.NetworkLoadBalancerService.Stop:output_type -> kacho.cloud.operation.Operation
+	32, // 32: kacho.cloud.loadbalancer.v1.NetworkLoadBalancerService.Move:output_type -> kacho.cloud.operation.Operation
+	32, // 33: kacho.cloud.loadbalancer.v1.NetworkLoadBalancerService.AttachTargetGroup:output_type -> kacho.cloud.operation.Operation
+	32, // 34: kacho.cloud.loadbalancer.v1.NetworkLoadBalancerService.DetachTargetGroup:output_type -> kacho.cloud.operation.Operation
+	22, // 35: kacho.cloud.loadbalancer.v1.NetworkLoadBalancerService.GetTargetStates:output_type -> kacho.cloud.loadbalancer.v1.GetTargetStatesResponse
+	20, // 36: kacho.cloud.loadbalancer.v1.NetworkLoadBalancerService.ListOperations:output_type -> kacho.cloud.loadbalancer.v1.ListNetworkLoadBalancerOperationsResponse
+	25, // [25:37] is the sub-list for method output_type
+	13, // [13:25] is the sub-list for method input_type
+	13, // [13:13] is the sub-list for extension type_name
+	13, // [13:13] is the sub-list for extension extendee
+	0,  // [0:13] is the sub-list for field type_name
 }
 
 func init() { file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_init() }
@@ -1878,18 +1550,13 @@ func file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_init()
 		return
 	}
 	file_kacho_cloud_loadbalancer_v1_network_load_balancer_proto_init()
-	file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_msgTypes[4].OneofWrappers = []any{
-		(*FamilyAddressSpec_Auto)(nil),
-		(*FamilyAddressSpec_Byo)(nil),
-	}
-	file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_msgTypes[5].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_rawDesc), len(file_kacho_cloud_loadbalancer_v1_network_load_balancer_service_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   29,
+			NumMessages:   25,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

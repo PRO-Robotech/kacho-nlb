@@ -403,11 +403,11 @@ func TestLB_ConcurrentInsertSameName(t *testing.T) {
 }
 
 // newInternalHandle — INTERNAL LB durable-handle (status=CREATING) с заданными
-// семействами VIP. NetworkID непуст (cross-field инвариант INTERNAL).
+// семействами VIP. placement_type=REGIONAL (cross-field инвариант INTERNAL).
 func newInternalHandle(projectID, name string, families ...domain.IPVersion) *domain.LoadBalancer {
 	lb := newLB(projectID, name)
 	lb.Type = domain.LBTypeInternal
-	lb.NetworkID = "net01TESTNETWORK0001"
+	lb.PlacementType = domain.PlacementRegional
 	lb.Status = domain.LBStatusCreating
 	lb.IPFamilies = families
 	return lb

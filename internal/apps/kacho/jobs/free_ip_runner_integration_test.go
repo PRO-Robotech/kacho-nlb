@@ -9,8 +9,8 @@
 //   - застрявший DELETING-LB → reconcile: FreeIP по address_id_v4 + DELETE строки
 //   - outbox DELETED + fga-unregister;
 //   - идемпотентность: уже освобождённый VIP → строка всё равно удаляется;
-//   - BYO-ветка: vip_origin='byo' → ClearReference (НЕ FreeIP);
-//   - dualstack: раздельный release v4 (auto→FreeIP) и v6 (byo→ClearReference);
+//   - linked-ветка: vip_origin='linked' → ClearReference (НЕ FreeIP);
+//   - dualstack: раздельный release v4 (auto owned → two-step) и v6 (linked → ClearReference);
 //   - create-orphan ('CREATING' с известным address_id) → FreeIP + DELETE без
 //     outbox/fga (LB никогда не анонсировался);
 //   - auto-only known-gap: 'CREATING' без address_id → DELETE без release;
@@ -61,7 +61,7 @@ func (f *fakeReleaser) AllocateExternalIPv6(context.Context, vpcclient.AllocateE
 func (f *fakeReleaser) AllocateInternalIPv6(context.Context, vpcclient.AllocateInternalIPRequest) (*vpcclient.AllocateResponse, error) {
 	return &vpcclient.AllocateResponse{}, nil
 }
-func (f *fakeReleaser) SetReference(context.Context, string, vpcclient.AddressOwner) error {
+func (f *fakeReleaser) SetReference(context.Context, string, vpcclient.AddressOwner, bool) error {
 	return nil
 }
 func (f *fakeReleaser) AttachExisting(context.Context, vpcclient.AttachExistingRequest) (*vpcclient.AllocateResponse, error) {
@@ -125,10 +125,10 @@ func insertStuckLB(t testing.TB, ctx context.Context, pool *pgxpool.Pool,
 	projectID = "prj01" + ids.NewUID()[:15]
 	_, err := pool.Exec(ctx, `
 		INSERT INTO kacho_nlb.load_balancers
-			(id, project_id, region_id, type, status, network_id,
+			(id, project_id, region_id, type, status, placement_type,
 			 address_id_v4, vip_origin_v4, address_id_v6, vip_origin_v6,
 			 created_at, updated_at)
-		VALUES ($1, $2, 'region-1', 'INTERNAL', $3, 'net01TESTNETWORK001',
+		VALUES ($1, $2, 'region-1', 'INTERNAL', $3, 'REGIONAL',
 		        $4, $5, $6, $7, now() - $8::interval, now() - $8::interval)
 	`, id, projectID, string(status), addrIDV4, originV4, addrIDV6, originV6, age.String())
 	require.NoError(t, err)
@@ -189,7 +189,7 @@ func TestFreeIP_ReconcileStuckDeleting(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 1, n, "exactly one stuck LB reconciled")
 	assert.Equal(t, []string{addrID}, rel.frees(), "FreeIP called once by address_id_v4")
-	assert.Empty(t, rel.clears(), "ClearReference must NOT be called for auto")
+	assert.Equal(t, []string{addrID}, rel.clears(), "owned auto → ClearReference before FreeIP (two-step)")
 	assert.Equal(t, 0, countLoadBalancers(t, ctx, pool), "durable handle deleted")
 	assert.Equal(t, 1, countOutboxFor(t, ctx, pool, "nlb_load_balancer", lbID, "DELETED"))
 	assert.Equal(t, 1, countFGAUnregister(t, ctx, pool, lbID))
@@ -223,9 +223,9 @@ func TestFreeIP_IdempotentAlreadyFreed(t *testing.T) {
 	assert.Equal(t, 0, countLoadBalancers(t, ctx, pool), "row removed despite VIP already gone")
 }
 
-// TestFreeIP_BYOClearReference — vip_origin='byo' → ClearReference (НЕ FreeIP);
-// статический Address tenant'а не удаляется.
-func TestFreeIP_BYOClearReference(t *testing.T) {
+// TestFreeIP_LinkedClearReference — vip_origin='linked' → ClearReference (НЕ FreeIP);
+// tenant-owned Address не удаляется.
+func TestFreeIP_LinkedClearReference(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test")
 	}
@@ -235,8 +235,8 @@ func TestFreeIP_BYOClearReference(t *testing.T) {
 	require.NoError(t, err)
 	defer pool.Close()
 
-	const addrID = "adr0000000BYOSTUCK01"
-	insertStuckLB(t, ctx, pool, domain.LBStatusDeleting, "byo", addrID, "", "", 10*time.Minute)
+	const addrID = "adr000000LINKSTUCK01"
+	insertStuckLB(t, ctx, pool, domain.LBStatusDeleting, "linked", addrID, "", "", 10*time.Minute)
 
 	rel := &fakeReleaser{}
 	r := newFreeIPRunner(t, pool, rel, time.Minute)
@@ -245,12 +245,13 @@ func TestFreeIP_BYOClearReference(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 1, n)
 	assert.Equal(t, []string{addrID}, rel.clears(), "ClearReference called by address_id_v4")
-	assert.Empty(t, rel.frees(), "FreeIP must NOT be called for BYO (anti data-loss)")
+	assert.Empty(t, rel.frees(), "FreeIP must NOT be called for linked (anti data-loss)")
 	assert.Equal(t, 0, countLoadBalancers(t, ctx, pool))
 }
 
-// TestFreeIP_DualstackSeparateRelease — dualstack orphan: v4 (auto→FreeIP) и v6
-// (byo→ClearReference) освобождаются РАЗДЕЛЬНО, каждый по своему дискриминатору.
+// TestFreeIP_DualstackSeparateRelease — dualstack orphan: v4 (auto owned →
+// two-step ClearReference→FreeIP) и v6 (linked → ClearReference) освобождаются
+// РАЗДЕЛЬНО, каждый по своему дискриминатору.
 func TestFreeIP_DualstackSeparateRelease(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test")
@@ -263,7 +264,7 @@ func TestFreeIP_DualstackSeparateRelease(t *testing.T) {
 
 	const addrV4 = "adr0000000DUALV40001"
 	const addrV6 = "adr0000000DUALV60001"
-	insertStuckLB(t, ctx, pool, domain.LBStatusDeleting, "auto", addrV4, "byo", addrV6, 10*time.Minute)
+	insertStuckLB(t, ctx, pool, domain.LBStatusDeleting, "auto", addrV4, "linked", addrV6, 10*time.Minute)
 
 	rel := &fakeReleaser{}
 	r := newFreeIPRunner(t, pool, rel, time.Minute)
@@ -271,8 +272,8 @@ func TestFreeIP_DualstackSeparateRelease(t *testing.T) {
 	n, err := r.reconcileOnce(ctx)
 	require.NoError(t, err)
 	assert.Equal(t, 1, n)
-	assert.Equal(t, []string{addrV4}, rel.frees(), "v4 auto → FreeIP")
-	assert.Equal(t, []string{addrV6}, rel.clears(), "v6 byo → ClearReference")
+	assert.Equal(t, []string{addrV4}, rel.frees(), "v4 auto → FreeIP (after clear)")
+	assert.Equal(t, []string{addrV4, addrV6}, rel.clears(), "v4 owned two-step clear + v6 linked clear")
 	assert.Equal(t, 0, countLoadBalancers(t, ctx, pool))
 }
 

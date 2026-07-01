@@ -48,7 +48,45 @@ func TestDelete_DeletionProtection(t *testing.T) {
 		NetworkLoadBalancerId: lbID,
 	})
 	require.Equal(t, codes.FailedPrecondition, status.Code(err))
-	require.Contains(t, status.Convert(err).Message(), "deletion_protection")
+	require.Equal(t, "load balancer has deletion protection enabled", status.Convert(err).Message())
+}
+
+// 8.1-28: release VIP по ownership — owned (auto) → two-step ClearReference→FreeIP;
+// linked → ClearReference без Delete.
+func TestDelete_ReleaseByOwnership(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name        string
+		origin      domain.VipOrigin
+		wantFreed   bool
+		wantCleared bool
+	}{
+		{"owned auto two-step", domain.VipOriginAuto, true, true},
+		{"linked clear only", domain.VipOriginLinked, false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := newFakeRepo()
+			lbID := seedLB(t, repo, "prj-a", "edge")
+			repo.lbs[lbID].AddressIDV4 = "adr-v4"
+			repo.lbs[lbID].VipOriginV4 = tc.origin
+			opsRepo := newFakeOpsRepo()
+			addr := &fakeAddressClient{}
+			uc := NewDeleteLoadBalancerUseCase(repo, opsRepo, addr, slog.Default())
+			op, err := uc.Execute(context.Background(), &lbv1.DeleteNetworkLoadBalancerRequest{
+				NetworkLoadBalancerId: lbID,
+			})
+			require.NoError(t, err)
+			require.Nil(t, awaitOpDone(t, opsRepo, op.ID).Error)
+			if tc.wantFreed {
+				require.Equal(t, []string{"adr-v4"}, addr.freed)
+			} else {
+				require.Empty(t, addr.freed)
+			}
+			if tc.wantCleared {
+				require.Equal(t, []string{"adr-v4"}, addr.cleared)
+			}
+		})
+	}
 }
 
 func TestDelete_HasListeners(t *testing.T) {

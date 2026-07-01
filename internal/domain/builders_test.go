@@ -31,9 +31,6 @@ func TestNewLoadBalancer_Defaults(t *testing.T) {
 	if lb.SessionAffinity != domain.SessionAffinity5Tuple {
 		t.Errorf("expected FIVE_TUPLE default, got %q", lb.SessionAffinity)
 	}
-	if !lb.CrossZoneEnabled {
-		t.Error("CrossZoneEnabled default must be true")
-	}
 	if lb.DeletionProtection {
 		t.Error("DeletionProtection default must be false")
 	}

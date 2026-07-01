@@ -191,6 +191,59 @@ func (NetworkLoadBalancer_Type) EnumDescriptor() ([]byte, []int) {
 	return file_kacho_cloud_loadbalancer_v1_network_load_balancer_proto_rawDescGZIP(), []int{0, 1}
 }
 
+// PlacementType — размещение INTERNAL-LB (для EXTERNAL неприменим).
+// ZONAL — unicast-VIP в одной зоне (зональная подсеть/адрес); REGIONAL —
+// anycast-VIP, region-scoped (региональная подсеть/адрес, анонс active-active
+// из здоровых зон региона; announce — data plane).
+type NetworkLoadBalancer_PlacementType int32
+
+const (
+	NetworkLoadBalancer_PLACEMENT_TYPE_UNSPECIFIED NetworkLoadBalancer_PlacementType = 0
+	NetworkLoadBalancer_ZONAL                      NetworkLoadBalancer_PlacementType = 1
+	NetworkLoadBalancer_REGIONAL                   NetworkLoadBalancer_PlacementType = 2
+)
+
+// Enum value maps for NetworkLoadBalancer_PlacementType.
+var (
+	NetworkLoadBalancer_PlacementType_name = map[int32]string{
+		0: "PLACEMENT_TYPE_UNSPECIFIED",
+		1: "ZONAL",
+		2: "REGIONAL",
+	}
+	NetworkLoadBalancer_PlacementType_value = map[string]int32{
+		"PLACEMENT_TYPE_UNSPECIFIED": 0,
+		"ZONAL":                      1,
+		"REGIONAL":                   2,
+	}
+)
+
+func (x NetworkLoadBalancer_PlacementType) Enum() *NetworkLoadBalancer_PlacementType {
+	p := new(NetworkLoadBalancer_PlacementType)
+	*p = x
+	return p
+}
+
+func (x NetworkLoadBalancer_PlacementType) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (NetworkLoadBalancer_PlacementType) Descriptor() protoreflect.EnumDescriptor {
+	return file_kacho_cloud_loadbalancer_v1_network_load_balancer_proto_enumTypes[3].Descriptor()
+}
+
+func (NetworkLoadBalancer_PlacementType) Type() protoreflect.EnumType {
+	return &file_kacho_cloud_loadbalancer_v1_network_load_balancer_proto_enumTypes[3]
+}
+
+func (x NetworkLoadBalancer_PlacementType) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use NetworkLoadBalancer_PlacementType.Descriptor instead.
+func (NetworkLoadBalancer_PlacementType) EnumDescriptor() ([]byte, []int) {
+	return file_kacho_cloud_loadbalancer_v1_network_load_balancer_proto_rawDescGZIP(), []int{0, 2}
+}
+
 type NetworkLoadBalancer_SessionAffinity int32
 
 const (
@@ -227,11 +280,11 @@ func (x NetworkLoadBalancer_SessionAffinity) String() string {
 }
 
 func (NetworkLoadBalancer_SessionAffinity) Descriptor() protoreflect.EnumDescriptor {
-	return file_kacho_cloud_loadbalancer_v1_network_load_balancer_proto_enumTypes[3].Descriptor()
+	return file_kacho_cloud_loadbalancer_v1_network_load_balancer_proto_enumTypes[4].Descriptor()
 }
 
 func (NetworkLoadBalancer_SessionAffinity) Type() protoreflect.EnumType {
-	return &file_kacho_cloud_loadbalancer_v1_network_load_balancer_proto_enumTypes[3]
+	return &file_kacho_cloud_loadbalancer_v1_network_load_balancer_proto_enumTypes[4]
 }
 
 func (x NetworkLoadBalancer_SessionAffinity) Number() protoreflect.EnumNumber {
@@ -240,7 +293,7 @@ func (x NetworkLoadBalancer_SessionAffinity) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use NetworkLoadBalancer_SessionAffinity.Descriptor instead.
 func (NetworkLoadBalancer_SessionAffinity) EnumDescriptor() ([]byte, []int) {
-	return file_kacho_cloud_loadbalancer_v1_network_load_balancer_proto_rawDescGZIP(), []int{0, 2}
+	return file_kacho_cloud_loadbalancer_v1_network_load_balancer_proto_rawDescGZIP(), []int{0, 3}
 }
 
 type TargetState_Status int32
@@ -285,11 +338,11 @@ func (x TargetState_Status) String() string {
 }
 
 func (TargetState_Status) Descriptor() protoreflect.EnumDescriptor {
-	return file_kacho_cloud_loadbalancer_v1_network_load_balancer_proto_enumTypes[4].Descriptor()
+	return file_kacho_cloud_loadbalancer_v1_network_load_balancer_proto_enumTypes[5].Descriptor()
 }
 
 func (TargetState_Status) Type() protoreflect.EnumType {
-	return &file_kacho_cloud_loadbalancer_v1_network_load_balancer_proto_enumTypes[4]
+	return &file_kacho_cloud_loadbalancer_v1_network_load_balancer_proto_enumTypes[5]
 }
 
 func (x TargetState_Status) Number() protoreflect.EnumNumber {
@@ -298,10 +351,15 @@ func (x TargetState_Status) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use TargetState_Status.Descriptor instead.
 func (TargetState_Status) EnumDescriptor() ([]byte, []int) {
-	return file_kacho_cloud_loadbalancer_v1_network_load_balancer_proto_rawDescGZIP(), []int{2, 0}
+	return file_kacho_cloud_loadbalancer_v1_network_load_balancer_proto_rawDescGZIP(), []int{4, 0}
 }
 
-// NetworkLoadBalancer — L4 regional load balancer (design §2.2).
+// NetworkLoadBalancer — L4 regional load balancer.
+//
+// Плоский ресурс: источник VIP задаётся пофамильно на Create через VipSource
+// oneof (subnet-auto / address-link / platform-public) и резолвится в связанный
+// vpc Address (v4_address_id / v6_address_id, output-only). Сам VIP-IP лежит в
+// связанном Address (vpc.AddressService.Get) — здесь не дублируется.
 type NetworkLoadBalancer struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	Id    string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
@@ -317,45 +375,25 @@ type NetworkLoadBalancer struct {
 	SessionAffinity NetworkLoadBalancer_SessionAffinity `protobuf:"varint,11,opt,name=session_affinity,json=sessionAffinity,proto3,enum=kacho.cloud.loadbalancer.v1.NetworkLoadBalancer_SessionAffinity" json:"session_affinity,omitempty"`
 	// Inline attached target groups snapshot — DEPRECATED. The
 	// `attached_target_groups` DB pivot (M:N managed via
-	// AttachTargetGroup/DetachTargetGroup RPCs, design §3.2 / §5.2) is the
-	// source of truth. Retained for yc-shim JSON-name compatibility.
+	// AttachTargetGroup/DetachTargetGroup RPCs) is the source of truth.
 	//
 	// Deprecated: Marked as deprecated in kacho/cloud/loadbalancer/v1/network_load_balancer.proto.
 	AttachedTargetGroups []*AttachedTargetGroup `protobuf:"bytes,13,rep,name=attached_target_groups,json=attachedTargetGroups,proto3" json:"attached_target_groups,omitempty"`
 	DeletionProtection   bool                   `protobuf:"varint,14,opt,name=deletion_protection,json=deletionProtection,proto3" json:"deletion_protection,omitempty"`
-	// Control-plane intent to spread traffic across targets in all zones of the
-	// region. Distribution programming is data-plane (out of control-plane
-	// scope). DB default true.
-	CrossZoneEnabled bool `protobuf:"varint,19,opt,name=cross_zone_enabled,json=crossZoneEnabled,proto3" json:"cross_zone_enabled,omitempty"`
-	// ID of the VPC network the load balancer's private VIP belongs to. Required
-	// for INTERNAL scheme (the VIP is allocated inside this network), rejected
-	// for EXTERNAL (its VIP is public, not drawn from a network). Immutable after
-	// Create. Cross-service ref to kacho-vpc Network (TEXT, no FK); validated on
-	// Create via vpc.NetworkService.Get.
-	NetworkId string `protobuf:"bytes,20,opt,name=network_id,json=networkId,proto3" json:"network_id,omitempty"`
-	// Control-plane intent describing the allowed inbound to the load balancer
-	// VIP. Each id references a kacho-vpc SecurityGroup that must exist and belong
-	// to the same network_id (same-network invariant). Mutable: Update replaces
-	// the whole set via update_mask. Only valid for INTERNAL scheme (SGs live in a
-	// network). Cross-service refs to kacho-vpc SecurityGroup (TEXT, no FK);
-	// validated on Create/Update via vpc.SecurityGroupService.Get. Traffic
-	// filtering itself is data-plane (out of control-plane scope).
-	SecurityGroupIds []string `protobuf:"bytes,21,rep,name=security_group_ids,json=securityGroupIds,proto3" json:"security_group_ids,omitempty"`
-	// Единый anycast VIP сервиса — output-only. Назначается worker'ом после
-	// VIP-аллокации; пуст, пока status=CREATING (durable-handle до alloc). Один
-	// VIP на LoadBalancer на семейство (single-VIP-per-LB, инвариант на DB-уровне:
-	// кардинальность строки + CAS-attach), а не per-Listener. Значения, переданные
-	// клиентом в теле Create/Update, игнорируются (адрес назначает только worker).
-	AddressV4 string `protobuf:"bytes,22,opt,name=address_v4,json=addressV4,proto3" json:"address_v4,omitempty"`
-	AddressV6 string `protobuf:"bytes,23,opt,name=address_v6,json=addressV6,proto3" json:"address_v6,omitempty"`
-	// Binding на vpc Address (BYO или auto-аллокация из AnycastAddressPool) —
-	// output-only. Cross-service ref на kacho-vpc Address (TEXT, без FK).
-	AddressIdV4 string `protobuf:"bytes,24,opt,name=address_id_v4,json=addressIdV4,proto3" json:"address_id_v4,omitempty"`
-	AddressIdV6 string `protobuf:"bytes,25,opt,name=address_id_v6,json=addressIdV6,proto3" json:"address_id_v6,omitempty"`
-	// Заявленные семейства адресов VIP (одно — single-family, либо оба — dualstack).
-	IpFamilies    []IpVersion `protobuf:"varint,26,rep,packed,name=ip_families,json=ipFamilies,proto3,enum=kacho.cloud.loadbalancer.v1.IpVersion" json:"ip_families,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	// v4_address_id / v6_address_id — output-only: связанный vpc Address (IPv4/IPv6),
+	// в который резолвится VipSource. Пуст, пока status=CREATING (durable-handle до
+	// bind). Один Address на семейство (single-VIP-per-LB, инвариант на DB-уровне:
+	// кардинальность строки + CAS-attach). Сам VIP-IP — в Address (vpc.AddressService.Get).
+	V4AddressId string `protobuf:"bytes,24,opt,name=v4_address_id,json=v4AddressId,proto3" json:"v4_address_id,omitempty"`
+	V6AddressId string `protobuf:"bytes,25,opt,name=v6_address_id,json=v6AddressId,proto3" json:"v6_address_id,omitempty"`
+	// placement_type — только для INTERNAL (immutable). Для EXTERNAL пуст.
+	PlacementType NetworkLoadBalancer_PlacementType `protobuf:"varint,27,opt,name=placement_type,json=placementType,proto3,enum=kacho.cloud.loadbalancer.v1.NetworkLoadBalancer_PlacementType" json:"placement_type,omitempty"`
+	// disabled_announce_zones — только для REGIONAL (mutable): deny-list зон, из
+	// которых anycast-VIP НЕ анонсируется (drain). Пусто = анонс из всех здоровых зон.
+	// Реальный withdraw — data plane; здесь только intent.
+	DisabledAnnounceZones []string `protobuf:"bytes,28,rep,name=disabled_announce_zones,json=disabledAnnounceZones,proto3" json:"disabled_announce_zones,omitempty"`
+	unknownFields         protoimpl.UnknownFields
+	sizeCache             protoimpl.SizeCache
 }
 
 func (x *NetworkLoadBalancer) Reset() {
@@ -473,61 +511,174 @@ func (x *NetworkLoadBalancer) GetDeletionProtection() bool {
 	return false
 }
 
-func (x *NetworkLoadBalancer) GetCrossZoneEnabled() bool {
+func (x *NetworkLoadBalancer) GetV4AddressId() string {
 	if x != nil {
-		return x.CrossZoneEnabled
-	}
-	return false
-}
-
-func (x *NetworkLoadBalancer) GetNetworkId() string {
-	if x != nil {
-		return x.NetworkId
+		return x.V4AddressId
 	}
 	return ""
 }
 
-func (x *NetworkLoadBalancer) GetSecurityGroupIds() []string {
+func (x *NetworkLoadBalancer) GetV6AddressId() string {
 	if x != nil {
-		return x.SecurityGroupIds
+		return x.V6AddressId
+	}
+	return ""
+}
+
+func (x *NetworkLoadBalancer) GetPlacementType() NetworkLoadBalancer_PlacementType {
+	if x != nil {
+		return x.PlacementType
+	}
+	return NetworkLoadBalancer_PLACEMENT_TYPE_UNSPECIFIED
+}
+
+func (x *NetworkLoadBalancer) GetDisabledAnnounceZones() []string {
+	if x != nil {
+		return x.DisabledAnnounceZones
 	}
 	return nil
 }
 
-func (x *NetworkLoadBalancer) GetAddressV4() string {
-	if x != nil {
-		return x.AddressV4
-	}
-	return ""
+// PublicVip — parameterless marker платформенного public-источника VIP
+// (EXTERNAL auto-alloc). Underlying-зона деривится worker'ом из региона и скрыта
+// от публичной поверхности (placement-leak не нарушается).
+type PublicVip struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
-func (x *NetworkLoadBalancer) GetAddressV6() string {
-	if x != nil {
-		return x.AddressV6
-	}
-	return ""
+func (x *PublicVip) Reset() {
+	*x = PublicVip{}
+	mi := &file_kacho_cloud_loadbalancer_v1_network_load_balancer_proto_msgTypes[1]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
 }
 
-func (x *NetworkLoadBalancer) GetAddressIdV4() string {
-	if x != nil {
-		return x.AddressIdV4
-	}
-	return ""
+func (x *PublicVip) String() string {
+	return protoimpl.X.MessageStringOf(x)
 }
 
-func (x *NetworkLoadBalancer) GetAddressIdV6() string {
+func (*PublicVip) ProtoMessage() {}
+
+func (x *PublicVip) ProtoReflect() protoreflect.Message {
+	mi := &file_kacho_cloud_loadbalancer_v1_network_load_balancer_proto_msgTypes[1]
 	if x != nil {
-		return x.AddressIdV6
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
 	}
-	return ""
+	return mi.MessageOf(x)
 }
 
-func (x *NetworkLoadBalancer) GetIpFamilies() []IpVersion {
+// Deprecated: Use PublicVip.ProtoReflect.Descriptor instead.
+func (*PublicVip) Descriptor() ([]byte, []int) {
+	return file_kacho_cloud_loadbalancer_v1_network_load_balancer_proto_rawDescGZIP(), []int{1}
+}
+
+// VipSource — per-family источник VIP LoadBalancer'а (design §3.3):
+//   - address_id — линк существующего vpc Address (kind internal|external по type);
+//   - subnet_id  — авто-аллокация свежего internal Address из подсети (INTERNAL);
+//   - public     — платформенный public Address (EXTERNAL).
+type VipSource struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Types that are valid to be assigned to Source:
+	//
+	//	*VipSource_AddressId
+	//	*VipSource_SubnetId
+	//	*VipSource_Public
+	Source        isVipSource_Source `protobuf_oneof:"source"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *VipSource) Reset() {
+	*x = VipSource{}
+	mi := &file_kacho_cloud_loadbalancer_v1_network_load_balancer_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *VipSource) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*VipSource) ProtoMessage() {}
+
+func (x *VipSource) ProtoReflect() protoreflect.Message {
+	mi := &file_kacho_cloud_loadbalancer_v1_network_load_balancer_proto_msgTypes[2]
 	if x != nil {
-		return x.IpFamilies
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use VipSource.ProtoReflect.Descriptor instead.
+func (*VipSource) Descriptor() ([]byte, []int) {
+	return file_kacho_cloud_loadbalancer_v1_network_load_balancer_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *VipSource) GetSource() isVipSource_Source {
+	if x != nil {
+		return x.Source
 	}
 	return nil
 }
+
+func (x *VipSource) GetAddressId() string {
+	if x != nil {
+		if x, ok := x.Source.(*VipSource_AddressId); ok {
+			return x.AddressId
+		}
+	}
+	return ""
+}
+
+func (x *VipSource) GetSubnetId() string {
+	if x != nil {
+		if x, ok := x.Source.(*VipSource_SubnetId); ok {
+			return x.SubnetId
+		}
+	}
+	return ""
+}
+
+func (x *VipSource) GetPublic() *PublicVip {
+	if x != nil {
+		if x, ok := x.Source.(*VipSource_Public); ok {
+			return x.Public
+		}
+	}
+	return nil
+}
+
+type isVipSource_Source interface {
+	isVipSource_Source()
+}
+
+type VipSource_AddressId struct {
+	AddressId string `protobuf:"bytes,1,opt,name=address_id,json=addressId,proto3,oneof"`
+}
+
+type VipSource_SubnetId struct {
+	SubnetId string `protobuf:"bytes,2,opt,name=subnet_id,json=subnetId,proto3,oneof"`
+}
+
+type VipSource_Public struct {
+	Public *PublicVip `protobuf:"bytes,3,opt,name=public,proto3,oneof"`
+}
+
+func (*VipSource_AddressId) isVipSource_Source() {}
+
+func (*VipSource_SubnetId) isVipSource_Source() {}
+
+func (*VipSource_Public) isVipSource_Source() {}
 
 // AttachedTargetGroup — yc-shim-compat snapshot of a single
 // `attached_target_groups` pivot row. Source of truth is the DB pivot
@@ -545,7 +696,7 @@ type AttachedTargetGroup struct {
 
 func (x *AttachedTargetGroup) Reset() {
 	*x = AttachedTargetGroup{}
-	mi := &file_kacho_cloud_loadbalancer_v1_network_load_balancer_proto_msgTypes[1]
+	mi := &file_kacho_cloud_loadbalancer_v1_network_load_balancer_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -557,7 +708,7 @@ func (x *AttachedTargetGroup) String() string {
 func (*AttachedTargetGroup) ProtoMessage() {}
 
 func (x *AttachedTargetGroup) ProtoReflect() protoreflect.Message {
-	mi := &file_kacho_cloud_loadbalancer_v1_network_load_balancer_proto_msgTypes[1]
+	mi := &file_kacho_cloud_loadbalancer_v1_network_load_balancer_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -570,7 +721,7 @@ func (x *AttachedTargetGroup) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AttachedTargetGroup.ProtoReflect.Descriptor instead.
 func (*AttachedTargetGroup) Descriptor() ([]byte, []int) {
-	return file_kacho_cloud_loadbalancer_v1_network_load_balancer_proto_rawDescGZIP(), []int{1}
+	return file_kacho_cloud_loadbalancer_v1_network_load_balancer_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *AttachedTargetGroup) GetTargetGroupId() string {
@@ -602,7 +753,7 @@ type TargetState struct {
 
 func (x *TargetState) Reset() {
 	*x = TargetState{}
-	mi := &file_kacho_cloud_loadbalancer_v1_network_load_balancer_proto_msgTypes[2]
+	mi := &file_kacho_cloud_loadbalancer_v1_network_load_balancer_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -614,7 +765,7 @@ func (x *TargetState) String() string {
 func (*TargetState) ProtoMessage() {}
 
 func (x *TargetState) ProtoReflect() protoreflect.Message {
-	mi := &file_kacho_cloud_loadbalancer_v1_network_load_balancer_proto_msgTypes[2]
+	mi := &file_kacho_cloud_loadbalancer_v1_network_load_balancer_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -627,7 +778,7 @@ func (x *TargetState) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TargetState.ProtoReflect.Descriptor instead.
 func (*TargetState) Descriptor() ([]byte, []int) {
-	return file_kacho_cloud_loadbalancer_v1_network_load_balancer_proto_rawDescGZIP(), []int{2}
+	return file_kacho_cloud_loadbalancer_v1_network_load_balancer_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *TargetState) GetSubnetId() string {
@@ -662,7 +813,7 @@ var File_kacho_cloud_loadbalancer_v1_network_load_balancer_proto protoreflect.Fi
 
 const file_kacho_cloud_loadbalancer_v1_network_load_balancer_proto_rawDesc = "" +
 	"\n" +
-	"7kacho/cloud/loadbalancer/v1/network_load_balancer.proto\x12\x1bkacho.cloud.loadbalancer.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a.kacho/cloud/loadbalancer/v1/health_check.proto\x1a\x1ckacho/cloud/validation.proto\"\xc6\v\n" +
+	"7kacho/cloud/loadbalancer/v1/network_load_balancer.proto\x12\x1bkacho.cloud.loadbalancer.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a.kacho/cloud/loadbalancer/v1/health_check.proto\x1a\x1ckacho/cloud/validation.proto\"\xaa\f\n" +
 	"\x13NetworkLoadBalancer\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1d\n" +
 	"\n" +
@@ -678,19 +829,11 @@ const file_kacho_cloud_loadbalancer_v1_network_load_balancer_proto_rawDesc = "" 
 	" \x01(\x0e25.kacho.cloud.loadbalancer.v1.NetworkLoadBalancer.TypeR\x04type\x12k\n" +
 	"\x10session_affinity\x18\v \x01(\x0e2@.kacho.cloud.loadbalancer.v1.NetworkLoadBalancer.SessionAffinityR\x0fsessionAffinity\x12j\n" +
 	"\x16attached_target_groups\x18\r \x03(\v20.kacho.cloud.loadbalancer.v1.AttachedTargetGroupB\x02\x18\x01R\x14attachedTargetGroups\x12/\n" +
-	"\x13deletion_protection\x18\x0e \x01(\bR\x12deletionProtection\x12,\n" +
-	"\x12cross_zone_enabled\x18\x13 \x01(\bR\x10crossZoneEnabled\x12\x1d\n" +
-	"\n" +
-	"network_id\x18\x14 \x01(\tR\tnetworkId\x12,\n" +
-	"\x12security_group_ids\x18\x15 \x03(\tR\x10securityGroupIds\x12\x1d\n" +
-	"\n" +
-	"address_v4\x18\x16 \x01(\tR\taddressV4\x12\x1d\n" +
-	"\n" +
-	"address_v6\x18\x17 \x01(\tR\taddressV6\x12\"\n" +
-	"\raddress_id_v4\x18\x18 \x01(\tR\vaddressIdV4\x12\"\n" +
-	"\raddress_id_v6\x18\x19 \x01(\tR\vaddressIdV6\x12G\n" +
-	"\vip_families\x18\x1a \x03(\x0e2&.kacho.cloud.loadbalancer.v1.IpVersionR\n" +
-	"ipFamilies\x1a9\n" +
+	"\x13deletion_protection\x18\x0e \x01(\bR\x12deletionProtection\x12\"\n" +
+	"\rv4_address_id\x18\x18 \x01(\tR\vv4AddressId\x12\"\n" +
+	"\rv6_address_id\x18\x19 \x01(\tR\vv6AddressId\x12e\n" +
+	"\x0eplacement_type\x18\x1b \x01(\x0e2>.kacho.cloud.loadbalancer.v1.NetworkLoadBalancer.PlacementTypeR\rplacementType\x126\n" +
+	"\x17disabled_announce_zones\x18\x1c \x03(\tR\x15disabledAnnounceZones\x1a9\n" +
 	"\vLabelsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x7f\n" +
@@ -707,12 +850,26 @@ const file_kacho_cloud_loadbalancer_v1_network_load_balancer_proto_rawDesc = "" 
 	"\x04Type\x12\x14\n" +
 	"\x10TYPE_UNSPECIFIED\x10\x00\x12\f\n" +
 	"\bEXTERNAL\x10\x01\x12\f\n" +
-	"\bINTERNAL\x10\x02\"W\n" +
+	"\bINTERNAL\x10\x02\"H\n" +
+	"\rPlacementType\x12\x1e\n" +
+	"\x1aPLACEMENT_TYPE_UNSPECIFIED\x10\x00\x12\t\n" +
+	"\x05ZONAL\x10\x01\x12\f\n" +
+	"\bREGIONAL\x10\x02\"W\n" +
 	"\x0fSessionAffinity\x12 \n" +
 	"\x1cSESSION_AFFINITY_UNSPECIFIED\x10\x00\x12\x0e\n" +
 	"\n" +
 	"FIVE_TUPLE\x10\x01\x12\x12\n" +
-	"\x0eCLIENT_IP_ONLY\x10\x02J\x04\b\b\x10\tJ\x04\b\f\x10\rJ\x04\b\x0f\x10\x10J\x04\b\x10\x10\x11J\x04\b\x11\x10\x12J\x04\b\x12\x10\x13J\x04\b\x1e\x10(R\tlistenersR\x11allow_zonal_shiftR\x15disable_zone_statuses\"\xa1\x01\n" +
+	"\x0eCLIENT_IP_ONLY\x10\x02J\x04\b\b\x10\tJ\x04\b\f\x10\rJ\x04\b\x0f\x10\x10J\x04\b\x10\x10\x11J\x04\b\x11\x10\x12J\x04\b\x12\x10\x13J\x04\b\x13\x10\x14J\x04\b\x14\x10\x15J\x04\b\x15\x10\x16J\x04\b\x16\x10\x17J\x04\b\x17\x10\x18J\x04\b\x1a\x10\x1bJ\x04\b\x1e\x10(R\tlistenersR\x11allow_zonal_shiftR\x15disable_zone_statusesR\x12cross_zone_enabledR\n" +
+	"network_idR\x12security_group_idsR\n" +
+	"address_v4R\n" +
+	"address_v6R\vip_families\"\v\n" +
+	"\tPublicVip\"\x97\x01\n" +
+	"\tVipSource\x12\x1f\n" +
+	"\n" +
+	"address_id\x18\x01 \x01(\tH\x00R\taddressId\x12\x1d\n" +
+	"\tsubnet_id\x18\x02 \x01(\tH\x00R\bsubnetId\x12@\n" +
+	"\x06public\x18\x03 \x01(\v2&.kacho.cloud.loadbalancer.v1.PublicVipH\x00R\x06publicB\b\n" +
+	"\x06source\"\xa1\x01\n" +
 	"\x13AttachedTargetGroup\x124\n" +
 	"\x0ftarget_group_id\x18\x01 \x01(\tB\f\xe8\xc71\x01\x8a\xc81\x04<=50R\rtargetGroupId\x12T\n" +
 	"\rhealth_checks\x18\x02 \x03(\v2(.kacho.cloud.loadbalancer.v1.HealthCheckB\x05\x82\xc81\x011R\fhealthChecks\"\x97\x02\n" +
@@ -745,36 +902,40 @@ func file_kacho_cloud_loadbalancer_v1_network_load_balancer_proto_rawDescGZIP() 
 	return file_kacho_cloud_loadbalancer_v1_network_load_balancer_proto_rawDescData
 }
 
-var file_kacho_cloud_loadbalancer_v1_network_load_balancer_proto_enumTypes = make([]protoimpl.EnumInfo, 5)
-var file_kacho_cloud_loadbalancer_v1_network_load_balancer_proto_msgTypes = make([]protoimpl.MessageInfo, 4)
+var file_kacho_cloud_loadbalancer_v1_network_load_balancer_proto_enumTypes = make([]protoimpl.EnumInfo, 6)
+var file_kacho_cloud_loadbalancer_v1_network_load_balancer_proto_msgTypes = make([]protoimpl.MessageInfo, 6)
 var file_kacho_cloud_loadbalancer_v1_network_load_balancer_proto_goTypes = []any{
 	(IpVersion)(0),                           // 0: kacho.cloud.loadbalancer.v1.IpVersion
 	(NetworkLoadBalancer_Status)(0),          // 1: kacho.cloud.loadbalancer.v1.NetworkLoadBalancer.Status
 	(NetworkLoadBalancer_Type)(0),            // 2: kacho.cloud.loadbalancer.v1.NetworkLoadBalancer.Type
-	(NetworkLoadBalancer_SessionAffinity)(0), // 3: kacho.cloud.loadbalancer.v1.NetworkLoadBalancer.SessionAffinity
-	(TargetState_Status)(0),                  // 4: kacho.cloud.loadbalancer.v1.TargetState.Status
-	(*NetworkLoadBalancer)(nil),              // 5: kacho.cloud.loadbalancer.v1.NetworkLoadBalancer
-	(*AttachedTargetGroup)(nil),              // 6: kacho.cloud.loadbalancer.v1.AttachedTargetGroup
-	(*TargetState)(nil),                      // 7: kacho.cloud.loadbalancer.v1.TargetState
-	nil,                                      // 8: kacho.cloud.loadbalancer.v1.NetworkLoadBalancer.LabelsEntry
-	(*timestamppb.Timestamp)(nil),            // 9: google.protobuf.Timestamp
-	(*HealthCheck)(nil),                      // 10: kacho.cloud.loadbalancer.v1.HealthCheck
+	(NetworkLoadBalancer_PlacementType)(0),   // 3: kacho.cloud.loadbalancer.v1.NetworkLoadBalancer.PlacementType
+	(NetworkLoadBalancer_SessionAffinity)(0), // 4: kacho.cloud.loadbalancer.v1.NetworkLoadBalancer.SessionAffinity
+	(TargetState_Status)(0),                  // 5: kacho.cloud.loadbalancer.v1.TargetState.Status
+	(*NetworkLoadBalancer)(nil),              // 6: kacho.cloud.loadbalancer.v1.NetworkLoadBalancer
+	(*PublicVip)(nil),                        // 7: kacho.cloud.loadbalancer.v1.PublicVip
+	(*VipSource)(nil),                        // 8: kacho.cloud.loadbalancer.v1.VipSource
+	(*AttachedTargetGroup)(nil),              // 9: kacho.cloud.loadbalancer.v1.AttachedTargetGroup
+	(*TargetState)(nil),                      // 10: kacho.cloud.loadbalancer.v1.TargetState
+	nil,                                      // 11: kacho.cloud.loadbalancer.v1.NetworkLoadBalancer.LabelsEntry
+	(*timestamppb.Timestamp)(nil),            // 12: google.protobuf.Timestamp
+	(*HealthCheck)(nil),                      // 13: kacho.cloud.loadbalancer.v1.HealthCheck
 }
 var file_kacho_cloud_loadbalancer_v1_network_load_balancer_proto_depIdxs = []int32{
-	9,  // 0: kacho.cloud.loadbalancer.v1.NetworkLoadBalancer.created_at:type_name -> google.protobuf.Timestamp
-	8,  // 1: kacho.cloud.loadbalancer.v1.NetworkLoadBalancer.labels:type_name -> kacho.cloud.loadbalancer.v1.NetworkLoadBalancer.LabelsEntry
+	12, // 0: kacho.cloud.loadbalancer.v1.NetworkLoadBalancer.created_at:type_name -> google.protobuf.Timestamp
+	11, // 1: kacho.cloud.loadbalancer.v1.NetworkLoadBalancer.labels:type_name -> kacho.cloud.loadbalancer.v1.NetworkLoadBalancer.LabelsEntry
 	1,  // 2: kacho.cloud.loadbalancer.v1.NetworkLoadBalancer.status:type_name -> kacho.cloud.loadbalancer.v1.NetworkLoadBalancer.Status
 	2,  // 3: kacho.cloud.loadbalancer.v1.NetworkLoadBalancer.type:type_name -> kacho.cloud.loadbalancer.v1.NetworkLoadBalancer.Type
-	3,  // 4: kacho.cloud.loadbalancer.v1.NetworkLoadBalancer.session_affinity:type_name -> kacho.cloud.loadbalancer.v1.NetworkLoadBalancer.SessionAffinity
-	6,  // 5: kacho.cloud.loadbalancer.v1.NetworkLoadBalancer.attached_target_groups:type_name -> kacho.cloud.loadbalancer.v1.AttachedTargetGroup
-	0,  // 6: kacho.cloud.loadbalancer.v1.NetworkLoadBalancer.ip_families:type_name -> kacho.cloud.loadbalancer.v1.IpVersion
-	10, // 7: kacho.cloud.loadbalancer.v1.AttachedTargetGroup.health_checks:type_name -> kacho.cloud.loadbalancer.v1.HealthCheck
-	4,  // 8: kacho.cloud.loadbalancer.v1.TargetState.status:type_name -> kacho.cloud.loadbalancer.v1.TargetState.Status
-	9,  // [9:9] is the sub-list for method output_type
-	9,  // [9:9] is the sub-list for method input_type
-	9,  // [9:9] is the sub-list for extension type_name
-	9,  // [9:9] is the sub-list for extension extendee
-	0,  // [0:9] is the sub-list for field type_name
+	4,  // 4: kacho.cloud.loadbalancer.v1.NetworkLoadBalancer.session_affinity:type_name -> kacho.cloud.loadbalancer.v1.NetworkLoadBalancer.SessionAffinity
+	9,  // 5: kacho.cloud.loadbalancer.v1.NetworkLoadBalancer.attached_target_groups:type_name -> kacho.cloud.loadbalancer.v1.AttachedTargetGroup
+	3,  // 6: kacho.cloud.loadbalancer.v1.NetworkLoadBalancer.placement_type:type_name -> kacho.cloud.loadbalancer.v1.NetworkLoadBalancer.PlacementType
+	7,  // 7: kacho.cloud.loadbalancer.v1.VipSource.public:type_name -> kacho.cloud.loadbalancer.v1.PublicVip
+	13, // 8: kacho.cloud.loadbalancer.v1.AttachedTargetGroup.health_checks:type_name -> kacho.cloud.loadbalancer.v1.HealthCheck
+	5,  // 9: kacho.cloud.loadbalancer.v1.TargetState.status:type_name -> kacho.cloud.loadbalancer.v1.TargetState.Status
+	10, // [10:10] is the sub-list for method output_type
+	10, // [10:10] is the sub-list for method input_type
+	10, // [10:10] is the sub-list for extension type_name
+	10, // [10:10] is the sub-list for extension extendee
+	0,  // [0:10] is the sub-list for field type_name
 }
 
 func init() { file_kacho_cloud_loadbalancer_v1_network_load_balancer_proto_init() }
@@ -783,13 +944,18 @@ func file_kacho_cloud_loadbalancer_v1_network_load_balancer_proto_init() {
 		return
 	}
 	file_kacho_cloud_loadbalancer_v1_health_check_proto_init()
+	file_kacho_cloud_loadbalancer_v1_network_load_balancer_proto_msgTypes[2].OneofWrappers = []any{
+		(*VipSource_AddressId)(nil),
+		(*VipSource_SubnetId)(nil),
+		(*VipSource_Public)(nil),
+	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_kacho_cloud_loadbalancer_v1_network_load_balancer_proto_rawDesc), len(file_kacho_cloud_loadbalancer_v1_network_load_balancer_proto_rawDesc)),
-			NumEnums:      5,
-			NumMessages:   4,
+			NumEnums:      6,
+			NumMessages:   6,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

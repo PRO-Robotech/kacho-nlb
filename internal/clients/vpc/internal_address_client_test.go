@@ -321,7 +321,7 @@ func TestInternalAddressClient_SetReference_AlreadyExistsMapsToPrecondition(t *t
 	conn := startFakeVPC(t, nil, nil, &fakeAddressForAlloc{}, intAddrSvc, &fakeOperationService{})
 
 	c := NewInternalAddressClient(conn, conn)
-	err := c.SetReference(ctxBackground(), "e9b-ip-1", AddressOwner{Kind: "nlb_listener", ID: "lst-1"})
+	err := c.SetReference(ctxBackground(), "e9b-ip-1", AddressOwner{Kind: "nlb_listener", ID: "lst-1"}, true)
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, domain.ErrFailedPrecondition))
 }
@@ -331,7 +331,7 @@ func TestInternalAddressClient_SetReference_NotFoundMapsToInvalidArg(t *testing.
 	conn := startFakeVPC(t, nil, nil, &fakeAddressForAlloc{}, intAddrSvc, &fakeOperationService{})
 
 	c := NewInternalAddressClient(conn, conn)
-	err := c.SetReference(ctxBackground(), "e9b-nx", AddressOwner{Kind: "k", ID: "i"})
+	err := c.SetReference(ctxBackground(), "e9b-nx", AddressOwner{Kind: "k", ID: "i"}, false)
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, domain.ErrInvalidArg))
 }
@@ -393,7 +393,7 @@ func TestInternalAddressClient_SetReference_EmptyArgs(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			err := c.SetReference(ctxBackground(), tc.id, tc.owner)
+			err := c.SetReference(ctxBackground(), tc.id, tc.owner, false)
 			require.Error(t, err)
 			assert.True(t, errors.Is(err, domain.ErrInvalidArg))
 		})

@@ -6,8 +6,8 @@ package domain
 import "github.com/PRO-Robotech/kacho-corelib/ids"
 
 // Factory-builders для domain-сущностей. Inline-литералы domain-структур с
-// magic-defaults (Status="CREATING", CrossZoneEnabled=true, SlowStart=0,
-// DeregistrationDelay=300) в use-case-слое — запрещены.
+// magic-defaults (Status="CREATING", SlowStart=0, DeregistrationDelay=300) в
+// use-case-слое — запрещены.
 // Все «как должна выглядеть свежесозданная сущность»-defaults живут
 // здесь, в одном месте — единственном legal-источнике этих констант.
 
@@ -16,11 +16,12 @@ import "github.com/PRO-Robotech/kacho-corelib/ids"
 //   - ID: свежий `nlb`-prefixed crockford-base32 (corelib/ids);
 //   - Status: CREATING;
 //   - SessionAffinity: FIVE_TUPLE (default);
-//   - CrossZoneEnabled: true (default);
 //   - DeletionProtection: false.
 //
-// Caller обязан вызвать `lb.Validate` перед repo.Insert — builder не
-// валидирует, чтобы service-слой собрал все ошибки за один проход.
+// placement_type / disabled_announce_zones / VIP-источник caller устанавливает
+// после builder'а (они зависят от type и матрицы источника). Caller обязан
+// вызвать `lb.Validate` перед repo.Insert — builder не валидирует, чтобы
+// service-слой собрал все ошибки за один проход.
 func NewLoadBalancer(
 	projectID ProjectID,
 	regionID RegionID,
@@ -39,7 +40,6 @@ func NewLoadBalancer(
 		Type:               lbType,
 		Status:             LBStatusCreating,
 		SessionAffinity:    SessionAffinity5Tuple,
-		CrossZoneEnabled:   true,
 		DeletionProtection: false,
 	}
 }

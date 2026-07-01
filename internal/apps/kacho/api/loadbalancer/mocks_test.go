@@ -309,8 +309,7 @@ func (q *fakeLBWriter) Update(ctx context.Context, lb *domain.LoadBalancer) (*ka
 	cur.Labels = lb.Labels
 	cur.DeletionProtection = lb.DeletionProtection
 	cur.SessionAffinity = lb.SessionAffinity
-	cur.CrossZoneEnabled = lb.CrossZoneEnabled
-	cur.SecurityGroupIDs = lb.SecurityGroupIDs
+	cur.DisabledAnnounceZones = lb.DisabledAnnounceZones
 	c := *cur
 	q.w.pendingLBs = append(q.w.pendingLBs, &c)
 	return &c, nil
@@ -655,32 +654,22 @@ func (f *fakeRegionClient) Get(ctx context.Context, regionID string) (*geo.Regio
 	return &geo.Region{ID: regionID, Name: "fake-region"}, nil
 }
 
-// fakeNetworkClient — двойник vpc.NetworkClient для sync-precheck network_id.
-// Дефолт — Network найден; getFunc подменяет под negative-сценарии (not-found /
-// vpc-Unavailable).
-type fakeNetworkClient struct {
-	getFunc func(ctx context.Context, networkID string) (*vpcclient.Network, error)
+// fakeZoneClient — двойник geo.ZoneClient для валидации disabled_announce_zones
+// и деривации underlying-зоны public-VIP. Дефолт — регион имеет зоны
+// region-1-a/region-1-b; zones/listFunc подменяют под negative/edge-сценарии.
+type fakeZoneClient struct {
+	zones    []string // зоны региона (дефолт: region-1-a, region-1-b)
+	listFunc func(ctx context.Context, regionID string) ([]string, error)
 }
 
-func (f *fakeNetworkClient) Get(ctx context.Context, networkID string) (*vpcclient.Network, error) {
-	if f.getFunc != nil {
-		return f.getFunc(ctx, networkID)
+func (f *fakeZoneClient) ListZoneIDsInRegion(ctx context.Context, regionID string) ([]string, error) {
+	if f.listFunc != nil {
+		return f.listFunc(ctx, regionID)
 	}
-	return &vpcclient.Network{ID: networkID, ProjectID: "prj-a", Name: "fake-net"}, nil
-}
-
-// fakeSecurityGroupClient — двойник vpc.SecurityGroupClient для sync-precheck
-// security_group_ids. Дефолт — SG найден и принадлежит сети "enp-1"; getFunc
-// подменяет под negative-сценарии (not-found / чужая сеть / vpc-Unavailable).
-type fakeSecurityGroupClient struct {
-	getFunc func(ctx context.Context, sgID string) (*vpcclient.SecurityGroup, error)
-}
-
-func (f *fakeSecurityGroupClient) Get(ctx context.Context, sgID string) (*vpcclient.SecurityGroup, error) {
-	if f.getFunc != nil {
-		return f.getFunc(ctx, sgID)
+	if f.zones != nil {
+		return append([]string(nil), f.zones...), nil
 	}
-	return &vpcclient.SecurityGroup{ID: sgID, ProjectID: "prj-a", NetworkID: "enp-1", Name: "fake-sg"}, nil
+	return []string{"region-1-a", "region-1-b"}, nil
 }
 
 // recordedAlloc — запись одного auto-alloc вызова (с семейством, т.к. семейство
@@ -696,14 +685,16 @@ type recordedAlloc struct {
 // для assert'ов compensation/Delete. allocFunc/byoFunc подменяют под negative-
 // сценарии (подсеть исчерпана, BYO mismatch).
 type fakeAddressClient struct {
-	mu        sync.Mutex
-	allocFunc func(ctx context.Context, req vpcclient.AllocateInternalIPRequest, family string) (*vpcclient.AllocateResponse, error)
-	byoFunc   func(ctx context.Context, req vpcclient.AttachExistingRequest) (*vpcclient.AllocateResponse, error)
-	allocReqs []recordedAlloc
-	byoReqs   []vpcclient.AttachExistingRequest
-	freed     []string
-	cleared   []string
-	seq       int
+	mu         sync.Mutex
+	allocFunc  func(ctx context.Context, req vpcclient.AllocateInternalIPRequest, family string) (*vpcclient.AllocateResponse, error)
+	extAllocFn func(ctx context.Context, req vpcclient.AllocateExternalIPRequest, family string) (*vpcclient.AllocateResponse, error)
+	byoFunc    func(ctx context.Context, req vpcclient.AttachExistingRequest) (*vpcclient.AllocateResponse, error)
+	allocReqs  []recordedAlloc
+	extReqs    []vpcclient.AllocateExternalIPRequest
+	byoReqs    []vpcclient.AttachExistingRequest
+	freed      []string
+	cleared    []string
+	seq        int
 }
 
 func (f *fakeAddressClient) AllocateInternalIP(ctx context.Context, req vpcclient.AllocateInternalIPRequest) (*vpcclient.AllocateResponse, error) {
@@ -712,6 +703,33 @@ func (f *fakeAddressClient) AllocateInternalIP(ctx context.Context, req vpcclien
 
 func (f *fakeAddressClient) AllocateInternalIPv6(ctx context.Context, req vpcclient.AllocateInternalIPRequest) (*vpcclient.AllocateResponse, error) {
 	return f.alloc(ctx, req, vpcclient.AddressFamilyIPv6)
+}
+
+func (f *fakeAddressClient) AllocateExternalIP(ctx context.Context, req vpcclient.AllocateExternalIPRequest) (*vpcclient.AllocateResponse, error) {
+	return f.extAlloc(ctx, req, vpcclient.AddressFamilyIPv4)
+}
+
+func (f *fakeAddressClient) AllocateExternalIPv6(ctx context.Context, req vpcclient.AllocateExternalIPRequest) (*vpcclient.AllocateResponse, error) {
+	return f.extAlloc(ctx, req, vpcclient.AddressFamilyIPv6)
+}
+
+func (f *fakeAddressClient) extAlloc(ctx context.Context, req vpcclient.AllocateExternalIPRequest, family string) (*vpcclient.AllocateResponse, error) {
+	f.mu.Lock()
+	f.extReqs = append(f.extReqs, req)
+	f.seq++
+	seq := f.seq
+	f.mu.Unlock()
+	if f.extAllocFn != nil {
+		return f.extAllocFn(ctx, req, family)
+	}
+	prefix := "203.0.113."
+	if family == vpcclient.AddressFamilyIPv6 {
+		prefix = "2001:db8::"
+	}
+	return &vpcclient.AllocateResponse{
+		AddressID: fmt.Sprintf("adr%017d", seq),
+		Value:     fmt.Sprintf("%s%d", prefix, seq),
+	}, nil
 }
 
 func (f *fakeAddressClient) alloc(ctx context.Context, req vpcclient.AllocateInternalIPRequest, family string) (*vpcclient.AllocateResponse, error) {
@@ -783,6 +801,8 @@ func (f *fakeSubnetClient) Get(ctx context.Context, subnetID string) (*vpcclient
 type fakeAddressReader struct {
 	projectID string // "" → "prj-a"
 	family    string // "" → AddressFamilyIPv4
+	external  bool   // kind: internal (false) / external (true)
+	subnetID  string // подсеть internal-адреса ("" → "snt-01" для internal)
 	getFunc   func(ctx context.Context, addressID string) (*vpcclient.Address, error)
 }
 
@@ -798,7 +818,14 @@ func (f *fakeAddressReader) Get(ctx context.Context, addressID string) (*vpcclie
 	if fam == "" {
 		fam = vpcclient.AddressFamilyIPv4
 	}
-	return &vpcclient.Address{ID: addressID, ProjectID: pid, Family: fam}, nil
+	sn := f.subnetID
+	if sn == "" && !f.external {
+		sn = "snt01000000000000000"
+	}
+	return &vpcclient.Address{
+		ID: addressID, ProjectID: pid, Family: fam,
+		External: f.external, SubnetID: sn,
+	}, nil
 }
 
 // fakeFGARegisterOutbox records FGARegisterOutbox.Emit into the writer's
@@ -818,8 +845,7 @@ var (
 	_ kachorepo.Repository  = (*fakeRepo)(nil)
 	_ ProjectClient         = (*fakeProjectClient)(nil)
 	_ RegionClient          = (*fakeRegionClient)(nil)
-	_ NetworkClient         = (*fakeNetworkClient)(nil)
-	_ SecurityGroupClient   = (*fakeSecurityGroupClient)(nil)
+	_ ZoneClient            = (*fakeZoneClient)(nil)
 	_ SubnetClient          = (*fakeSubnetClient)(nil)
 	_ AddressClient         = (*fakeAddressReader)(nil)
 	_ InternalAddressClient = (*fakeAddressClient)(nil)

@@ -38,7 +38,6 @@ func seedParentLB(t *testing.T, repo *fakeRepo, families ...domain.IPVersion) *k
 	t.Helper()
 	lb := newRecordLB(t, "prj01TESTPROJ0000001", "ru-central1", domain.LBTypeInternal, "test-lb")
 	lb.Status = domain.LBStatusInactive
-	lb.NetworkID = "net01TESTNETWORK0001"
 	if len(families) == 0 {
 		families = []domain.IPVersion{domain.IPVersionV4}
 	}

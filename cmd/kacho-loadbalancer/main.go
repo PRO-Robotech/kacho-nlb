@@ -82,14 +82,13 @@ type peerClients struct {
 	Project  iamclient.ProjectClient
 	Check    iamclient.CheckClient
 	Register iamclient.RegisterResourceClient // FGA-proxy (register-drainer)
-	// Geo (Region-валидация — ребро nlb→geo, kacho-geo)
+	// Geo (Region/Zone-валидация — ребро nlb→geo, kacho-geo)
 	Region geoclient.RegionClient
+	Zone   geoclient.ZoneClient
 	// Compute (Instance-resolve — НЕ geography, ребро nlb→compute остаётся)
 	Instance computeclient.InstanceClient
 	// VPC
 	Subnet           vpcclient.SubnetClient
-	Network          vpcclient.NetworkClient
-	SecurityGroup    vpcclient.SecurityGroupClient
 	NetworkInterface vpcclient.NetworkInterfaceClient
 	Address          vpcclient.AddressClient
 	InternalAddress  vpcclient.InternalAddressClient
@@ -341,7 +340,7 @@ func runServe(configPath string) error {
 	// (Internal-vs-external инвариант: Internal.* живут на internalSrv).
 	lbHandler := lbhandler.NewHandler(
 		repo, opsRepo,
-		peers.Project, peers.Region, peers.Network, peers.SecurityGroup,
+		peers.Project, peers.Region, peers.Zone,
 		peers.Subnet, peers.Address, peers.InternalAddress,
 		peers.ListFilter,
 		logger,
@@ -854,6 +853,7 @@ func dialPeers(
 	// прежнюю region-валидацию через nlb→compute.
 	if geoConn != nil {
 		peers.Region = geoclient.NewRegionClient(geoConn)
+		peers.Zone = geoclient.NewZoneClient(geoConn)
 	}
 
 	// kacho-compute — один conn на public listener (InstanceService.Get —
@@ -865,8 +865,6 @@ func dialPeers(
 	// kacho-vpc — public (Address/Subnet/NIC/Operation) + internal (InternalAddressService).
 	if vpcPublicConn != nil {
 		peers.Subnet = vpcclient.NewSubnetClient(vpcPublicConn)
-		peers.Network = vpcclient.NewNetworkClient(vpcPublicConn)
-		peers.SecurityGroup = vpcclient.NewSecurityGroupClient(vpcPublicConn)
 		peers.NetworkInterface = vpcclient.NewNetworkInterfaceClient(vpcPublicConn)
 		peers.Address = vpcclient.NewAddressClient(vpcPublicConn)
 	}

@@ -33,51 +33,43 @@ func (networkLoadBalancer) toPb(rec kachorepo.LoadBalancerRecord) (*lbv1.Network
 	if err != nil {
 		return nil, err
 	}
-	ipFamilies, err := ipFamiliesToPb(rec.IPFamilies)
+	placementPb, err := lbPlacementToPb(rec.PlacementType)
 	if err != nil {
 		return nil, err
 	}
-	// Lean-проекция: anycast-VIP (address_v4/v6) + binding (address_id_v4/v6) +
-	// заявленные семейства. vip_origin_v4/v6 — DB-only, в proto не выходят;
-	// announce/route/VRF/per-zone — отдельная Internal-проекция (:9091).
+	// Lean-проекция: связанный vpc Address (v4_address_id/v6_address_id) +
+	// placement + disabled_announce_zones. Сам VIP-IP, source, network,
+	// vip_origin, announce/route/VRF/per-zone — НЕ выходят (§3.6, security.md).
 	return &lbv1.NetworkLoadBalancer{
-		Id:                 string(rec.ID),
-		ProjectId:          string(rec.ProjectID),
-		CreatedAt:          ts,
-		Name:               string(rec.Name),
-		Description:        string(rec.Description),
-		Labels:             domain.LabelsToMap(rec.Labels),
-		RegionId:           string(rec.RegionID),
-		NetworkId:          string(rec.NetworkID),
-		SecurityGroupIds:   domain.SecurityGroupIDsToStrings(rec.SecurityGroupIDs),
-		Status:             statusPb,
-		Type:               typePb,
-		SessionAffinity:    affinityPb,
-		CrossZoneEnabled:   rec.CrossZoneEnabled,
-		DeletionProtection: rec.DeletionProtection,
-		AddressV4:          string(rec.AddressV4),
-		AddressV6:          string(rec.AddressV6),
-		AddressIdV4:        string(rec.AddressIDV4),
-		AddressIdV6:        string(rec.AddressIDV6),
-		IpFamilies:         ipFamilies,
+		Id:                    string(rec.ID),
+		ProjectId:             string(rec.ProjectID),
+		CreatedAt:             ts,
+		Name:                  string(rec.Name),
+		Description:           string(rec.Description),
+		Labels:                domain.LabelsToMap(rec.Labels),
+		RegionId:              string(rec.RegionID),
+		Status:                statusPb,
+		Type:                  typePb,
+		SessionAffinity:       affinityPb,
+		PlacementType:         placementPb,
+		DisabledAnnounceZones: append([]string(nil), rec.DisabledAnnounceZones...),
+		DeletionProtection:    rec.DeletionProtection,
+		V4AddressId:           string(rec.AddressIDV4),
+		V6AddressId:           string(rec.AddressIDV6),
 	}, nil
 }
 
-// ipFamiliesToPb — []domain.IPVersion → []lbv1.IpVersion. Пустые/неизвестные
-// токены — ошибка (repo читает только валидные значения из text[]-колонки).
-func ipFamiliesToPb(fams []domain.IPVersion) ([]lbv1.IpVersion, error) {
-	if len(fams) == 0 {
-		return nil, nil
+// lbPlacementToPb — domain PlacementType → proto enum. Пусто → UNSPECIFIED (EXTERNAL).
+func lbPlacementToPb(p domain.PlacementType) (lbv1.NetworkLoadBalancer_PlacementType, error) {
+	switch p {
+	case domain.PlacementUnspecified:
+		return lbv1.NetworkLoadBalancer_PLACEMENT_TYPE_UNSPECIFIED, nil
+	case domain.PlacementZonal:
+		return lbv1.NetworkLoadBalancer_ZONAL, nil
+	case domain.PlacementRegional:
+		return lbv1.NetworkLoadBalancer_REGIONAL, nil
 	}
-	out := make([]lbv1.IpVersion, 0, len(fams))
-	for _, f := range fams {
-		pb, err := ipVersionToPb(f)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, pb)
-	}
-	return out, nil
+	return lbv1.NetworkLoadBalancer_PLACEMENT_TYPE_UNSPECIFIED, fmt.Errorf("unknown PlacementType: %q", p)
 }
 
 // lbStatusToPb — domain LBStatus → proto enum NetworkLoadBalancer_Status.
