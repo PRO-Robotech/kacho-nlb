@@ -496,7 +496,7 @@ func (u *CreateLoadBalancerUseCase) acquireFamilyVIP(
 	if u.addressClient == nil {
 		return vipAllocResult{}, status.Error(codes.Unavailable, "vpc internal address client not configured")
 	}
-	owner := lbAddressOwner(string(lb.ID))
+	owner := lbAddressOwner(string(lb.ID), string(lb.Name))
 	switch fs.kind {
 	case srcAddressLink:
 		resp, err := u.addressClient.AttachExisting(ctx, vpcclient.AttachExistingRequest{
@@ -697,7 +697,7 @@ func (u *CreateLoadBalancerUseCase) compensateCreate(ctx context.Context, lbID s
 	}
 	logger = logger.With("load_balancer_id", lbID)
 
-	owner := lbAddressOwner(lbID)
+	owner := lbAddressOwner(lbID, "")
 	if u.addressClient != nil {
 		for family, alloc := range allocated {
 			if alloc.addressID == "" {
@@ -797,8 +797,9 @@ func familyTag(family domain.IPVersion) string {
 }
 
 // lbAddressOwner — owner-tuple для vpc.Address referrer ("network_load_balancer:<id>").
-func lbAddressOwner(lbID string) vpcclient.AddressOwner {
-	return vpcclient.AddressOwner{Kind: lbAddressOwnerKind, ID: lbID}
+// name — display-имя LB для used_by-зеркала (пусто на release-пути, где имя не нужно).
+func lbAddressOwner(lbID, name string) vpcclient.AddressOwner {
+	return vpcclient.AddressOwner{Kind: lbAddressOwnerKind, ID: lbID, Name: name}
 }
 
 // lbAddressOwnerKind — Reference.type для NLB LoadBalancer в vpc.Address referrer.

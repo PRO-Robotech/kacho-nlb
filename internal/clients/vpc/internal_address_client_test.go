@@ -177,7 +177,7 @@ func TestInternalAddressClient_AllocateExternalIP_HappyPath(t *testing.T) {
 		ProjectID: "prj-1",
 		Name:      "listener-vip-1",
 		ZoneID:    "ru-central1-a",
-		Owner:     AddressOwner{Kind: "nlb_listener", ID: "lst-1"},
+		Owner:     AddressOwner{Kind: "nlb_listener", ID: "lst-1", Name: "listener-a"},
 	})
 	require.NoError(t, err)
 	assert.Equal(t, "e9b-ip-1", resp.AddressID)
@@ -187,6 +187,9 @@ func TestInternalAddressClient_AllocateExternalIP_HappyPath(t *testing.T) {
 	assert.Equal(t, "e9b-ip-1", intAddrSvc.setCalls[0].AddressId)
 	assert.Equal(t, "nlb_listener", intAddrSvc.setCalls[0].ReferrerType)
 	assert.Equal(t, "lst-1", intAddrSvc.setCalls[0].ReferrerId)
+	// referrer_name пробрасывается в vpc — used_by-зеркало показывает имя
+	// потребителя (иначе UI не может отрендерить ссылку на ресурс).
+	assert.Equal(t, "listener-a", intAddrSvc.setCalls[0].ReferrerName)
 }
 
 func TestInternalAddressClient_AllocateExternalIP_SetReferenceFailsTriggersCleanup(t *testing.T) {

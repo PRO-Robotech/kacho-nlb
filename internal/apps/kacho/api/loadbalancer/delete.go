@@ -204,7 +204,7 @@ func (u *DeleteLoadBalancerUseCase) releaseVIP(ctx context.Context, lbID, addres
 	if u.addressClient == nil {
 		return status.Error(codes.Unavailable, "vpc internal address client not configured")
 	}
-	owner := lbAddressOwner(lbID)
+	owner := lbAddressOwner(lbID, "")
 	if origin == domain.VipOriginAuto {
 		// owned: снять собственный owned-референс, затем удалить адрес.
 		if err := u.addressClient.ClearReference(ctx, addressID, owner); err != nil {

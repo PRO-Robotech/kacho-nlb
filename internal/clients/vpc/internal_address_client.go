@@ -343,6 +343,7 @@ func (c *internalAddressClient) SetReference(
 			AddressId:    addressID,
 			ReferrerType: owner.Kind,
 			ReferrerId:   owner.ID,
+			ReferrerName: owner.Name,
 			Owned:        owned,
 		})
 		if rerr == nil {

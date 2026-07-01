@@ -49,6 +49,8 @@ type Address struct {
 type AddressOwner struct {
 	Kind string // "nlb_listener" | "compute_instance" |...
 	ID   string
+	Name string // display-имя потребителя для used_by-зеркала (vpc не резолвит
+	//            имя сам — это создало бы cycle vpc→nlb; передаётся на SetReference).
 }
 
 // AddressClient — port-интерфейс для service-слоя.
