@@ -107,4 +107,4 @@ require (
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
-replace github.com/PRO-Robotech/kacho-vpc => ../kacho-vpc
+replace github.com/PRO-Robotech/kacho-vpc => github.com/PRO-Robotech/kacho-vpc v0.0.0-20260701103117-5311138318c9
