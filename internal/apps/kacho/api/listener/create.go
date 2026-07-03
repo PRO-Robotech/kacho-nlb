@@ -241,7 +241,17 @@ func (u *CreateUseCase) doCreate(ctx context.Context, in createInput) (*anypb.An
 // (γ-селекторы matchLabels). source_version штампует outbox-emitter из DB-clock.
 func listenerRegisterIntent(l *kachorepo.ListenerRecord, subject string) domain.FGARegisterIntent {
 	id := string(l.ID)
-	var tuples []domain.FGATuple
+	// project-tuple идёт ПЕРВЫМ — он даёт видимость Listener через project (как у
+	// LoadBalancer/TargetGroup: reconciler материализует v_*-relation по
+	// parent-project). Дренер применяет tuples по порядку и short-circuit'ит на
+	// первом отказе, а creator (relation admin) и parent-link (load_balancer)
+	// iam-proxy отвергает (allowedProxyRelations = {project, account, parent,
+	// owner}). Раньше первым шёл creator(admin) → падал сразу → НИ ОДИН tuple не
+	// применялся → Listener был невидим в authz-filtered List. Теперь project-
+	// tuple успевает примениться до отказа admin — Listener виден.
+	tuples := []domain.FGATuple{
+		domain.FGAProjectTuple(domain.FGAObjectTypeListener, id, string(l.ProjectID)),
+	}
 	if subject != "" {
 		tuples = append(tuples, domain.FGACreatorTuple(subject, domain.FGAObjectTypeListener, id))
 	}
