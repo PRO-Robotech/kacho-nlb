@@ -19,7 +19,7 @@ import (
 	lbv1 "github.com/PRO-Robotech/kacho-proto/gen/go/kacho/cloud/loadbalancer/v1"
 
 	"github.com/PRO-Robotech/kacho-nlb/internal/domain"
-	kachopg "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho/pg"
+	kachorepo "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho"
 )
 
 // MoveLoadBalancerUseCase — change project_id (cross-project) keeping region.
@@ -190,8 +190,8 @@ func (u *MoveLoadBalancerUseCase) doMove(ctx context.Context, id, srcProject, ds
 		return nil, mapDomainErr(err)
 	}
 	if err := w.Outbox().Emit(ctx,
-		kachopg.OutboxResourceLoadBalancer, string(moved.ID), string(moved.ProjectID),
-		kachopg.OutboxActionMoved, map[string]any{
+		kachorepo.OutboxResourceLoadBalancer, string(moved.ID), string(moved.ProjectID),
+		kachorepo.OutboxActionMoved, map[string]any{
 			"id":             string(moved.ID),
 			"src_project_id": srcProject,
 			"dst_project_id": dstProject,
@@ -201,8 +201,8 @@ func (u *MoveLoadBalancerUseCase) doMove(ctx context.Context, id, srcProject, ds
 	}
 	// Also emit UPDATED for downstream watchers that don't subscribe to MOVED.
 	if err := w.Outbox().Emit(ctx,
-		kachopg.OutboxResourceLoadBalancer, string(moved.ID), string(moved.ProjectID),
-		kachopg.OutboxActionUpdated, lbOutboxPayload(moved),
+		kachorepo.OutboxResourceLoadBalancer, string(moved.ID), string(moved.ProjectID),
+		kachorepo.OutboxActionUpdated, lbOutboxPayload(moved),
 	); err != nil {
 		return nil, mapDomainErr(err)
 	}

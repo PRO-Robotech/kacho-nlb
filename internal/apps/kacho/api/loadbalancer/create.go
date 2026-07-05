@@ -22,7 +22,6 @@ import (
 	vpcclient "github.com/PRO-Robotech/kacho-nlb/internal/clients/vpc"
 	"github.com/PRO-Robotech/kacho-nlb/internal/domain"
 	kachorepo "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho"
-	kachopg "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho/pg"
 )
 
 // vipSourceKind — тип источника VIP одного семейства (VipSource oneof).
@@ -671,8 +670,8 @@ func (u *CreateLoadBalancerUseCase) finalizeCreate(
 		return nil, err
 	}
 	if err := w.Outbox().Emit(ctx,
-		kachopg.OutboxResourceLoadBalancer, string(created.ID), string(created.ProjectID),
-		kachopg.OutboxActionCreated, lbOutboxPayload(created),
+		kachorepo.OutboxResourceLoadBalancer, string(created.ID), string(created.ProjectID),
+		kachorepo.OutboxActionCreated, lbOutboxPayload(created),
 	); err != nil {
 		return nil, err
 	}

@@ -16,7 +16,7 @@ import (
 
 	"github.com/PRO-Robotech/kacho-nlb/internal/clients/iam"
 	"github.com/PRO-Robotech/kacho-nlb/internal/domain"
-	kachopg "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho/pg"
+	kachorepo "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho"
 )
 
 // Move OK (no attached LB).
@@ -38,8 +38,8 @@ func TestMove_Happy(t *testing.T) {
 	events := repo.outboxEvents()
 	// MOVED + UPDATED
 	require.Len(t, events, 2)
-	assert.Equal(t, kachopg.OutboxActionMoved, events[0].Action)
-	assert.Equal(t, kachopg.OutboxActionUpdated, events[1].Action)
+	assert.Equal(t, kachorepo.OutboxActionMoved, events[0].Action)
+	assert.Equal(t, kachorepo.OutboxActionUpdated, events[1].Action)
 
 	// project-rewrite = register(dst) + unregister(src) intents in writer-tx.
 	require.Len(t, repo.fga, 2)

@@ -16,7 +16,7 @@ import (
 	"github.com/PRO-Robotech/kacho-corelib/operations"
 	lbv1 "github.com/PRO-Robotech/kacho-proto/gen/go/kacho/cloud/loadbalancer/v1"
 
-	kachopg "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho/pg"
+	kachorepo "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho"
 )
 
 // AttachTargetGroupUseCase — idempotent INSERT into attached_target_groups
@@ -132,8 +132,8 @@ func (u *AttachTargetGroupUseCase) doAttach(ctx context.Context, lbID, tgID, pro
 	// state). The trigger `attached_tg_lb_status_recompute_trg` recomputes
 	// lb.status on real INSERT.
 	if err := w.Outbox().Emit(ctx,
-		kachopg.OutboxResourceLoadBalancer, lbID, projectID,
-		kachopg.OutboxActionUpdated, map[string]any{
+		kachorepo.OutboxResourceLoadBalancer, lbID, projectID,
+		kachorepo.OutboxActionUpdated, map[string]any{
 			"id":              lbID,
 			"target_group_id": tgID,
 			"action":          "attach",

@@ -19,3 +19,23 @@ import "context"
 type OutboxEmitter interface {
 	Emit(ctx context.Context, resourceType, resourceID, projectID, action string, payload map[string]any) error
 }
+
+// Outbox resource_type values (parity с CHECK в миграции 0001).
+//
+// Живут в neutral leaf-пакете (не в pgx-backed adapter `pg`), чтобы use-case-слой
+// мог ссылаться на них без транзитивной зависимости от concrete DB-adapter —
+// dependency-rule Clean Architecture (service/ импортирует только domain + порты).
+const (
+	OutboxResourceLoadBalancer = "nlb_load_balancer"
+	OutboxResourceListener     = "nlb_listener"
+	OutboxResourceTargetGroup  = "nlb_target_group"
+)
+
+// Outbox action values.
+const (
+	OutboxActionCreated = "CREATED"
+	OutboxActionUpdated = "UPDATED"
+	OutboxActionDeleted = "DELETED"
+	OutboxActionMoved   = "MOVED"
+	OutboxActionFailed  = "FAILED"
+)

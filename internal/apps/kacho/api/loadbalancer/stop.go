@@ -19,7 +19,6 @@ import (
 
 	"github.com/PRO-Robotech/kacho-nlb/internal/domain"
 	kachorepo "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho"
-	kachopg "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho/pg"
 )
 
 // StopLoadBalancerUseCase — ACTIVE/INACTIVE → STOPPING → STOPPED.
@@ -108,8 +107,8 @@ func (u *StopLoadBalancerUseCase) doStop(
 		return nil, mapDomainErr(err)
 	}
 	if err := w.Outbox().Emit(ctx,
-		kachopg.OutboxResourceLoadBalancer, string(final.ID), string(final.ProjectID),
-		kachopg.OutboxActionUpdated, lbOutboxPayload(final),
+		kachorepo.OutboxResourceLoadBalancer, string(final.ID), string(final.ProjectID),
+		kachorepo.OutboxActionUpdated, lbOutboxPayload(final),
 	); err != nil {
 		return nil, mapDomainErr(err)
 	}

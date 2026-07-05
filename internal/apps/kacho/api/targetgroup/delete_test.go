@@ -18,7 +18,6 @@ import (
 
 	"github.com/PRO-Robotech/kacho-nlb/internal/domain"
 	kachorepo "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho"
-	kachopg "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho/pg"
 )
 
 // Delete OK (no attached LB, no targets).
@@ -38,7 +37,7 @@ func TestDelete_Happy(t *testing.T) {
 
 	events := repo.outboxEvents()
 	require.Len(t, events, 1)
-	assert.Equal(t, kachopg.OutboxActionDeleted, events[0].Action)
+	assert.Equal(t, kachorepo.OutboxActionDeleted, events[0].Action)
 }
 
 // Delete fails when attached to LB.

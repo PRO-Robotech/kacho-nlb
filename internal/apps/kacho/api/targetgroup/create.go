@@ -18,7 +18,6 @@ import (
 
 	"github.com/PRO-Robotech/kacho-nlb/internal/domain"
 	kachorepo "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho"
-	kachopg "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho/pg"
 )
 
 // CreateTargetGroupUseCase — async Create TG.
@@ -163,8 +162,8 @@ func (u *CreateTargetGroupUseCase) doCreate(
 		return nil, mapDomainErr(err)
 	}
 	if err := w.Outbox().Emit(ctx,
-		kachopg.OutboxResourceTargetGroup, string(created.ID), string(created.ProjectID),
-		kachopg.OutboxActionCreated, tgOutboxPayload(created),
+		kachorepo.OutboxResourceTargetGroup, string(created.ID), string(created.ProjectID),
+		kachorepo.OutboxActionCreated, tgOutboxPayload(created),
 	); err != nil {
 		return nil, mapDomainErr(err)
 	}
