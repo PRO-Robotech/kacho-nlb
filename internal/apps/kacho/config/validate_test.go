@@ -53,7 +53,7 @@ func minimalValidConfig() Config {
 		},
 		Repository: RepositoryConfig{
 			Type:     "POSTGRES",
-			Postgres: PostgresConfig{URL: "postgres://u:p@h/d"},
+			Postgres: PostgresConfig{URL: "postgres://u:p@h/d?sslmode=require"},
 		},
 		Jobs: JobsConfig{
 			TargetDrain: TargetDrainConfig{Interval: 10 * time.Second},
@@ -484,5 +484,63 @@ func TestValidate_Dev_InsecurePeerEdges_OK(t *testing.T) {
 	cfg.ExtAPI.Compute.Addr = "compute.kacho.svc:9090"
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("dev + insecure peer edges: unexpected err: %v", err)
+	}
+}
+
+// --- Postgres transport fail-closed (audit SEC #1, CWE-319) ------------------
+// В production DSN с `sslmode=disable`/`allow`/`prefer` (или без sslmode вовсе)
+// → plaintext-совместимое DB-соединение: credentials + tenant-данные идут по
+// сети в открытую. Boot обязан отвергнуть такой prod-конфиг (parity с peer-edge
+// insecure-transport gate'ами выше).
+
+func TestValidate_Production_RejectsSSLModeDisable(t *testing.T) {
+	cfg := productionSecureConfig()
+	cfg.Repository.Postgres.URL = "postgres://u:p@h/d?sslmode=disable&search_path=kacho_nlb,public"
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "insecure Postgres transport") {
+		t.Fatalf("expected insecure-Postgres-transport error for sslmode=disable, got %v", err)
+	}
+}
+
+func TestValidate_Production_RejectsSSLModePrefer(t *testing.T) {
+	cfg := productionSecureConfig()
+	cfg.Repository.Postgres.URL = "postgres://u:p@h/d?sslmode=prefer"
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "insecure Postgres transport") {
+		t.Fatalf("expected insecure-Postgres-transport error for sslmode=prefer, got %v", err)
+	}
+}
+
+func TestValidate_Production_RejectsMissingSSLMode(t *testing.T) {
+	cfg := productionSecureConfig()
+	cfg.Repository.Postgres.URL = "postgres://u:p@h/d" // no sslmode → libpq default 'prefer' (plaintext fallback)
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "insecure Postgres transport") {
+		t.Fatalf("expected insecure-Postgres-transport error for missing sslmode, got %v", err)
+	}
+}
+
+func TestValidate_Production_SSLModeRequire_OK(t *testing.T) {
+	cfg := productionSecureConfig()
+	cfg.Repository.Postgres.URL = "postgres://u:p@h/d?sslmode=require&search_path=kacho_nlb,public"
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("production + sslmode=require: unexpected err: %v", err)
+	}
+}
+
+func TestValidate_Production_SSLModeVerifyFull_OK(t *testing.T) {
+	cfg := productionSecureConfig()
+	cfg.Repository.Postgres.URL = "postgres://u:p@h/d?sslmode=verify-full"
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("production + sslmode=verify-full: unexpected err: %v", err)
+	}
+}
+
+// В dev-mode plaintext DB-соединение допустимо (local-стенд / testcontainers).
+func TestValidate_Dev_SSLModeDisable_OK(t *testing.T) {
+	cfg := minimalValidConfig() // mode=dev
+	cfg.Repository.Postgres.URL = "postgres://u:p@h/d?sslmode=disable"
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("dev + sslmode=disable: unexpected err: %v", err)
 	}
 }

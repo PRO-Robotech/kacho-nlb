@@ -514,13 +514,12 @@ func (u *CreateLoadBalancerUseCase) compensateCreate(ctx context.Context, lbID s
 	}
 	logger = logger.With("load_balancer_id", lbID)
 
-	owner := lbAddressOwner(lbID, "")
 	if u.addressClient != nil {
 		for family, alloc := range allocated {
 			if alloc.addressID == "" {
 				continue
 			}
-			if rerr := u.releaseAddress(ctx, alloc.addressID, owner, alloc.origin); rerr != nil {
+			if rerr := u.releaseAddress(ctx, alloc.addressID, alloc.origin); rerr != nil {
 				logger.Warn("LoadBalancer.Create compensation release failed",
 					"err", rerr, "address_id", alloc.addressID, "family", string(family))
 			}
@@ -532,20 +531,20 @@ func (u *CreateLoadBalancerUseCase) compensateCreate(ctx context.Context, lbID s
 }
 
 // releaseAddress — release одного Address по origin (§3.9): owned (auto) →
-// two-step owner-scoped ClearReference → FreeIP (иначе FreeIP==Delete упрётся в
-// собственный guard); linked → ClearReference без Delete. Идемпотентно.
-func (u *CreateLoadBalancerUseCase) releaseAddress(ctx context.Context, addressID string, owner vpcclient.AddressOwner, origin domain.VipOrigin) error {
+// two-step ClearReference → FreeIP (иначе FreeIP==Delete упрётся в собственный
+// guard); linked → ClearReference без Delete. Идемпотентно.
+func (u *CreateLoadBalancerUseCase) releaseAddress(ctx context.Context, addressID string, origin domain.VipOrigin) error {
 	if u.addressClient == nil {
 		return status.Error(codes.Unavailable, "vpc internal address client not configured")
 	}
 	if origin == domain.VipOriginLinked {
-		return u.addressClient.ClearReference(ctx, addressID, owner)
+		return u.addressClient.ClearReference(ctx, addressID)
 	}
 	// owned (auto): снять собственный owned-референс, затем удалить адрес.
-	if err := u.addressClient.ClearReference(ctx, addressID, owner); err != nil {
+	if err := u.addressClient.ClearReference(ctx, addressID); err != nil {
 		return err
 	}
-	return u.addressClient.FreeIP(ctx, addressID, owner)
+	return u.addressClient.FreeIP(ctx, addressID)
 }
 
 // deleteHandle — best-effort DELETE durable-handle строки LB в собственной TX.

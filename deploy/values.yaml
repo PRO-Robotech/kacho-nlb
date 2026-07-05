@@ -111,7 +111,10 @@ db:
   user: kacho_nlb
   name: kacho_nlb
   # `sslmode` and `search_path` are appended automatically in the helper.
-  sslmode: disable
+  # Production fail-closed (config.Validate, audit SEC #1): mode=production
+  # rejects disable/allow/prefer — the DB connection must be TLS. Override to
+  # `disable` only for a dev-mode (mode=dev) stand.
+  sslmode: require
   # Either set `existingSecret` to bind an out-of-chart Secret, or let the chart
   # create one from `password` (the latter is dev-only — do NOT commit a real
   # password to values.yaml).

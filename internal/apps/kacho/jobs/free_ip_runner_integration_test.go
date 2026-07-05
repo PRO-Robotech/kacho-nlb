@@ -68,7 +68,7 @@ func (f *fakeReleaser) AttachExisting(context.Context, vpcclient.AttachExistingR
 	return &vpcclient.AllocateResponse{}, nil
 }
 
-func (f *fakeReleaser) FreeIP(_ context.Context, addressID string, _ vpcclient.AddressOwner) error {
+func (f *fakeReleaser) FreeIP(_ context.Context, addressID string) error {
 	f.mu.Lock()
 	hook := f.onFirstFree
 	if hook != nil && !f.firstFired {
@@ -85,7 +85,7 @@ func (f *fakeReleaser) FreeIP(_ context.Context, addressID string, _ vpcclient.A
 	return err
 }
 
-func (f *fakeReleaser) ClearReference(_ context.Context, addressID string, _ vpcclient.AddressOwner) error {
+func (f *fakeReleaser) ClearReference(_ context.Context, addressID string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.clearCalls = append(f.clearCalls, addressID)

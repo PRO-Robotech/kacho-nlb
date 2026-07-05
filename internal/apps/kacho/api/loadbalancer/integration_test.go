@@ -159,8 +159,8 @@ func (s *stubAddressClient) AttachExisting(_ context.Context, req vpcclient.Atta
 	return &vpcclient.AllocateResponse{AddressID: req.AddressID, Value: fmt.Sprintf("100.64.9.%d", n)}, nil
 }
 
-func (s *stubAddressClient) FreeIP(context.Context, string, vpcclient.AddressOwner) error { return nil }
-func (s *stubAddressClient) ClearReference(context.Context, string, vpcclient.AddressOwner) error {
+func (s *stubAddressClient) FreeIP(context.Context, string) error { return nil }
+func (s *stubAddressClient) ClearReference(context.Context, string) error {
 	return nil
 }
 

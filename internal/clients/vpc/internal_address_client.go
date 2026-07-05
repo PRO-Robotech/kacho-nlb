@@ -101,7 +101,7 @@ type InternalAddressClient interface {
 	// FreeIP освобождает Address (idempotent через AddressService.Delete →
 	// NotFound трактуется как успех). ClearReference вызывается автоматически
 	// kacho-vpc при Delete.
-	FreeIP(ctx context.Context, addressID string, owner AddressOwner) error
+	FreeIP(ctx context.Context, addressID string) error
 
 	// SetReference — атомарный CAS Set used_by=owner на существующем Address.
 	// owned помечает референс как owned (auto-alloc, lifecycle связан) либо
@@ -112,7 +112,7 @@ type InternalAddressClient interface {
 
 	// ClearReference — снимает used_by с Address (Listener.Delete release BYO).
 	// Идемпотентно: NotFound → успех.
-	ClearReference(ctx context.Context, addressID string, owner AddressOwner) error
+	ClearReference(ctx context.Context, addressID string) error
 }
 
 // internalAddressClient — реализация InternalAddressClient через gRPC.
@@ -266,7 +266,7 @@ func (c *internalAddressClient) allocFromCreate(
 		// исходную ошибку (она важнее для caller'а). Если компенсация тоже
 		// падает — адрес orphaned в kacho-vpc; логируем Warn, чтобы leaked-адрес
 		// был наблюдаем и реконсайлируем (иначе — silent IP leak).
-		if freeErr := c.FreeIP(ctx, addr.GetId(), owner); freeErr != nil {
+		if freeErr := c.FreeIP(ctx, addr.GetId()); freeErr != nil {
 			c.logger.Warn("address_compensation_free_failed",
 				"address_id", addr.GetId(),
 				"owner_kind", owner.Kind,
@@ -307,11 +307,10 @@ func validateInternalReq(req AllocateInternalIPRequest) error {
 }
 
 // FreeIP — см. контракт InternalAddressClient.FreeIP.
-func (c *internalAddressClient) FreeIP(ctx context.Context, addressID string, owner AddressOwner) error {
+func (c *internalAddressClient) FreeIP(ctx context.Context, addressID string) error {
 	if addressID == "" {
 		return fmt.Errorf("%w: address_id is empty", domain.ErrInvalidArg)
 	}
-	_ = owner // owner reserved для будущей verify-before-delete CAS-семантики
 
 	var op *operationpb.Operation
 	if err := retry.OnUnavailable(ctx, func(ctx context.Context) error {
@@ -383,14 +382,10 @@ func (c *internalAddressClient) SetReference(
 }
 
 // ClearReference — см. контракт InternalAddressClient.ClearReference.
-func (c *internalAddressClient) ClearReference(
-	ctx context.Context, addressID string, owner AddressOwner,
-) error {
+func (c *internalAddressClient) ClearReference(ctx context.Context, addressID string) error {
 	if addressID == "" {
 		return fmt.Errorf("%w: address_id is empty", domain.ErrInvalidArg)
 	}
-	_ = owner // proto ClearAddressReferenceRequest пока не различает owner —
-	// добавим verify когда kacho-vpc дополнит CAS-семантику.
 
 	return retry.OnUnavailable(ctx, func(ctx context.Context) error {
 		_, rerr := c.internal.ClearAddressReference(auth.PropagateOutgoing(ctx), &vpcpb.ClearAddressReferenceRequest{

@@ -61,14 +61,14 @@ func (s *fanoutCompensationStub) AttachExisting(_ context.Context, _ vpcclient.A
 	return nil, status.Error(codes.Unavailable, "AttachExisting not expected in fan-out compensation test")
 }
 
-func (s *fanoutCompensationStub) FreeIP(_ context.Context, addressID string, _ vpcclient.AddressOwner) error {
+func (s *fanoutCompensationStub) FreeIP(_ context.Context, addressID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.freeIPs = append(s.freeIPs, addressID)
 	return nil
 }
 
-func (s *fanoutCompensationStub) ClearReference(_ context.Context, addressID string, _ vpcclient.AddressOwner) error {
+func (s *fanoutCompensationStub) ClearReference(_ context.Context, addressID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.clears = append(s.clears, addressID)

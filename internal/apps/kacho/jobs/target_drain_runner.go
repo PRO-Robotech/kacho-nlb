@@ -86,6 +86,12 @@ type TargetDrainRunner struct {
 	pool     *pgxpool.Pool
 	logger   *slog.Logger
 	interval time.Duration
+
+	// onTickErr — test-only observation hook (nil в проде), вызывается с
+	// non-ctx ошибкой tick'а. Позволяет integration-тесту детерминированно
+	// дождаться реально произошедшей transient-ошибки вместо wall-clock sleep
+	// (audit TEST #7, CWE-367). Зеркалит FreeIPRunner.onFirstFree-паттерн.
+	onTickErr func(error)
 }
 
 // NewTargetDrainRunner создаёт runner. `interval` — период между tick'ами
@@ -144,6 +150,9 @@ func (r *TargetDrainRunner) tick(ctx context.Context) {
 		}
 		r.logger.ErrorContext(ctx, "target drain tick failed",
 			"err", err, "took", took)
+		if r.onTickErr != nil {
+			r.onTickErr(err)
+		}
 		return
 	}
 	r.logger.InfoContext(ctx, "target drain tick",

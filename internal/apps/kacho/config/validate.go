@@ -180,6 +180,18 @@ func (c Config) Validate() error {
 				"production mode: authz.trusted-forwarder-sans must be non-empty when mtls.server.enable=true "+
 					"(empty allow-list trusts any mTLS-verified peer to forward the end-user principal — impersonation vector)"))
 		}
+		// Postgres transport fail-closed (security.md «mTLS/TLS ВЕЗДЕ», CWE-319,
+		// audit SEC #1). Peer-рёбра проверяются выше; DB-соединение — тот же
+		// периметр: `sslmode=disable`/`allow`/`prefer` (или отсутствие sslmode,
+		// libpq-default 'prefer') допускает plaintext-канал, по которому
+		// DB-пароль (KACHO_NLB_DB_PASSWORD) и tenant-данные (VIP/listener/target)
+		// идут в открытую. В проде допустимы только `require`/`verify-ca`/
+		// `verify-full`. Проверяем лишь при непустом URL (пустой ловится выше).
+		if u := strings.TrimSpace(c.Repository.Postgres.URL); u != "" && !postgresSSLSecure(u) {
+			errs = multierr.Append(errs, fmt.Errorf(
+				"production mode: insecure Postgres transport — repository.postgres.url sslmode must be require|verify-ca|verify-full "+
+					"(disable/allow/prefer or unset permits a plaintext DB connection; forbidden)"))
+		}
 	}
 
 	// Jobs.target-drain (фаза B drain runner). Interval должен быть > 0;
@@ -258,6 +270,31 @@ func (c Config) peerEdges() []peerEdge {
 			mtlsKey: "iam-project", tlsKey: "iam",
 		},
 	}
+}
+
+// postgresSSLSecure — true, если DSN несёт защищённый sslmode
+// (`require`/`verify-ca`/`verify-full`). `disable`/`allow`/`prefer` и
+// отсутствие sslmode (libpq-default 'prefer', plaintext-fallback) → false.
+// Парсит query-param у URL-DSN (`postgres://…?sslmode=…`); при неудаче парса —
+// keyword-DSN-fallback через регистронезависимый скан `sslmode=<value>`.
+func postgresSSLSecure(dsn string) bool {
+	secure := map[string]struct{}{
+		"require": {}, "verify-ca": {}, "verify-full": {},
+	}
+	mode := ""
+	if u, err := url.Parse(dsn); err == nil && u.Query().Has("sslmode") {
+		mode = u.Query().Get("sslmode")
+	} else {
+		// keyword-form fallback (`host=… sslmode=require`) — грубый скан.
+		for _, tok := range strings.Fields(dsn) {
+			if kv := strings.SplitN(tok, "=", 2); len(kv) == 2 && strings.EqualFold(strings.TrimSpace(kv[0]), "sslmode") {
+				mode = kv[1]
+				break
+			}
+		}
+	}
+	_, ok := secure[strings.ToLower(strings.TrimSpace(mode))]
+	return ok
 }
 
 // validateEndpoint — `tcp://host:port` парсится как url, схема обязательна,
