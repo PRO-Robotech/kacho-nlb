@@ -4,9 +4,9 @@
 // Command migrator — отдельный binary мигратора схемы kacho-nlb.
 //
 // + /: отдельный CLI use-case = отдельный binary;
-// миграции — НЕ subcommand основного сервиса. Поддерживает разные dialect'ы
-// через [migrator.Dialect] interface (postgres сейчас; cockroach и другие
-// расширяются `RegisterDialect`).
+// миграции — НЕ subcommand основного сервиса. Диалект резолвится через
+// [migrator.Dialect] interface (postgres — единственный поддерживаемый; интерфейс
+// оставляет место под будущие диалекты без if-ветвей в Runner'е).
 //
 // Subcommands:
 //

@@ -159,3 +159,52 @@ interceptor** (unary/stream) на listener'е, не GUC на shared-DSN; он о
 именно request-path, не трогая migrator/DDL. До его появления полагаемся на
 context-deadline (sec-hardening r6, SEC-finding «no statement_timeout», принято как
 defense-in-depth-долг, не blocking-баг).
+
+## update_mask known-set валидируется per-resource inline, не через corelib `validate.UpdateMask`
+
+**Что.** Три мутируемых ресурса (`loadbalancer`/`targetgroup`/`listener`) держат
+собственный inline-цикл по `update_mask.paths` против package-local known-set
+(`knownUpdateFields` / `knownUpdateFieldsTG` / `listenerMutableMaskPaths`), а не
+зовут corelib `validate.UpdateMask(field, mask, known)`. Тексты unknown-field
+ошибок при этом **разные по ресурсам** и намеренно зафиксированы: LB/TG отдают
+`"unknown update_mask field: <p>"`, listener — `"field '<p>' is not recognised in
+update_mask"`.
+
+**Почему by-design (а не унифицировать в corelib).** Текст и форма error —
+**часть контракта** (`api-conventions.md`: «Тексты — часть контракта; меняются
+только осознанно (через тикет)»); они заассерчены в unit-тестах
+(`targetgroup/update_test.go` — `"unknown update_mask field: foo_bar_baz"`).
+Corelib `validate.UpdateMask` эмитит **другой** текст (`"unknown field in
+update_mask: <f>"`) в **структурированной** `FieldViolation`-обёртке
+(`coreerrors.InvalidArgument().AddFieldViolation`), тогда как nlb сейчас отдаёт
+flat-`status.Errorf`. Переключение на corelib поменяло бы wire-текст И форму detail
+для всех трёх Update — это ломающее изменение замороженного контракта, а не
+contract-safe LEAN. Кроме того immutable-ветка (hard-immutable поле в mask →
+фиксированный `"<field> is immutable after <R>.Create"`) — genuinely
+resource-specific и в corelib-helper не укладывается. Унификация unknown-field
+текста/формы к платформенному стандарту — отдельный **осознанный контрактный
+тикет** (обновить unit-тесты + newman в том же PR), не sec-hardening-рефактор
+(sec-hardening r7b, LEAN-finding «update_mask reimplemented per-resource»).
+
+## `InternalResourceLifecycleService.Subscribe` — оркестрация в transport-handler'е (не отдельный UseCase)
+
+**Что.** В отличие от остальных RPC сервиса (тонкий handler → per-RPC UseCase),
+server-stream `Subscribe` держит всю оркестрацию прямо в
+`internal_lifecycle/handler.go` (`Handler.Subscribe` / `streamSince`): semaphore
+acquire, initial catchup батчами, cursor-менеджмент, NOTIFY wait-loop с
+timeout/cancel-ветвлением, event→proto маппинг.
+
+**Почему by-design (а не выносить SubscribeUseCase).** Dependency rule **не**
+нарушен: весь DB-доступ спрятан за портом `kacho.LifecycleFeed` (pgx живёт в
+repo-слое, не в handler'е) — handler зависит только от порта + proto-типов
+stream'а. Оставшаяся логика — это управление жизненным циклом самого gRPC-стрима
+(она держит `stream.Send`, `stream.Context()`, dedicated LISTEN-conn и
+semaphore-слот на всё время подписки), которая неотделима от transport-объекта и
+не является доменной бизнес-логикой kacho-nlb (нет мутаций ресурсов, нет
+инвариантов — это чистый read-fan-out outbox-фида для kacho-iam). Выделение
+«UseCase», который принимает `Sender`-callback и `LifecycleFeed`, добавило бы слой
+косвенности вокруг того же стрим-controlflow без выигрыша в тестируемости (текущий
+`handler_test.go` уже гоняет catchup/wait-loop через fake-`LifecycleFeed`). Осознанный
+trade-off «stream-controlflow рядом со stream-объектом» в пользу когезии
+transport-owned жизненного цикла стрима (sec-hardening r7b, ARCH-finding «Subscribe
+orchestration in handler»).

@@ -236,3 +236,141 @@ func TestTargetGroup_Update_OCC_StaleXminConflict(t *testing.T) {
 	assert.True(t, errors.Is(bErr, kacho.ErrFailedPrecondition),
 		"stale-xmin target-group Update must be FailedPrecondition, got %v", bErr)
 }
+
+// TestListener_Update_OCC_ConcurrentExactlyOneWins — real goroutine race for the
+// listener xmin CAS (parity with TestLB_Update_OCC_ConcurrentExactlyOneWins): two
+// Updates share one xmin snapshot; exactly one commits, the other is OCC-rejected
+// (never a silent double-success that would lose a field). The xmin CAS SQL is the
+// same shape across resources, but per rule #10/#12 each contested write path
+// carries its own concurrent-goroutine test so a listener-specific regression
+// (e.g. widening writer.Update into a read-then-write) is caught GREEN→RED here.
+// Errors are collected and asserted on the MAIN goroutine (never require.* inside a
+// child goroutine).
+func TestListener_Update_OCC_ConcurrentExactlyOneWins(t *testing.T) {
+	repo, cleanup := newRepo(t, setupTestDB(t))
+	defer cleanup()
+	ctx := context.Background()
+
+	lb := newLB("prj01OCCLST00000002l", "occ-lst-conc-lb")
+	lst := newListener(lb.ID, "prj01OCCLST00000002l", "occ-lst-conc", 443)
+	commitWriter(t, repo, func(w kacho.RepositoryWriter) {
+		_, err := w.LoadBalancers().Insert(ctx, lb)
+		require.NoError(t, err)
+		_, err = w.Listeners().Insert(ctx, lst)
+		require.NoError(t, err)
+	})
+
+	rd, err := repo.Reader(ctx)
+	require.NoError(t, err)
+	snap, err := rd.Listeners().Get(ctx, string(lst.ID))
+	require.NoError(t, err)
+	_ = rd.Close()
+	sharedXmin := snap.Xmin
+
+	mutate := []func(*domain.Listener){
+		func(o *domain.Listener) { o.Description = "occ-lst-a" },
+		func(o *domain.Listener) { o.Name = domain.LbName("occ-lst-conc-renamed") },
+	}
+	var wg sync.WaitGroup
+	errs := make([]error, 2)
+	for i := 0; i < 2; i++ {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			obj := snap.Listener
+			mutate[idx](&obj)
+			w, werr := repo.Writer(ctx)
+			if werr != nil {
+				errs[idx] = werr
+				return
+			}
+			if _, uerr := w.Listeners().Update(ctx, &obj, sharedXmin); uerr != nil {
+				w.Abort()
+				errs[idx] = uerr
+				return
+			}
+			errs[idx] = w.Commit()
+		}(i)
+	}
+	wg.Wait()
+
+	nSuccess, nConflict := 0, 0
+	for _, e := range errs {
+		switch {
+		case e == nil:
+			nSuccess++
+		case errors.Is(e, kacho.ErrFailedPrecondition):
+			nConflict++
+		default:
+			t.Fatalf("unexpected listener Update error: %v", e)
+		}
+	}
+	assert.Equal(t, 1, nSuccess, "exactly one concurrent listener Update commits")
+	assert.Equal(t, 1, nConflict, "the other is OCC-rejected (no silent lost update)")
+}
+
+// TestTargetGroup_Update_OCC_ConcurrentExactlyOneWins — real goroutine race for the
+// target-group xmin CAS (parity with TestLB_Update_OCC_ConcurrentExactlyOneWins):
+// two Updates share one xmin snapshot; exactly one commits, the other is
+// OCC-rejected. Rule #10/#12 mandates a per-path concurrent test even though the CAS
+// SQL is shared — a regression in targetGroupWriter.Update alone must not ship GREEN.
+// Errors are collected and asserted on the MAIN goroutine.
+func TestTargetGroup_Update_OCC_ConcurrentExactlyOneWins(t *testing.T) {
+	repo, cleanup := newRepo(t, setupTestDB(t))
+	defer cleanup()
+	ctx := context.Background()
+
+	tg := newTG("prj01OCCTG000000002l", "occ-tg-conc")
+	commitWriter(t, repo, func(w kacho.RepositoryWriter) {
+		_, err := w.TargetGroups().Insert(ctx, tg)
+		require.NoError(t, err)
+	})
+
+	rd, err := repo.Reader(ctx)
+	require.NoError(t, err)
+	snap, err := rd.TargetGroups().Get(ctx, string(tg.ID))
+	require.NoError(t, err)
+	_ = rd.Close()
+	sharedXmin := snap.Xmin
+
+	mutate := []func(*domain.TargetGroup){
+		func(o *domain.TargetGroup) { o.DeregistrationDelaySeconds = 111 },
+		func(o *domain.TargetGroup) { o.Name = domain.LbName("occ-tg-conc-renamed") },
+	}
+	var wg sync.WaitGroup
+	errs := make([]error, 2)
+	for i := 0; i < 2; i++ {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			obj := snap.TargetGroup
+			mutate[idx](&obj)
+			w, werr := repo.Writer(ctx)
+			if werr != nil {
+				errs[idx] = werr
+				return
+			}
+			if _, uerr := w.TargetGroups().Update(ctx, &obj, sharedXmin); uerr != nil {
+				w.Abort()
+				errs[idx] = uerr
+				return
+			}
+			errs[idx] = w.Commit()
+		}(i)
+	}
+	wg.Wait()
+
+	nSuccess, nConflict := 0, 0
+	for _, e := range errs {
+		switch {
+		case e == nil:
+			nSuccess++
+		case errors.Is(e, kacho.ErrFailedPrecondition):
+			nConflict++
+		default:
+			t.Fatalf("unexpected target-group Update error: %v", e)
+		}
+	}
+	assert.Equal(t, 1, nSuccess, "exactly one concurrent target-group Update commits")
+	assert.Equal(t, 1, nConflict, "the other is OCC-rejected (no silent lost update)")
+}
