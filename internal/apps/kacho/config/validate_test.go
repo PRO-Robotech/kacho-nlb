@@ -198,20 +198,43 @@ func TestValidate_Production_SecureTransport_OK(t *testing.T) {
 	}
 }
 
-// TestValidate_Production_AuthnTLSSatisfiesServerTransport — one-way TLS+JWT
-// (authn.type=tls) удовлетворяет требованию защищённого server-транспорта (mTLS
-// на listener'е не обязателен, если есть TLS+JWT user→edge).
-func TestValidate_Production_AuthnTLSSatisfiesServerTransport(t *testing.T) {
+// TestValidate_Production_RejectsDeadAuthnTLS — authn.type=tls в production ОБЯЗАН
+// быть отвергнут: это МЁРТВОЕ значение. cfg.Authn не проброшен ни в один транспорт
+// (server-creds строятся исключительно из grpcsrv.TLSServerCreds(cfg.MTLS.Server) в
+// composition root), поэтому authn.type=tls НЕ настраивает TLS на listener'ах — boot
+// поднял бы plaintext gRPC на public И internal :9091, доверяя client-asserted
+// principal без mTLS (CWE-319/CWE-290, audit SEC HIGH). Fail-closed: prod требует
+// mtls.server.enable=true; dead authn.type=tls отвергается, чтобы оператор не принял
+// его за реальную transport-security. RED до фикса (сейчас проходит как «one-way TLS»).
+func TestValidate_Production_RejectsDeadAuthnTLS(t *testing.T) {
 	cfg := minimalValidConfig()
 	cfg.ModeRaw = "production"
 	cfg.Authz.IAM.Addr = "iam.kacho.svc:9091"
 	cfg.MTLS.IAMRegister.Enable = true
 	cfg.Authz.ListFilter.Enabled = true
+	// authn.type=tls (мёртвое значение) вместо mtls.server → должно быть отвергнуто.
 	cfg.Authn.Type = "tls"
 	cfg.Authn.TLS.KeyFile = "/etc/tls/key.pem"
 	cfg.Authn.TLS.CertFile = "/etc/tls/cert.pem"
-	if err := cfg.Validate(); err != nil {
-		t.Fatalf("production + authn.tls + iam mTLS: unexpected err: %v", err)
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "authn.type=tls") {
+		t.Fatalf("expected dead authn.type=tls rejection in production, got %v", err)
+	}
+}
+
+// TestValidate_Production_RejectsDeadAuthnTLS_EvenWithServerMTLS — dead authn.type=tls
+// отвергается в production ДАЖЕ когда реальный server-mTLS уже включён: knob мёртвый и
+// вводит оператора в заблуждение, поэтому его присутствие в prod-конфиге — ошибка (не
+// silent-ignore). RED до фикса (mtls.server удовлетворял serverSecure, authn.type
+// молча принимался).
+func TestValidate_Production_RejectsDeadAuthnTLS_EvenWithServerMTLS(t *testing.T) {
+	cfg := productionSecureConfig() // mtls.server.enable=true, forwarder-sans set
+	cfg.Authn.Type = "tls"
+	cfg.Authn.TLS.KeyFile = "/etc/tls/key.pem"
+	cfg.Authn.TLS.CertFile = "/etc/tls/cert.pem"
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "authn.type=tls") {
+		t.Fatalf("expected dead authn.type=tls rejection in production even with server mTLS, got %v", err)
 	}
 }
 
@@ -299,25 +322,6 @@ func TestValidate_Production_MTLSWithTrustedForwarderSANs_OK(t *testing.T) {
 	cfg.Authz.TrustedForwarderSANs = []string{"spiffe://kacho.cloud/ns/kacho/sa/api-gateway"}
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("production + mTLS + forwarder allow-list: unexpected err: %v", err)
-	}
-}
-
-// TestValidate_Production_OneWayTLS_NoForwarderSANsRequired — production с
-// authn.type=tls (one-way TLS, mTLS-server off) НЕ требует forwarder-sans: без
-// mTLS ни один peer не verified, forwarded principal снимается с любого peer'а →
-// SystemPrincipal → fail-closed. Vulnerability (trust-all-verified) не возникает.
-func TestValidate_Production_OneWayTLS_NoForwarderSANsRequired(t *testing.T) {
-	cfg := minimalValidConfig()
-	cfg.ModeRaw = "production"
-	cfg.Authz.IAM.Addr = "iam.kacho.svc:9091"
-	cfg.MTLS.IAMRegister.Enable = true
-	cfg.Authz.ListFilter.Enabled = true
-	cfg.Authn.Type = "tls"
-	cfg.Authn.TLS.KeyFile = "/etc/tls/key.pem"
-	cfg.Authn.TLS.CertFile = "/etc/tls/cert.pem"
-	cfg.Authz.TrustedForwarderSANs = nil
-	if err := cfg.Validate(); err != nil {
-		t.Fatalf("production one-way TLS without forwarder-sans: unexpected err: %v", err)
 	}
 }
 

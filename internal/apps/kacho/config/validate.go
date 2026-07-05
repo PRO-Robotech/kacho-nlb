@@ -125,11 +125,27 @@ func (c Config) Validate() error {
 	// listener и insecure peer-вызовы в проде запрещены — boot отвергает insecure
 	// prod-конфиг (не silent insecure-fallback).
 	if mode == ModeProduction {
-		// Server listener: mutual TLS (mtls.server) ЛИБО one-way TLS+JWT (authn.type=tls).
-		serverSecure := c.MTLS.Server.Enable || strings.EqualFold(strings.TrimSpace(c.Authn.Type), "tls")
-		if !serverSecure {
+		// Server listener transport-security: ТОЛЬКО реальный server-cred
+		// grpcsrv.TLSServerCreds(cfg.MTLS.Server) (composition root,
+		// cmd/kacho-loadbalancer/main.go). authn.type=tls — МЁРТВОЕ значение: cfg.Authn
+		// НЕ проброшен ни в один транспорт (grep: читается только здесь, в validate.go),
+		// поэтому он НЕ настраивает TLS на listener'ах. Прежний gate принимал его как
+		// «one-way TLS+JWT» и пропускал prod-конфиг с mtls.server.enable=false → boot
+		// поднимал plaintext gRPC на public И internal :9091, доверяя client-asserted
+		// principal без mTLS (CWE-319/CWE-290, audit SEC HIGH). Fail-closed, паритет с
+		// kacho-vpc/kacho-compute (server-mTLS — обязателен, gate только на реальном
+		// mTLS-настройке):
+		//   1) dead authn.type=tls отвергается явно (оператор не примет его за transport-
+		//      security и не оставит listener plaintext);
+		//   2) mtls.server.enable=true обязателен (единственный источник server-creds).
+		if strings.EqualFold(strings.TrimSpace(c.Authn.Type), "tls") {
 			errs = multierr.Append(errs, fmt.Errorf(
-				"production mode: insecure server transport — set mtls.server.enable=true or authn.type=tls (plaintext listener forbidden)"))
+				"production mode: authn.type=tls is a dead/unwired transport setting — it configures no server TLS "+
+					"(listeners would run plaintext); remove it and set mtls.server.enable=true for real server transport security"))
+		}
+		if !c.MTLS.Server.Enable {
+			errs = multierr.Append(errs, fmt.Errorf(
+				"production mode: insecure server transport — set mtls.server.enable=true (plaintext listener forbidden)"))
 		}
 		// nlb→iam authz edge (per-RPC InternalIAMService.Check, internal :9091) обязан
 		// быть mTLS: иначе Check идёт по plaintext и подделанная identity не отсекается.
@@ -170,11 +186,11 @@ func (c Config) Validate() error {
 		// x-kacho-principal-* ЛЮБОМУ mTLS-verified peer'у» (back-compat trust-all).
 		// В общем mTLS-mesh (все воркеры под одним internal-CA) это confused-deputy:
 		// любой сервис с валидным клиентским cert'ом форжит произвольного principal'а,
-		// и FGA Check оценивает подделанный subject. В проде с mTLS-server allow-list
-		// обязан быть непустым (перечисляет SAN доверенного форвардера — api-gateway).
-		// При one-way TLS (mtls.server off) ни один peer не verified → forwarded
-		// principal снимается с любого peer'а → SystemPrincipal → fail-closed, поэтому
-		// allow-list там не требуется.
+		// и FGA Check оценивает подделанный subject. В проде mtls.server.enable
+		// обязателен (проверено выше — единственная реальная server-transport-security),
+		// поэтому allow-list обязан быть непустым (перечисляет SAN доверенного
+		// форвардера — api-gateway). Guard оставлен gated на mtls.server.Enable: если он
+		// off, ошибка insecure-server-transport уже поднята выше — не дублируем.
 		if c.MTLS.Server.Enable && len(c.Authz.TrustedForwarderSANs) == 0 {
 			errs = multierr.Append(errs, fmt.Errorf(
 				"production mode: authz.trusted-forwarder-sans must be non-empty when mtls.server.enable=true "+
