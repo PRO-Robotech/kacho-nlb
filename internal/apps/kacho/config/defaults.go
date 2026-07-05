@@ -67,7 +67,6 @@ func RegisterDefaults(v *viper.Viper) {
 	v.SetDefault("authz.iam.request-timeout", "500ms")
 	v.SetDefault("authz.cache.enable", true)
 	v.SetDefault("authz.cache.ttl", "5s") // ≤10s
-	v.SetDefault("authz.cache.size", 10000)
 	v.SetDefault("authz.listen-invalidator.enable", false)
 	v.SetDefault("authz.listen-invalidator.channel", "kacho_iam_subjects")
 	// RBAC (issue): per-object filtered List. Default ON

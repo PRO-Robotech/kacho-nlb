@@ -61,37 +61,29 @@ func NewInterceptor(opts Options) (*authz.Interceptor, *authz.Cache, error) {
 	}
 	cache := authz.NewCache(opts.CacheTTL)
 
+	// Один источник истины для общих полей; ветки различаются ТОЛЬКО Client/
+	// Breakglass (см. audit LEAN #6 — раньше два byte-идентичных литерала легко
+	// расходились при добавлении нового поля в одну из копий).
+	base := authz.InterceptorOptions{
+		ServiceName:          opts.ServiceName,
+		Map:                  PermissionMap(),
+		Cache:                cache,
+		Logger:               opts.Logger,
+		DenyRateLimitPerSec:  opts.DenyRateLimitPerSec,
+		CheckTimeout:         opts.CheckTimeout,
+		AllowSystemPrincipal: opts.AllowSystemPrincipal,
+	}
+
 	if opts.Breakglass {
-		// Breakglass-mode: Client = nil, Cache всё равно создаём (defensive —
-		// interceptor его проверяет nil-guard'ом, но без нагрузки на cache в
-		// этом mode'е).
-		return authz.NewInterceptor(authz.InterceptorOptions{
-			ServiceName:          opts.ServiceName,
-			Map:                  PermissionMap(),
-			Client:               nil,
-			Cache:                cache,
-			Logger:               opts.Logger,
-			Breakglass:           true,
-			DenyRateLimitPerSec:  opts.DenyRateLimitPerSec,
-			CheckTimeout:         opts.CheckTimeout,
-			AllowSystemPrincipal: opts.AllowSystemPrincipal,
-		}), cache, nil
+		// Breakglass-mode: Client = nil, Cache всё равно создан (defensive —
+		// interceptor его проверяет nil-guard'ом, без нагрузки на cache в этом mode'е).
+		base.Breakglass = true
+		return authz.NewInterceptor(base), cache, nil
 	}
 
 	if opts.IAMCheck == nil {
 		return nil, nil, ErrIAMCheckNotConfigured
 	}
-
-	adapter := NewIAMCheckClient(opts.IAMCheck)
-	return authz.NewInterceptor(authz.InterceptorOptions{
-		ServiceName:          opts.ServiceName,
-		Map:                  PermissionMap(),
-		Client:               adapter,
-		Cache:                cache,
-		Logger:               opts.Logger,
-		Breakglass:           false,
-		DenyRateLimitPerSec:  opts.DenyRateLimitPerSec,
-		CheckTimeout:         opts.CheckTimeout,
-		AllowSystemPrincipal: opts.AllowSystemPrincipal,
-	}), cache, nil
+	base.Client = NewIAMCheckClient(opts.IAMCheck)
+	return authz.NewInterceptor(base), cache, nil
 }

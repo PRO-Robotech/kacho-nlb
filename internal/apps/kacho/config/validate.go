@@ -117,9 +117,6 @@ func (c Config) Validate() error {
 	if c.Authz.IAM.Addr == "" && mode == ModeProduction {
 		errs = multierr.Append(errs, fmt.Errorf("authz.iam.addr: required in production mode"))
 	}
-	if c.Authz.Cache.Size < 0 {
-		errs = multierr.Append(errs, fmt.Errorf("authz.cache.size must be >= 0, got %d", c.Authz.Cache.Size))
-	}
 	if c.Authz.Breakglass && mode == ModeProduction {
 		errs = multierr.Append(errs, fmt.Errorf("authz.breakglass: forbidden in production mode (dev-only)"))
 	}

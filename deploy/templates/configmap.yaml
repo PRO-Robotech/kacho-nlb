@@ -93,7 +93,6 @@ data:
       cache:
         enable: {{ .Values.config.authz.cache.enable }}
         ttl: {{ .Values.config.authz.cache.ttl }}
-        size: {{ .Values.config.authz.cache.size }}
       listen-invalidator:
         enable: {{ .Values.config.authz.listenInvalidator.enable }}
         channel: {{ .Values.config.authz.listenInvalidator.channel | quote }}

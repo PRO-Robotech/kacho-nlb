@@ -356,19 +356,26 @@ func TestDrainOnce_MultiReplica(t *testing.T) {
 	var wg sync.WaitGroup
 	deletedTotals := make([]int64, replicas)
 	tgTotals := make([]int, replicas)
+	// Per-goroutine error slots asserted on the MAIN goroutine after Wait:
+	// require.NoError inside a child goroutine only Goexits that goroutine
+	// (leaving totals[idx]=0), which could mask a real drain error as GREEN.
+	drainErrs := make([]error, replicas)
 	for i := 0; i < replicas; i++ {
 		wg.Add(1)
 		go func(idx int) {
 			defer wg.Done()
 			<-start
 			deleted, tgs, e := r.drainOnce(ctx)
-			require.NoError(t, e)
+			drainErrs[idx] = e
 			deletedTotals[idx] = deleted
 			tgTotals[idx] = tgs
 		}(i)
 	}
 	close(start)
 	wg.Wait()
+	for idx, e := range drainErrs {
+		require.NoErrorf(t, e, "replica %d drainOnce", idx)
+	}
 
 	var sumDeleted int64
 	var sumTGs int

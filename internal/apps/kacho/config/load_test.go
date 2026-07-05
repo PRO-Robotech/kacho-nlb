@@ -90,9 +90,6 @@ func TestLoad_DefaultsApplied(t *testing.T) {
 	if cfg.Authz.Cache.TTL != 5*time.Second {
 		t.Errorf("default Authz.Cache.TTL: got %v, want 5s", cfg.Authz.Cache.TTL)
 	}
-	if cfg.Authz.Cache.Size != 10000 {
-		t.Errorf("default Authz.Cache.Size: got %d", cfg.Authz.Cache.Size)
-	}
 	if cfg.Jobs.TargetDrain.Interval != 10*time.Second {
 		t.Errorf("default Jobs.TargetDrain.Interval: got %v, want 10s", cfg.Jobs.TargetDrain.Interval)
 	}
