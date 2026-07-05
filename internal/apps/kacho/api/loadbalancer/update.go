@@ -121,8 +121,9 @@ func (u *UpdateLoadBalancerUseCase) Execute(
 	}
 
 	emitMirror := labelsInMask(mask)
+	expectedXmin := cur.Xmin
 	operations.Run(ctx, u.opsRepo, op.ID, func(workerCtx context.Context) (*anypb.Any, error) {
-		return u.doUpdate(workerCtx, updated, emitMirror)
+		return u.doUpdate(workerCtx, updated, expectedXmin, emitMirror)
 	})
 
 	return &op, nil
@@ -156,14 +157,14 @@ func disabledAnnounceZonesInMask(mask []string) bool {
 }
 
 // doUpdate — worker: Writer → Update + outbox UPDATED (+ FGA-register при labels) → Commit.
-func (u *UpdateLoadBalancerUseCase) doUpdate(ctx context.Context, lb domain.LoadBalancer, emitMirror bool) (*anypb.Any, error) {
+func (u *UpdateLoadBalancerUseCase) doUpdate(ctx context.Context, lb domain.LoadBalancer, expectedXmin string, emitMirror bool) (*anypb.Any, error) {
 	w, err := u.repo.Writer(ctx)
 	if err != nil {
 		return nil, mapDomainErr(err)
 	}
 	defer w.Abort()
 
-	updated, err := w.LoadBalancers().Update(ctx, &lb)
+	updated, err := w.LoadBalancers().Update(ctx, &lb, expectedXmin)
 	if err != nil {
 		return nil, mapDomainErr(err)
 	}

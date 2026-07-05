@@ -259,7 +259,7 @@ func (w *fakeLBWriter) Insert(_ context.Context, lb *domain.LoadBalancer) (*kach
 	w.r.loadBalancers[string(lb.ID)] = rec
 	return rec, nil
 }
-func (w *fakeLBWriter) Update(context.Context, *domain.LoadBalancer) (*kachorepo.LoadBalancerRecord, error) {
+func (w *fakeLBWriter) Update(context.Context, *domain.LoadBalancer, string) (*kachorepo.LoadBalancerRecord, error) {
 	return nil, errors.New("fakeLBWriter.Update not implemented")
 }
 func (w *fakeLBWriter) AttachVIP(context.Context, string, domain.IPVersion, string, string, domain.VipOrigin) (*kachorepo.LoadBalancerRecord, error) {
@@ -380,7 +380,7 @@ func (lw *fakeListenerWriter) Insert(_ context.Context, l *domain.Listener) (*ka
 	}
 	return rec, nil
 }
-func (lw *fakeListenerWriter) Update(_ context.Context, l *domain.Listener) (*kachorepo.ListenerRecord, error) {
+func (lw *fakeListenerWriter) Update(_ context.Context, l *domain.Listener, _ string) (*kachorepo.ListenerRecord, error) {
 	lw.r.mu.Lock()
 	defer lw.r.mu.Unlock()
 	cur, ok := lw.r.listeners[string(l.ID)]
@@ -543,7 +543,7 @@ func (w *fakeTGWriter) HasAttachedLB(context.Context, string) (bool, error) {
 func (w *fakeTGWriter) Insert(context.Context, *domain.TargetGroup) (*kachorepo.TargetGroupRecord, error) {
 	return nil, errors.New("fakeTGWriter.Insert not implemented")
 }
-func (w *fakeTGWriter) Update(context.Context, *domain.TargetGroup) (*kachorepo.TargetGroupRecord, error) {
+func (w *fakeTGWriter) Update(context.Context, *domain.TargetGroup, string) (*kachorepo.TargetGroupRecord, error) {
 	return nil, errors.New("fakeTGWriter.Update not implemented")
 }
 func (w *fakeTGWriter) SetStatusCAS(context.Context, string, domain.TargetGroupStatus, domain.TargetGroupStatus) (*kachorepo.TargetGroupRecord, error) {

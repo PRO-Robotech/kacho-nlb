@@ -54,9 +54,21 @@ func setDefaultTG(t testing.TB, repo kacho.Repository, lst *domain.Listener, tgI
 	ctx := context.Background()
 	lst.DefaultTargetGroupID = option.MustNewOption(tgID)
 	commitWriter(t, repo, func(w kacho.RepositoryWriter) {
-		_, err := w.Listeners().Update(ctx, lst)
+		_, err := updateListenerOCC(ctx, w, lst)
 		require.NoError(t, err)
 	})
+}
+
+// updateListenerOCC — Get current xmin (OCC snapshot) then Update, mirroring the
+// use-case read-modify-write flow now that listenerWriter.Update enforces the
+// `WHERE xmin::text=$exp` CAS. Returns a plain error (no *testing.T) so it is safe
+// to call from concurrency-test goroutines.
+func updateListenerOCC(ctx context.Context, w kacho.RepositoryWriter, l *domain.Listener) (*kacho.ListenerRecord, error) {
+	cur, err := w.Listeners().Get(ctx, string(l.ID))
+	if err != nil {
+		return nil, err
+	}
+	return w.Listeners().Update(ctx, l, cur.Xmin)
 }
 
 // TestListener_GWT_6_0_01_SetDefaultOnAttachedTG_Happy — установка default на
@@ -71,7 +83,7 @@ func TestListener_GWT_6_0_01_SetDefaultOnAttachedTG_Happy(t *testing.T) {
 	// Пустой default — допустим без какого-либо attached TG (FK не проверяется).
 	commitWriter(t, repo, func(w kacho.RepositoryWriter) {
 		lst.DefaultTargetGroupID = option.ValueOf[domain.ResourceID]{}
-		_, err := w.Listeners().Update(ctx, lst)
+		_, err := updateListenerOCC(ctx, w, lst)
 		require.NoError(t, err, "empty default_target_group_id must be allowed (no FK on empty)")
 	})
 
@@ -79,7 +91,7 @@ func TestListener_GWT_6_0_01_SetDefaultOnAttachedTG_Happy(t *testing.T) {
 
 	lst.DefaultTargetGroupID = option.MustNewOption(tg.ID)
 	commitWriter(t, repo, func(w kacho.RepositoryWriter) {
-		rec, err := w.Listeners().Update(ctx, lst)
+		rec, err := updateListenerOCC(ctx, w, lst)
 		require.NoError(t, err, "default on attached TG must succeed")
 		got, ok := rec.DefaultTargetGroupID.Maybe()
 		require.True(t, ok)
@@ -111,7 +123,7 @@ func TestListener_GWT_6_0_02_SetDefaultOnUnattachedTG_FailedPrecondition(t *test
 	w, err := repo.Writer(ctx)
 	require.NoError(t, err)
 	defer w.Abort()
-	_, err = w.Listeners().Update(ctx, lst)
+	_, err = updateListenerOCC(ctx, w, lst)
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, kacho.ErrFailedPrecondition), "composite FK 23503 → ErrFailedPrecondition, got %v", err)
 	assert.Contains(t, err.Error(), defaultTGNotAttachedMsg, "verbatim contract text required")
@@ -131,7 +143,7 @@ func TestListener_GWT_6_0_02_SetDefaultOnNonexistentTG_FailedPrecondition(t *tes
 	w, err := repo.Writer(ctx)
 	require.NoError(t, err)
 	defer w.Abort()
-	_, err = w.Listeners().Update(ctx, lst)
+	_, err = updateListenerOCC(ctx, w, lst)
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, kacho.ErrFailedPrecondition), "got %v", err)
 	assert.Contains(t, err.Error(), defaultTGNotAttachedMsg)
@@ -170,7 +182,7 @@ func TestListener_GWT_6_0_03_DetachDefaultTG_BlockedByRESTRICT(t *testing.T) {
 	// Очистить default → detach проходит.
 	lst.DefaultTargetGroupID = option.ValueOf[domain.ResourceID]{}
 	commitWriter(t, repo, func(w kacho.RepositoryWriter) {
-		_, err := w.Listeners().Update(ctx, lst)
+		_, err := updateListenerOCC(ctx, w, lst)
 		require.NoError(t, err)
 	})
 	commitWriter(t, repo, func(w kacho.RepositoryWriter) {
@@ -223,7 +235,7 @@ func TestListener_GWT_6_0_04_ConcurrentDetachVsClearDefault_NoTornState(t *testi
 		if err != nil {
 			return
 		}
-		if _, uerr := w1.Listeners().Update(ctx, &cleared); uerr != nil {
+		if _, uerr := updateListenerOCC(ctx, w1, &cleared); uerr != nil {
 			w1.Abort()
 			return
 		}
@@ -299,7 +311,7 @@ func TestListener_GWT_6_0_04_ConcurrentAttachVsSetDefault_NoTornState(t *testing
 			return
 		}
 		defer w.Abort()
-		if _, uerr := w.Listeners().Update(ctx, &withDefault); uerr != nil {
+		if _, uerr := updateListenerOCC(ctx, w, &withDefault); uerr != nil {
 			return
 		}
 		_ = w.Commit()

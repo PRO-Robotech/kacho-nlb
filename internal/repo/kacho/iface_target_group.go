@@ -40,7 +40,9 @@ type TargetGroupWriterIface interface {
 
 	// Update — мутирует name/description/labels/health_check/dereg_delay/
 	// slow_start. Immutable project_id/region_id обрабатывается в use-case.
-	Update(ctx context.Context, tg *domain.TargetGroup) (*TargetGroupRecord, error)
+	// expectedXmin — OCC-snapshot (record.Xmin из Get); concurrent-modify → 0 rows
+	// → ErrFailedPrecondition (защита от lost update на partial-mask Update).
+	Update(ctx context.Context, tg *domain.TargetGroup, expectedXmin string) (*TargetGroupRecord, error)
 
 	// SetStatusCAS — atomic CAS на status (ACTIVE ↔ DELETING).
 	SetStatusCAS(ctx context.Context, id string, expected, newStatus domain.TargetGroupStatus) (*TargetGroupRecord, error)

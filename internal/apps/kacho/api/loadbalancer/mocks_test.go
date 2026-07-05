@@ -294,7 +294,7 @@ func (q *fakeLBWriter) Insert(ctx context.Context, lb *domain.LoadBalancer) (*ka
 	return rec, nil
 }
 
-func (q *fakeLBWriter) Update(ctx context.Context, lb *domain.LoadBalancer) (*kachorepo.LoadBalancerRecord, error) {
+func (q *fakeLBWriter) Update(ctx context.Context, lb *domain.LoadBalancer, expectedXmin string) (*kachorepo.LoadBalancerRecord, error) {
 	if q.w.r.failOnUpdate != nil {
 		return nil, q.w.r.failOnUpdate
 	}
@@ -456,7 +456,7 @@ func (q *fakeListenerWriter) ListByLB(ctx context.Context, lbID string, p kachor
 func (q *fakeListenerWriter) Insert(ctx context.Context, l *domain.Listener) (*kachorepo.ListenerRecord, error) {
 	return nil, errors.New("not implemented in fake")
 }
-func (q *fakeListenerWriter) Update(ctx context.Context, l *domain.Listener) (*kachorepo.ListenerRecord, error) {
+func (q *fakeListenerWriter) Update(ctx context.Context, l *domain.Listener, _ string) (*kachorepo.ListenerRecord, error) {
 	return nil, errors.New("not implemented in fake")
 }
 func (q *fakeListenerWriter) SetStatusCAS(ctx context.Context, id string, expected, newStatus domain.ListenerStatus) (*kachorepo.ListenerRecord, error) {
@@ -535,7 +535,7 @@ func (q *fakeTGWriter) HasAttachedLB(ctx context.Context, tgID string) (bool, er
 func (q *fakeTGWriter) Insert(ctx context.Context, tg *domain.TargetGroup) (*kachorepo.TargetGroupRecord, error) {
 	return nil, errors.New("not implemented in fake")
 }
-func (q *fakeTGWriter) Update(ctx context.Context, tg *domain.TargetGroup) (*kachorepo.TargetGroupRecord, error) {
+func (q *fakeTGWriter) Update(ctx context.Context, tg *domain.TargetGroup, _ string) (*kachorepo.TargetGroupRecord, error) {
 	return nil, errors.New("not implemented in fake")
 }
 func (q *fakeTGWriter) SetStatusCAS(ctx context.Context, id string, expected, newStatus domain.TargetGroupStatus) (*kachorepo.TargetGroupRecord, error) {

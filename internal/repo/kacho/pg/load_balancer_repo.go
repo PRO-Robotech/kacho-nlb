@@ -23,7 +23,7 @@ const loadBalancerCols = `
     name, description, labels, type, status, session_affinity,
     deletion_protection, placement_type, disabled_announce_zones,
     ip_families, address_v4, address_v6, address_id_v4, address_id_v6,
-    vip_origin_v4, vip_origin_v6`
+    vip_origin_v4, vip_origin_v6, xmin::text`
 
 // loadBalancerReader — Get/List поверх произвольной pgx.Tx (read-only или RW).
 type loadBalancerReader struct {
@@ -58,7 +58,7 @@ func scanLB(row pgx.Row) (*kacho.LoadBalancerRecord, error) {
 		&nameStr, &descStr, &labelsRaw, &typeStr, &statusStr, &affinStr,
 		&rec.DeletionProtection, &placementStr, &disabledZones,
 		&ipFamilies, &addrV4, &addrV6, &addrIDV4, &addrIDV6,
-		&vipOriginV4, &vipOriginV6,
+		&vipOriginV4, &vipOriginV6, &rec.Xmin,
 	); err != nil {
 		return nil, err
 	}
@@ -347,15 +347,17 @@ func ipVersionsFromStrings(raw []string) []domain.IPVersion {
 // Update — мутирует name/description/labels/session_affinity/deletion_protection/
 // disabled_announce_zones. NB: type, placement_type, region_id, project_id,
 // status, VIP-binding — НЕ меняются тут (immutable / managed через отдельные методы).
-func (w *loadBalancerWriter) Update(ctx context.Context, lb *domain.LoadBalancer) (*kacho.LoadBalancerRecord, error) {
+func (w *loadBalancerWriter) Update(ctx context.Context, lb *domain.LoadBalancer, expectedXmin string) (*kacho.LoadBalancerRecord, error) {
 	labelsJSON, err := dto.LabelsToJSONB(lb.Labels)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", kacho.ErrInvalidArg, err)
 	}
-	// disabled_announce_zones — full-replace набора одной атомарной single-statement
-	// UPDATE: text[] переписывается целиком, под row-lock'ом. Конкурентные
-	// replace'ы сериализуются (второй ждёт commit первого и перезаписывает),
-	// итог — один из наборов целиком, без torn-state.
+	// OCC на read-modify-write (нет version-колонки): `WHERE xmin::text=$exp`
+	// (snapshot из предшествующего Get). Конкурентный writer, закоммитивший
+	// между Get и этим UPDATE, сдвинул xmin → 0 rows → FailedPrecondition (клиент
+	// перечитывает и повторяет). Без него partial-mask Update перезаписывал бы
+	// НЕ-masked поля stale-snapshot'ом (lost update: revert deletion_protection).
+	// disabled_announce_zones (text[]) переписывается целиком одной statement'ой.
 	q := fmt.Sprintf(`
         UPDATE kacho_nlb.load_balancers
            SET name = $2,
@@ -365,16 +367,20 @@ func (w *loadBalancerWriter) Update(ctx context.Context, lb *domain.LoadBalancer
                deletion_protection = $6,
                disabled_announce_zones = $7,
                updated_at = now()
-         WHERE id = $1
+         WHERE id = $1 AND xmin::text = $8
         RETURNING %s`, loadBalancerCols)
 	row := w.tx.QueryRow(ctx, q,
 		string(lb.ID),
 		string(lb.Name), string(lb.Description), labelsJSON,
 		string(lb.SessionAffinity), lb.DeletionProtection,
 		disabledZonesParam(lb.DisabledAnnounceZones),
+		expectedXmin,
 	)
 	rec, err := scanLB(row)
 	if err != nil {
+		if pgxIsNoRows(err) {
+			return nil, fmt.Errorf("%w: NetworkLoadBalancer %s was modified concurrently", kacho.ErrFailedPrecondition, string(lb.ID))
+		}
 		return nil, mapPgErr(err, "NetworkLoadBalancer", string(lb.ID))
 	}
 	return rec, nil

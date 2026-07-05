@@ -378,7 +378,7 @@ func (q *fakeTGWriter) Insert(_ context.Context, tg *domain.TargetGroup) (*kacho
 	return rec, nil
 }
 
-func (q *fakeTGWriter) Update(_ context.Context, tg *domain.TargetGroup) (*kachorepo.TargetGroupRecord, error) {
+func (q *fakeTGWriter) Update(_ context.Context, tg *domain.TargetGroup, _ string) (*kachorepo.TargetGroupRecord, error) {
 	if q.r.failOnUpdate != nil {
 		return nil, q.r.failOnUpdate
 	}
@@ -584,7 +584,7 @@ func (fakeLBStub) HasAttachedTargetGroups(context.Context, string) (bool, error)
 func (fakeLBStub) Insert(context.Context, *domain.LoadBalancer) (*kachorepo.LoadBalancerRecord, error) {
 	return nil, errors.New("not used")
 }
-func (fakeLBStub) Update(context.Context, *domain.LoadBalancer) (*kachorepo.LoadBalancerRecord, error) {
+func (fakeLBStub) Update(context.Context, *domain.LoadBalancer, string) (*kachorepo.LoadBalancerRecord, error) {
 	return nil, errors.New("not used")
 }
 func (fakeLBStub) AttachVIP(context.Context, string, domain.IPVersion, string, string, domain.VipOrigin) (*kachorepo.LoadBalancerRecord, error) {
@@ -617,7 +617,7 @@ func (fakeListenerStub) ListByLB(context.Context, string, kachorepo.Pagination) 
 func (fakeListenerStub) Insert(context.Context, *domain.Listener) (*kachorepo.ListenerRecord, error) {
 	return nil, errors.New("not used")
 }
-func (fakeListenerStub) Update(context.Context, *domain.Listener) (*kachorepo.ListenerRecord, error) {
+func (fakeListenerStub) Update(context.Context, *domain.Listener, string) (*kachorepo.ListenerRecord, error) {
 	return nil, errors.New("not used")
 }
 func (fakeListenerStub) SetStatusCAS(context.Context, string, domain.ListenerStatus, domain.ListenerStatus) (*kachorepo.ListenerRecord, error) {

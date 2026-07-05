@@ -118,8 +118,9 @@ func (u *UpdateTargetGroupUseCase) Execute(
 	// mask (full PATCH always reapplies labels). A non-labels Update is a mirror
 	// no-op (skip the intent to avoid a useless RegisterResource round-trip).
 	emitMirror := labelsInMaskTG(mask)
+	expectedXmin := cur.Xmin
 	operations.Run(ctx, u.opsRepo, op.ID, func(workerCtx context.Context) (*anypb.Any, error) {
-		return u.doUpdate(workerCtx, updated, emitMirror)
+		return u.doUpdate(workerCtx, updated, expectedXmin, emitMirror)
 	})
 	return &op, nil
 }
@@ -142,14 +143,14 @@ func labelsInMaskTG(mask []string) bool {
 // when labels changed) → Commit. The mirror-feed intent is written in the
 // SAME writer-tx as the resource UPDATE (no dual-write); the emitter stamps a
 // monotonic source_version so IAM applies the mirror last-source-state-wins.
-func (u *UpdateTargetGroupUseCase) doUpdate(ctx context.Context, tg domain.TargetGroup, emitMirror bool) (*anypb.Any, error) {
+func (u *UpdateTargetGroupUseCase) doUpdate(ctx context.Context, tg domain.TargetGroup, expectedXmin string, emitMirror bool) (*anypb.Any, error) {
 	w, err := u.repo.Writer(ctx)
 	if err != nil {
 		return nil, mapDomainErr(err)
 	}
 	defer w.Abort()
 
-	updated, err := w.TargetGroups().Update(ctx, &tg)
+	updated, err := w.TargetGroups().Update(ctx, &tg, expectedXmin)
 	if err != nil {
 		return nil, mapDomainErr(err)
 	}

@@ -19,7 +19,7 @@ const listenerCols = `
     id, load_balancer_id, project_id, region_id, created_at, updated_at,
     name, description, labels, protocol, port, target_port, ip_version,
     address_id, allocated_address, subnet_id, proxy_protocol_v2,
-    default_target_group_id, status, vip_origin`
+    default_target_group_id, status, vip_origin, xmin::text`
 
 type listenerReader struct {
 	tx pgx.Tx
@@ -50,7 +50,7 @@ func scanListener(row pgx.Row) (*kacho.ListenerRecord, error) {
 		&idStr, &lbIDStr, &projectIDs, &regionIDs, &rec.CreatedAt, &rec.UpdatedAt,
 		&nameStr, &descStr, &labelsRaw, &protoStr, &port, &tgtPort, &ipVerStr,
 		&addrIDStr, &allocAddr, &subnetIDs, &rec.ProxyProtocolV2,
-		&dfltTGStr, &statusStr, &vipOrigin,
+		&dfltTGStr, &statusStr, &vipOrigin, &rec.Xmin,
 	); err != nil {
 		return nil, err
 	}
@@ -203,11 +203,14 @@ func (w *listenerWriter) Insert(ctx context.Context, l *domain.Listener) (*kacho
 	return rec, nil
 }
 
-func (w *listenerWriter) Update(ctx context.Context, l *domain.Listener) (*kacho.ListenerRecord, error) {
+func (w *listenerWriter) Update(ctx context.Context, l *domain.Listener, expectedXmin string) (*kacho.ListenerRecord, error) {
 	labelsJSON, err := dto.LabelsToJSONB(l.Labels)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", kacho.ErrInvalidArg, err)
 	}
+	// OCC на read-modify-write (`WHERE xmin::text=$exp`): concurrent-modify между
+	// Get и этим UPDATE → 0 rows → FailedPrecondition (защита от lost update на
+	// partial-mask Update). См. data-integrity.md OCC / LoadBalancerRecord.Xmin.
 	q := fmt.Sprintf(`
         UPDATE kacho_nlb.listeners
            SET name = $2,
@@ -216,15 +219,19 @@ func (w *listenerWriter) Update(ctx context.Context, l *domain.Listener) (*kacho
                proxy_protocol_v2 = $5,
                default_target_group_id = $6,
                updated_at = now()
-         WHERE id = $1
+         WHERE id = $1 AND xmin::text = $7
         RETURNING %s`, listenerCols)
 	row := w.tx.QueryRow(ctx, q,
 		string(l.ID),
 		string(l.Name), string(l.Description), labelsJSON,
 		l.ProxyProtocolV2, dto.OptString(l.DefaultTargetGroupID),
+		expectedXmin,
 	)
 	rec, err := scanListener(row)
 	if err != nil {
+		if pgxIsNoRows(err) {
+			return nil, fmt.Errorf("%w: Listener %s was modified concurrently", kacho.ErrFailedPrecondition, string(l.ID))
+		}
 		return nil, mapPgErr(err, "Listener", string(l.ID))
 	}
 	return rec, nil

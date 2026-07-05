@@ -164,7 +164,9 @@ func TestLB_Update_MutatesMutable(t *testing.T) {
 	lb.Labels = domain.LabelsFromMap(map[string]string{"env": "prod"})
 
 	commitWriter(t, repo, func(w kacho.RepositoryWriter) {
-		rec, err := w.LoadBalancers().Update(ctx, lb)
+		cur, gerr := w.LoadBalancers().Get(ctx, string(lb.ID))
+		require.NoError(t, gerr)
+		rec, err := w.LoadBalancers().Update(ctx, lb, cur.Xmin)
 		require.NoError(t, err)
 		assert.Equal(t, domain.LbName("u-lb-new"), rec.Name)
 		assert.Equal(t, domain.LbDescription("updated"), rec.Description)

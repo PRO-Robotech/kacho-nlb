@@ -102,6 +102,7 @@ func (u *UpdateUseCase) Run(ctx context.Context, req *lbv1.UpdateListenerRequest
 		_ = rd.Close()
 		return nil, mapDomainErr(err)
 	}
+	expectedXmin := cur.Xmin // OCC snapshot for the worker-side Update.
 
 	// Apply mask-driven mutations on a copy of current domain entity. Empty mask →
 	// full-object PATCH: apply пропускает все mutable-поля (parity с
@@ -206,7 +207,7 @@ func (u *UpdateUseCase) Run(ctx context.Context, req *lbv1.UpdateListenerRequest
 	// Snapshot inputs into worker closure to avoid handler-ctx capture.
 	snap := next
 	operations.Run(ctx, u.opsRepo, op.ID, func(workerCtx context.Context) (*anypb.Any, error) {
-		return u.doUpdate(workerCtx, snap, emitMirror)
+		return u.doUpdate(workerCtx, snap, expectedXmin, emitMirror)
 	})
 	return &op, nil
 }
@@ -247,7 +248,7 @@ func validateListenerMask(paths []string) error {
 // the FGA-register mirror-feed intent is written in the SAME
 // writer-tx as the resource UPDATE (no dual-write); the emitter
 // stamps a monotonic source_version so IAM applies the mirror last-source-wins.
-func (u *UpdateUseCase) doUpdate(ctx context.Context, next domain.Listener, emitMirror bool) (*anypb.Any, error) {
+func (u *UpdateUseCase) doUpdate(ctx context.Context, next domain.Listener, expectedXmin string, emitMirror bool) (*anypb.Any, error) {
 	// Transient UPDATING status guard. CAS handles concurrent Delete (status
 	// already DELETING → FailedPrecondition; client sees фиксированный текст).
 	w, err := u.repo.Writer(ctx)
@@ -266,7 +267,7 @@ func (u *UpdateUseCase) doUpdate(ctx context.Context, next domain.Listener, emit
 	// simpler + atomic). UPDATING is a transient projection of in-flight
 	// Operation — caller polls Operation.done, sees done=true with the new
 	// row. This mirrors kacho-vpc Network.Update flow.
-	updated, err := w.Listeners().Update(ctx, &next)
+	updated, err := w.Listeners().Update(ctx, &next, expectedXmin)
 	if err != nil {
 		return nil, mapDomainErr(err)
 	}

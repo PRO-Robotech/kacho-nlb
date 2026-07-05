@@ -16,6 +16,8 @@ type TargetGroupRecord struct {
 	domain.TargetGroup
 	CreatedAt time.Time
 	UpdatedAt time.Time
+	// Xmin — `xmin::text` OCC snapshot; see LoadBalancerRecord.Xmin.
+	Xmin string
 }
 
 // TargetGroupFilter — фильтр для List target_groups.

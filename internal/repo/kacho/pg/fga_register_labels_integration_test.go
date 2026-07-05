@@ -89,7 +89,9 @@ func TestFGARegisterOutbox_T3_UpdateLabelsEmitsRegisterIntent(t *testing.T) {
 		},
 	}
 	commitWriter(t, tc.Repo, func(w kacho.RepositoryWriter) {
-		_, err := w.TargetGroups().Update(ctx, tg)
+		cur, gerr := w.TargetGroups().Get(ctx, string(tg.ID))
+		require.NoError(t, gerr)
+		_, err := w.TargetGroups().Update(ctx, tg, cur.Xmin)
 		require.NoError(t, err)
 		require.NoError(t, w.FGARegisterOutbox().Emit(ctx, domain.FGAEventRegister, updIntent))
 	})

@@ -26,6 +26,12 @@ type LoadBalancerRecord struct {
 	domain.LoadBalancer
 	CreatedAt time.Time
 	UpdatedAt time.Time
+	// Xmin — Postgres system-column `xmin::text` snapshot for optimistic
+	// concurrency control on read-modify-write Update (no version column). Get
+	// captures it; Update issues `WHERE xmin::text=$exp` so a concurrent write
+	// since the read → 0 rows → FailedPrecondition (see data-integrity.md OCC).
+	// Empty for manually-constructed (non-DB) records.
+	Xmin string
 }
 
 // LoadBalancerFilter — фильтр для List load_balancers.

@@ -14,6 +14,8 @@ type ListenerRecord struct {
 	domain.Listener
 	CreatedAt time.Time
 	UpdatedAt time.Time
+	// Xmin — `xmin::text` OCC snapshot; see LoadBalancerRecord.Xmin.
+	Xmin string
 }
 
 // ListenerFilter — фильтр для List listeners.

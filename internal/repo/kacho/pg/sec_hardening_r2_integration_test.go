@@ -384,7 +384,9 @@ func TestDeleteIfUnprotected_Guard(t *testing.T) {
 	// Clear protection → delete succeeds.
 	lb.DeletionProtection = false
 	commitWriter(t, repo, func(w kacho.RepositoryWriter) {
-		_, err := w.LoadBalancers().Update(ctx, lb)
+		cur, gerr := w.LoadBalancers().Get(ctx, string(lb.ID))
+		require.NoError(t, gerr)
+		_, err := w.LoadBalancers().Update(ctx, lb, cur.Xmin)
 		require.NoError(t, err)
 	})
 	commitWriter(t, repo, func(w kacho.RepositoryWriter) {

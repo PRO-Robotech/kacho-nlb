@@ -20,7 +20,7 @@ import (
 const targetGroupCols = `
     id, project_id, region_id, created_at, updated_at,
     name, description, labels, health_check,
-    deregistration_delay_seconds, slow_start_seconds, status`
+    deregistration_delay_seconds, slow_start_seconds, status, xmin::text`
 
 const targetCols = `
     id, target_group_id, created_at, updated_at,
@@ -47,7 +47,7 @@ func scanTG(row pgx.Row) (*kacho.TargetGroupRecord, error) {
 	if err := row.Scan(
 		&idStr, &projIDs, &regionIDs, &rec.CreatedAt, &rec.UpdatedAt,
 		&nameStr, &descStr, &labelsRaw, &hcRaw,
-		&rec.DeregistrationDelaySeconds, &rec.SlowStartSeconds, &statusStr,
+		&rec.DeregistrationDelaySeconds, &rec.SlowStartSeconds, &statusStr, &rec.Xmin,
 	); err != nil {
 		return nil, err
 	}
@@ -316,7 +316,7 @@ func (w *targetGroupWriter) Insert(ctx context.Context, tg *domain.TargetGroup) 
 	return rec, nil
 }
 
-func (w *targetGroupWriter) Update(ctx context.Context, tg *domain.TargetGroup) (*kacho.TargetGroupRecord, error) {
+func (w *targetGroupWriter) Update(ctx context.Context, tg *domain.TargetGroup, expectedXmin string) (*kacho.TargetGroupRecord, error) {
 	labelsJSON, err := dto.LabelsToJSONB(tg.Labels)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", kacho.ErrInvalidArg, err)
@@ -325,6 +325,9 @@ func (w *targetGroupWriter) Update(ctx context.Context, tg *domain.TargetGroup) 
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", kacho.ErrInvalidArg, err)
 	}
+	// OCC на read-modify-write (`WHERE xmin::text=$exp`): concurrent-modify между
+	// Get и этим UPDATE → 0 rows → FailedPrecondition (защита от lost update на
+	// partial-mask Update). См. data-integrity.md OCC / LoadBalancerRecord.Xmin.
 	q := fmt.Sprintf(`
         UPDATE kacho_nlb.target_groups
            SET name = $2,
@@ -334,15 +337,19 @@ func (w *targetGroupWriter) Update(ctx context.Context, tg *domain.TargetGroup) 
                deregistration_delay_seconds = $6,
                slow_start_seconds = $7,
                updated_at = now()
-         WHERE id = $1
+         WHERE id = $1 AND xmin::text = $8
         RETURNING %s`, targetGroupCols)
 	row := w.tx.QueryRow(ctx, q,
 		string(tg.ID),
 		string(tg.Name), string(tg.Description), labelsJSON, hcJSON,
 		tg.DeregistrationDelaySeconds, tg.SlowStartSeconds,
+		expectedXmin,
 	)
 	rec, err := scanTG(row)
 	if err != nil {
+		if pgxIsNoRows(err) {
+			return nil, fmt.Errorf("%w: TargetGroup %s was modified concurrently", kacho.ErrFailedPrecondition, string(tg.ID))
+		}
 		return nil, mapPgErr(err, "TargetGroup", string(tg.ID))
 	}
 	return rec, nil

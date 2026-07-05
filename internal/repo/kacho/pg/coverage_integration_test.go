@@ -121,7 +121,9 @@ func TestCoverage_ListenerUpdate_SetAllocatedAddress_MoveProject(t *testing.T) {
 	l.ProxyProtocolV2 = true
 	l.DefaultTargetGroupID = option.MustNewOption(tg.ID)
 	commitWriter(t, repo, func(w kacho.RepositoryWriter) {
-		rec, err := w.Listeners().Update(ctx, l)
+		cur, gerr := w.Listeners().Get(ctx, string(l.ID))
+		require.NoError(t, gerr)
+		rec, err := w.Listeners().Update(ctx, l, cur.Xmin)
 		require.NoError(t, err)
 		assert.Equal(t, domain.LbName("cov3-lst-updated"), rec.Name)
 		assert.True(t, rec.ProxyProtocolV2)
@@ -154,7 +156,9 @@ func TestCoverage_TGUpdate_MoveProject_SetStatusCAS(t *testing.T) {
 	tg.Name = "cov4-tg-renamed"
 	tg.DeregistrationDelaySeconds = 60
 	commitWriter(t, repo, func(w kacho.RepositoryWriter) {
-		rec, err := w.TargetGroups().Update(ctx, tg)
+		cur, gerr := w.TargetGroups().Get(ctx, string(tg.ID))
+		require.NoError(t, gerr)
+		rec, err := w.TargetGroups().Update(ctx, tg, cur.Xmin)
 		require.NoError(t, err)
 		assert.Equal(t, domain.LbName("cov4-tg-renamed"), rec.Name)
 		assert.Equal(t, int32(60), rec.DeregistrationDelaySeconds)
