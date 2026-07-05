@@ -46,8 +46,10 @@ type LoadBalancerWriterIface interface {
 
 	// Update — UPDATE load_balancers SET name/description/labels/...
 	// (immutable: type, region_id, project_id). Status меняется отдельно
-	// через SetStatusCAS.
-	Update(ctx context.Context, lb *domain.LoadBalancer) (*LoadBalancerRecord, error)
+	// через SetStatusCAS. expectedXmin — OCC-snapshot из предшествующего Get
+	// (record.Xmin); concurrent-modify между Get и Update → 0 rows →
+	// ErrFailedPrecondition (защита от lost update на partial-mask Update).
+	Update(ctx context.Context, lb *domain.LoadBalancer, expectedXmin string) (*LoadBalancerRecord, error)
 
 	// AttachVIP — атомарный CAS-attach anycast-VIP одного семейства (IPV4/IPV6) к
 	// LB-строке: UPDATE … SET address_<fam>=$, address_id_<fam>=$, vip_origin_<fam>=$

@@ -4,6 +4,7 @@
 package listener
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -18,6 +19,7 @@ import (
 	"github.com/PRO-Robotech/kacho-corelib/operations"
 
 	"github.com/PRO-Robotech/kacho-nlb/internal/domain"
+	kachorepo "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho"
 )
 
 // TestMapDomainErr_AllSentinels — each domain-sentinel maps to the right
@@ -95,6 +97,32 @@ func TestOperationToProto_FillsPrincipal(t *testing.T) {
 func TestListenerPayloadMap_NilGuard(t *testing.T) {
 	t.Parallel()
 	require.Nil(t, listenerPayloadMap(nil))
+}
+
+// TestListenerPayloadMap_ParentResourceIDReachesConsumer — regression for the
+// outbox payload-key drift: listenerPayloadMap must emit the parent LB under the
+// canonical `parent_resource_id` key that the Subscribe consumer parses, so
+// ResourceLifecycleEvent.ParentResourceId is populated for kacho-iam FGA-sync
+// (previously it emitted `load_balancer_id`, which no consumer reads → parent
+// always empty). Producer helper → shared parser (the SAME parser the consumer
+// uses) round-trip proves both sides agree on the key name.
+func TestListenerPayloadMap_ParentResourceIDReachesConsumer(t *testing.T) {
+	t.Parallel()
+	rec := &kachorepo.ListenerRecord{}
+	rec.ID = domain.ResourceID("nlb-listener-1")
+	rec.LoadBalancerID = domain.ResourceID("nlb-1")
+	rec.ProjectID = domain.ProjectID("prj-b")
+
+	m := listenerPayloadMap(rec)
+	// legacy key must be gone.
+	require.NotContains(t, m, "load_balancer_id", "legacy key must not be emitted")
+
+	raw, err := json.Marshal(m)
+	require.NoError(t, err)
+	parsed, err := kachorepo.ParseLifecyclePayload(raw)
+	require.NoError(t, err)
+	require.Equal(t, "nlb-1", parsed.ParentResourceID,
+		"consumer must recover parent LB id from listener payload")
 }
 
 // TestListenerRecordToPb_NilGuard — nil → Internal.

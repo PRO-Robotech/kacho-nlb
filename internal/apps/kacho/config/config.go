@@ -214,7 +214,6 @@ type AuthzIAMConfig struct {
 type AuthzCacheConfig struct {
 	Enable bool          `mapstructure:"enable"` // default true (positive-only)
 	TTL    time.Duration `mapstructure:"ttl"`    // default 5s (≤10s)
-	Size   int           `mapstructure:"size"`   // LRU capacity; 0 → 10_000 default
 }
 
 type AuthzListenInvalidatorConfig struct {

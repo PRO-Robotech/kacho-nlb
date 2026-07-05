@@ -84,18 +84,31 @@ func targetsFromPb(pbs []*lbv1.Target) []domain.Target {
 }
 
 // tgOutboxPayload — JSON-payload для outbox-emit. Минимальный snapshot (consumer
-// делает Get(id) если нужна полная картина).
+// делает Get(id) если нужна полная картина). Ключи — из единого источника истины
+// kachorepo.LifecyclePayload (тот же набор литералов, что читает Subscribe-consumer).
 func tgOutboxPayload(rec *kachorepo.TargetGroupRecord) map[string]any {
 	if rec == nil {
 		return nil
 	}
-	return map[string]any{
-		"id":         string(rec.ID),
-		"project_id": string(rec.ProjectID),
-		"region_id":  string(rec.RegionID),
-		"name":       string(rec.Name),
-		"status":     string(rec.Status),
-	}
+	return kachorepo.LifecyclePayload{
+		ID:        string(rec.ID),
+		ProjectID: string(rec.ProjectID),
+		RegionID:  string(rec.RegionID),
+		Name:      string(rec.Name),
+		Status:    string(rec.Status),
+	}.Map()
+}
+
+// tgMovedPayload — MOVED-event outbox-payload. old_project_id — исходный project
+// (canonical-ключ, который Subscribe-consumer читает в
+// ResourceLifecycleEvent.OldProjectId для kacho-iam FGA-sync). Единый источник
+// имён ключей — kachorepo.LifecyclePayload.
+func tgMovedPayload(id, srcProject, dstProject string) map[string]any {
+	return kachorepo.LifecyclePayload{
+		ID:           id,
+		OldProjectID: srcProject,
+		NewProjectID: dstProject,
+	}.Map()
 }
 
 // marshalTargetGroup — anypb.New(TargetGroup) для Operation.Response.

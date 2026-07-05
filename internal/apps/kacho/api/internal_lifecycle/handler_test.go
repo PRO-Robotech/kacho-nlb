@@ -13,6 +13,7 @@ package internal_lifecycle
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
@@ -172,6 +173,56 @@ func TestExtractPayloadFields(t *testing.T) {
 			log, 1)
 		if p != "X" || o != "Y" {
 			t.Fatalf("got (%q,%q), want (\"X\",\"Y\")", p, o)
+		}
+	})
+}
+
+// TestExtractPayloadFields_SharedBuilderKeys — cross-cutting regression for the
+// outbox payload-key drift (5th audit, HIGH). Producers (loadbalancer/listener/
+// targetgroup use-cases) build outbox payloads via the SINGLE source of truth
+// kachorepo.LifecyclePayload; the Subscribe consumer parses them here. This test
+// feeds the SAME builder the producers use and asserts the consumer recovers the
+// cross-cutting fields. Before the fix producers emitted `load_balancer_id` /
+// `src_project_id` while the consumer read `parent_resource_id` / `old_project_id`
+// → ParentResourceId/OldProjectId were ALWAYS empty (kacho-iam FGA-sync could not
+// tear down stale owner/hierarchy tuples on Move). A key rename on EITHER side now
+// fails this test.
+func TestExtractPayloadFields_SharedBuilderKeys(t *testing.T) {
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	t.Run("listener CREATED — parent LB reaches consumer", func(t *testing.T) {
+		raw, err := json.Marshal(kachorepo.LifecyclePayload{
+			ID:               "nlb-listener-1",
+			ParentResourceID: "nlb-parent-1",
+			ProjectID:        "prj-a",
+		}.Map())
+		if err != nil {
+			t.Fatal(err)
+		}
+		parent, oldProj := extractPayloadFields(raw, log, 1)
+		if parent != "nlb-parent-1" {
+			t.Fatalf("ParentResourceId: got %q, want nlb-parent-1", parent)
+		}
+		if oldProj != "" {
+			t.Fatalf("OldProjectId: got %q, want empty for CREATED", oldProj)
+		}
+	})
+
+	t.Run("MOVED — old project reaches consumer", func(t *testing.T) {
+		raw, err := json.Marshal(kachorepo.LifecyclePayload{
+			ID:           "nlb-1",
+			OldProjectID: "prj-src",
+			NewProjectID: "prj-dst",
+		}.Map())
+		if err != nil {
+			t.Fatal(err)
+		}
+		parent, oldProj := extractPayloadFields(raw, log, 1)
+		if oldProj != "prj-src" {
+			t.Fatalf("OldProjectId: got %q, want prj-src", oldProj)
+		}
+		if parent != "" {
+			t.Fatalf("ParentResourceId: got %q, want empty for MOVED", parent)
 		}
 	})
 }

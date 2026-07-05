@@ -5,6 +5,7 @@ package targetgroup
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -183,4 +184,21 @@ func TestMove_DestCheckUnavailableFailsClosed(t *testing.T) {
 	})
 	require.Equal(t, codes.Unavailable, status.Code(err))
 	require.Equal(t, domain.ProjectID("prj-src"), repo.tgs[string(tg.ID)].ProjectID)
+}
+
+// TestTgMovedPayload_OldProjectReachesConsumer — regression for outbox
+// payload-key drift (5th audit, HIGH). MOVED producer emits `old_project_id`
+// (canonical key the Subscribe consumer parses into
+// ResourceLifecycleEvent.OldProjectId), not the legacy `src_project_id`.
+func TestTgMovedPayload_OldProjectReachesConsumer(t *testing.T) {
+	m := tgMovedPayload("nlb-tg-1", "prj-src", "prj-dst")
+	require.NotContains(t, m, "src_project_id", "legacy key must not be emitted")
+
+	raw, err := json.Marshal(m)
+	require.NoError(t, err)
+	parsed, err := kachorepo.ParseLifecyclePayload(raw)
+	require.NoError(t, err)
+	require.Equal(t, "prj-src", parsed.OldProjectID,
+		"consumer must recover source project from MOVED payload")
+	require.Equal(t, "prj-dst", parsed.NewProjectID)
 }

@@ -376,16 +376,23 @@ func TestFreeIP_MultiReplica(t *testing.T) {
 
 	var wg sync.WaitGroup
 	results := make([]int, 2)
+	// Per-goroutine error slots asserted on the MAIN goroutine after Wait:
+	// require.NoError inside a child goroutine only Goexits that goroutine
+	// (leaving results[idx]=0), which could mask a real reconcile error as GREEN.
+	errsCh := make([]error, 2)
 	for i := 0; i < 2; i++ {
 		wg.Add(1)
 		go func(idx int) {
 			defer wg.Done()
 			n, e := r.reconcileOnce(ctx)
-			require.NoError(t, e)
+			errsCh[idx] = e
 			results[idx] = n
 		}(i)
 	}
 	wg.Wait()
+	for idx, e := range errsCh {
+		require.NoErrorf(t, e, "replica %d reconcileOnce", idx)
+	}
 
 	assert.Equal(t, 1, results[0]+results[1], "exactly one replica reconciled the row")
 	assert.Len(t, rel.frees(), 1, "FreeIP called exactly once (no double free)")

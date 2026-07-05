@@ -73,7 +73,6 @@ config:
     cache:
       enable: true
       ttl: 5s
-      size: 10000
     listenInvalidator:
       enable: false
       channel: kacho_iam_subjects
