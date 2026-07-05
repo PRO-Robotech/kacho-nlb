@@ -406,6 +406,23 @@ func (q *fakeLBWriter) Delete(ctx context.Context, id string) error {
 	return nil
 }
 
+func (q *fakeLBWriter) DeleteIfUnprotected(ctx context.Context, id string) error {
+	if q.w.r.failOnDelete != nil {
+		return q.w.r.failOnDelete
+	}
+	q.w.r.mu.Lock()
+	defer q.w.r.mu.Unlock()
+	rec, ok := q.w.r.lbs[id]
+	if !ok {
+		return fmt.Errorf("%w: NetworkLoadBalancer %s not found", kachorepo.ErrNotFound, id)
+	}
+	if rec.DeletionProtection {
+		return fmt.Errorf("%w: NetworkLoadBalancer %s has deletion protection enabled", kachorepo.ErrFailedPrecondition, id)
+	}
+	q.w.pendingDeletes = append(q.w.pendingDeletes, id)
+	return nil
+}
+
 // ---- Listeners (stub) ----
 
 type fakeListenerReader struct{ r *fakeRepo }

@@ -165,7 +165,10 @@ func (u *DeleteLoadBalancerUseCase) doDelete(ctx context.Context, id, projectID 
 	}
 	defer w.Abort()
 
-	if err := w.LoadBalancers().Delete(ctx, id); err != nil {
+	// Atomic guard на deletion_protection (ban #10): конкурентный
+	// Update(deletion_protection=true) между sync-precheck и этим DELETE
+	// пресекается на DB-уровне (0 rows при защищённом LB → FailedPrecondition).
+	if err := w.LoadBalancers().DeleteIfUnprotected(ctx, id); err != nil {
 		return nil, mapDomainErr(err)
 	}
 	if err := w.Outbox().Emit(ctx,

@@ -5,6 +5,7 @@ package pg
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
@@ -85,28 +86,47 @@ type attachedTGWriter struct {
 	attachedTGReader
 }
 
-// Attach — INSERT с ON CONFLICT DO NOTHING (idempotent attach).
-// Возвращает (record, true) если row реально вставлена;
-// (existing-record, false) если pair уже был.
+// Attach — atomic conditional INSERT (idempotent). Возвращает (record, true)
+// если row реально вставлена; (existing-record, false) если pair уже был.
 //
-// FK на load_balancer_id или target_group_id → SQLSTATE 23503 → ErrFailedPrecondition.
+// Инвариант (workspace CLAUDE.md запрет #10, within-service refs на DB-уровне):
+// LB и TG обязаны быть в ОДНОМ проекте и регионе — cross-project attach запрещён
+// моделью. Sync-precheck в use-case'е (lb.ProjectID==tg.ProjectID, region match) —
+// только UX/fast-fail; здесь инвариант прибит атомарно: INSERT ... SELECT с JOIN,
+// который re-check'ает project/region прямо на строках LB/TG в момент вставки.
+// Это сериализуется с конкурентным LB.MoveProject (тот двигает LB только при
+// NOT EXISTS attach) — TOCTOU-race «Move ↔ Attach» закрыт с обеих сторон.
+//
+// FK на load_balancer_id/target_group_id → SQLSTATE 23503 → ErrFailedPrecondition.
 func (w *attachedTGWriter) Attach(ctx context.Context, lbID, tgID string, priority int32) (*kacho.AttachedTargetGroupRecord, bool, error) {
 	q := fmt.Sprintf(`
         INSERT INTO kacho_nlb.attached_target_groups
             (load_balancer_id, target_group_id, priority)
-        VALUES ($1, $2, $3)
+        SELECT lb.id, tg.id, $3
+          FROM kacho_nlb.load_balancers lb
+          JOIN kacho_nlb.target_groups  tg
+            ON tg.project_id = lb.project_id
+           AND tg.region_id  = lb.region_id
+         WHERE lb.id = $1 AND tg.id = $2
         ON CONFLICT (load_balancer_id, target_group_id) DO NOTHING
         RETURNING %s`, attachedTGCols)
 	row := w.tx.QueryRow(ctx, q, lbID, tgID, priority)
 	rec, err := scanAttachedTG(row)
 	if err != nil {
 		if pgxIsNoRows(err) {
-			// ON CONFLICT DO NOTHING — pair уже существовал; вернём existing.
+			// 0 rows: либо pair уже был (ON CONFLICT), либо guard не прошёл
+			// (LB/TG отсутствуют или project/region разошлись после sync-check).
 			existing, getErr := w.Get(ctx, lbID, tgID)
-			if getErr != nil {
+			if getErr == nil {
+				return existing, false, nil // idempotent re-attach
+			}
+			if !errors.Is(getErr, kacho.ErrNotFound) {
 				return nil, false, getErr
 			}
-			return existing, false, nil
+			// Pair не существует → guard-miss (mismatch/missing) → FailedPrecondition.
+			return nil, false, fmt.Errorf(
+				"%w: load balancer and target group must be in the same project and region",
+				kacho.ErrFailedPrecondition)
 		}
 		return nil, false, mapPgErr(err, "AttachedTargetGroup", lbID+"/"+tgID)
 	}

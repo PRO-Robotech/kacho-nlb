@@ -4,7 +4,6 @@
 package listener
 
 import (
-	"errors"
 	"log/slog"
 
 	"google.golang.org/grpc/codes"
@@ -16,7 +15,7 @@ import (
 	lbv1 "github.com/PRO-Robotech/kacho-proto/gen/go/kacho/cloud/loadbalancer/v1"
 	operationpb "github.com/PRO-Robotech/kacho-proto/gen/go/kacho/cloud/operation"
 
-	"github.com/PRO-Robotech/kacho-nlb/internal/domain"
+	"github.com/PRO-Robotech/kacho-nlb/internal/apps/kacho/api/shared"
 	"github.com/PRO-Robotech/kacho-nlb/internal/dto"
 	kachorepo "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho"
 )
@@ -61,10 +60,9 @@ func operationToProto(op *operations.Operation) *operationpb.Operation {
 	return p
 }
 
-// mapDomainErr — translate domain-sentinel error → gRPC status.
-//
-// Mirrors `internal/repo/kacho.errors` mapping (workspace CLAUDE.md
-// «Within-service refs», Error mapping kacho-vpc):
+// mapDomainErr — translate domain-sentinel error → gRPC status. Делегирует
+// единому мапперу `shared.MapDomainErr` (один источник истины для всех use-case
+// пакетов kacho-nlb, см. audit ARCH-medium):
 //
 //	ErrNotFound            → NOT_FOUND
 //	ErrAlreadyExists       → ALREADY_EXISTS
@@ -72,48 +70,8 @@ func operationToProto(op *operations.Operation) *operationpb.Operation {
 //	ErrInvalidArg          → INVALID_ARGUMENT
 //	ErrUnavailable         → UNAVAILABLE
 //	ErrInternal / other    → INTERNAL (no leak)
-//
-// Uses errors.Is so chained errors (`fmt.Errorf("%w:...", domain.ErrX)`) are
-// matched. Verbatim message text from the wrapped error is preserved.
 func mapDomainErr(err error) error {
-	if err == nil {
-		return nil
-	}
-	// Already a gRPC status — pass through (handler already mapped, or peer
-	// adapter returned a typed status).
-	if _, ok := status.FromError(err); ok && status.Code(err) != codes.Unknown {
-		return err
-	}
-	msg := err.Error()
-	switch {
-	case errors.Is(err, domain.ErrNotFound):
-		return status.Error(codes.NotFound, stripSentinel(msg, domain.ErrNotFound.Error()))
-	case errors.Is(err, domain.ErrAlreadyExists):
-		return status.Error(codes.AlreadyExists, stripSentinel(msg, domain.ErrAlreadyExists.Error()))
-	case errors.Is(err, domain.ErrFailedPrecondition):
-		return status.Error(codes.FailedPrecondition, stripSentinel(msg, domain.ErrFailedPrecondition.Error()))
-	case errors.Is(err, domain.ErrInvalidArg):
-		return status.Error(codes.InvalidArgument, stripSentinel(msg, domain.ErrInvalidArg.Error()))
-	case errors.Is(err, domain.ErrUnavailable):
-		return status.Error(codes.Unavailable, stripSentinel(msg, domain.ErrUnavailable.Error()))
-	case errors.Is(err, domain.ErrInternal):
-		return status.Error(codes.Internal, "internal database error")
-	}
-	return status.Error(codes.Internal, "internal error")
-}
-
-// stripSentinel — remove `<sentinel-text>: ` prefix (or leading `<sentinel-text>`)
-// from wrapped error so the caller sees с фиксированным текстом message text from the wrapping
-// `fmt.Errorf("%w: <message>", domain.ErrX)` without the sentinel marker.
-func stripSentinel(full, sentinel string) string {
-	prefix := sentinel + ": "
-	if len(full) >= len(prefix) && full[:len(prefix)] == prefix {
-		return full[len(prefix):]
-	}
-	if full == sentinel {
-		return sentinel
-	}
-	return full
+	return shared.MapDomainErr(err)
 }
 
 // marshalListener — anypb.New(Listener) wrapper used as Operation.response on

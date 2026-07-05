@@ -70,6 +70,15 @@ type LoadBalancerWriterIface interface {
 
 	// Delete — DELETE load_balancers WHERE id=$1. FK-violation (есть дети —
 	// listeners / attached_target_groups) → ErrFailedPrecondition. row absent
-	// → ErrNotFound.
+	// → ErrNotFound. Безусловный — используется для compensation-rollback в
+	// Create (там deletion_protection не может помешать откату).
 	Delete(ctx context.Context, id string) error
+
+	// DeleteIfUnprotected — atomic guarded delete для user-facing Delete-воркера:
+	// DELETE ... WHERE id=$1 AND deletion_protection=false. Инвариант «защищённый
+	// LB не удаляется» прибит на DB-уровне (workspace CLAUDE.md запрет #10) —
+	// sync-precheck в use-case'е только UX; конкурентный Update(protection=true)
+	// между precheck и apply здесь пресекается атомарно. 0 rows при существующем
+	// LB → ErrFailedPrecondition; row absent → ErrNotFound; FK-violation → ErrFailedPrecondition.
+	DeleteIfUnprotected(ctx context.Context, id string) error
 }

@@ -14,60 +14,23 @@ import (
 	lbv1 "github.com/PRO-Robotech/kacho-proto/gen/go/kacho/cloud/loadbalancer/v1"
 	operationpb "github.com/PRO-Robotech/kacho-proto/gen/go/kacho/cloud/operation"
 
+	"github.com/PRO-Robotech/kacho-nlb/internal/apps/kacho/api/shared"
 	"github.com/PRO-Robotech/kacho-nlb/internal/domain"
 	"github.com/PRO-Robotech/kacho-nlb/internal/dto"
 	kachorepo "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho"
 )
 
 // mapDomainErr транслирует sentinel-ошибки `domain` и `kacho`(repo) в gRPC-status.
-// Если err уже gRPC-status — пробрасываем как есть (sync corelib/errors).
-//
-// Mirror'ит соглашение loadbalancer.mapDomainErr (стабильная форма
-// ошибки доходит до клиента; raw pgx-текст НЕ leak'аем).
+// Делегирует единому мапперу `shared.MapDomainErr` (один источник истины для всех
+// use-case пакетов, см. audit ARCH-medium).
 func mapDomainErr(err error) error {
-	if err == nil {
-		return nil
-	}
-	if _, ok := status.FromError(err); ok && status.Code(err) != codes.Unknown {
-		return err
-	}
-	switch {
-	case errors.Is(err, domain.ErrNotFound), errors.Is(err, kachorepo.ErrNotFound):
-		return status.Error(codes.NotFound, stripSentinel(err, "not found"))
-	case errors.Is(err, domain.ErrAlreadyExists), errors.Is(err, kachorepo.ErrAlreadyExists):
-		return status.Error(codes.AlreadyExists, stripSentinel(err, "already exists"))
-	case errors.Is(err, domain.ErrFailedPrecondition), errors.Is(err, kachorepo.ErrFailedPrecondition):
-		return status.Error(codes.FailedPrecondition, stripSentinel(err, "failed precondition"))
-	case errors.Is(err, domain.ErrInvalidArg), errors.Is(err, kachorepo.ErrInvalidArg):
-		return status.Error(codes.InvalidArgument, stripSentinel(err, "invalid argument"))
-	case errors.Is(err, domain.ErrUnavailable), errors.Is(err, kachorepo.ErrUnavailable):
-		return status.Error(codes.Unavailable, stripSentinel(err, "service unavailable"))
-	case errors.Is(err, domain.ErrInternal), errors.Is(err, kachorepo.ErrInternal):
-		return status.Error(codes.Internal, "internal database error")
-	}
-	return status.Error(codes.Internal, "internal error")
+	return shared.MapDomainErr(err)
 }
 
-// stripSentinel убирает sentinel-prefix `<text>: ` из ошибки. Подбирает все
-// варианты из обоих наборов sentinel'ов (domain + kacho repo).
+// stripSentinel убирает sentinel-prefix `<text>: ` из ошибки. Тонкий wrapper над
+// `shared.StripSentinel` (сохранён для внутренних вызовов/тестов).
 func stripSentinel(err error, fallback string) string {
-	if err == nil {
-		return fallback
-	}
-	msg := err.Error()
-	prefixes := []string{
-		"not found: ", "already exists: ", "failed precondition: ",
-		"invalid argument: ", "internal database error: ", "service unavailable: ",
-	}
-	for _, p := range prefixes {
-		if len(msg) > len(p) && msg[:len(p)] == p {
-			return msg[len(p):]
-		}
-	}
-	if msg == "" {
-		return fallback
-	}
-	return msg
+	return shared.StripSentinel(err, fallback)
 }
 
 // peerErrToStatus — peer-client error (sentinel-wrapped) → gRPC-status.

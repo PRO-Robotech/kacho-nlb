@@ -53,6 +53,20 @@ func mapPgErr(err error, kind, id string) error {
 	if errors.As(err, &pgErr) {
 		switch pgErr.Code {
 		case "23505":
+			// Branch on the specific unique index so the client-facing message
+			// names the real conflict (audit: раньше ЛЮБОЙ 23505 → "name already
+			// exists", что вводило в заблуждение для port/protocol и VIP-коллизий).
+			switch pgErr.ConstraintName {
+			case "listeners_lb_port_proto_uniq":
+				return fmt.Errorf("%w: listener with this port and protocol already exists on the load balancer", kacho.ErrAlreadyExists)
+			case "listeners_region_vip_uniq":
+				return fmt.Errorf("%w: listener address/port/protocol already in use in this region", kacho.ErrAlreadyExists)
+			case "targets_instance_id_uniq", "targets_nic_id_uniq",
+				"targets_ip_ref_uniq", "targets_external_ip_uniq":
+				return fmt.Errorf("%w: target with this identity already exists in the target group", kacho.ErrAlreadyExists)
+			}
+			// Name-uniqueness indexes (*_project_name_uniq / listeners_lb_name_uniq)
+			// and any other unmapped unique index → generic name message.
 			return fmt.Errorf("%w: %s with name already exists", kacho.ErrAlreadyExists, kind)
 		case "23503":
 			// Композитный FK listeners_default_tg_attached_fk: default_target_group_id
