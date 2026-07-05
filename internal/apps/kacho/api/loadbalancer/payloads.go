@@ -21,18 +21,33 @@ func lbAddressOwner(lbID, name string) vpcclient.AddressOwner {
 }
 
 // lbOutboxPayload — JSON-payload для outbox. Минимальный snapshot.
+// Ключи — из единого источника истины kachorepo.LifecyclePayload (тот же
+// набор литералов, что читает Subscribe-consumer).
 func lbOutboxPayload(lb *kachorepo.LoadBalancerRecord) map[string]any {
 	if lb == nil {
 		return nil
 	}
-	return map[string]any{
-		"id":         string(lb.ID),
-		"project_id": string(lb.ProjectID),
-		"region_id":  string(lb.RegionID),
-		"name":       string(lb.Name),
-		"status":     string(lb.Status),
-		"type":       string(lb.Type),
-	}
+	return kachorepo.LifecyclePayload{
+		ID:        string(lb.ID),
+		ProjectID: string(lb.ProjectID),
+		RegionID:  string(lb.RegionID),
+		Name:      string(lb.Name),
+		Status:    string(lb.Status),
+		Type:      string(lb.Type),
+	}.Map()
+}
+
+// lbMovedPayload — MOVED-event outbox-payload. old_project_id — исходный project
+// (canonical-ключ, который Subscribe-consumer читает в
+// ResourceLifecycleEvent.OldProjectId для kacho-iam FGA-sync: снос stale
+// owner/hierarchy-tuples на старом project). Единый источник имён ключей —
+// kachorepo.LifecyclePayload.
+func lbMovedPayload(id, srcProject, dstProject string) map[string]any {
+	return kachorepo.LifecyclePayload{
+		ID:           id,
+		OldProjectID: srcProject,
+		NewProjectID: dstProject,
+	}.Map()
 }
 
 // lbRegisterIntent — FGA-register-intent свежесозданного LB (project-hierarchy +

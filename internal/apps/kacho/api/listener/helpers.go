@@ -75,28 +75,32 @@ func listenerPayloadMap(rec *kachorepo.ListenerRecord) map[string]any {
 	if rec == nil {
 		return nil
 	}
-	return map[string]any{
-		"id":               string(rec.ID),
-		"load_balancer_id": string(rec.LoadBalancerID),
-		"project_id":       string(rec.ProjectID),
-		"region_id":        string(rec.RegionID),
-		"name":             string(rec.Name),
-		"protocol":         string(rec.Protocol),
-		"port":             int32(rec.Port),
-		"status":           string(rec.Status),
-	}
+	// ParentResourceID = parent LB id (canonical `parent_resource_id` key) — the
+	// Subscribe consumer reads it into ResourceLifecycleEvent.ParentResourceId for
+	// kacho-iam FGA-sync (listener→LB hierarchy). Single source of truth for the
+	// key names is kachorepo.LifecyclePayload.
+	return kachorepo.LifecyclePayload{
+		ID:               string(rec.ID),
+		ParentResourceID: string(rec.LoadBalancerID),
+		ProjectID:        string(rec.ProjectID),
+		RegionID:         string(rec.RegionID),
+		Name:             string(rec.Name),
+		Protocol:         string(rec.Protocol),
+		Port:             int32(rec.Port),
+		Status:           string(rec.Status),
+	}.Map()
 }
 
 // lbUpdatedPayloadMap — outbox-payload для cross-resource sync эмита
 // `nlb_load_balancer:<lb_id> UPDATED` после Listener.Create /.Delete
 // . Minimal — consumer резолвит full LB через Get.
 func lbUpdatedPayloadMap(lbID, projectID, regionID, trigger string) map[string]any {
-	return map[string]any{
-		"id":         lbID,
-		"project_id": projectID,
-		"region_id":  regionID,
-		"trigger":    trigger,
-	}
+	return kachorepo.LifecyclePayload{
+		ID:        lbID,
+		ProjectID: projectID,
+		RegionID:  regionID,
+		Trigger:   trigger,
+	}.Map()
 }
 
 // loggerOrDiscard — defensive accessor для nil-loggers. Возвращает global

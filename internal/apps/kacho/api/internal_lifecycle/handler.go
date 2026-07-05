@@ -24,7 +24,6 @@ package internal_lifecycle
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -301,19 +300,10 @@ func parseEventID(raw string) (int64, error) {
 // возвращаем пустые значения (graceful degradation — event всё равно
 // должен дойти до подписчика, лучше с пустыми extras чем drop).
 func extractPayloadFields(payloadJSON []byte, log *slog.Logger, seq int64) (parent, oldProject string) {
-	if len(payloadJSON) == 0 {
-		return "", ""
-	}
-	var m map[string]any
-	if err := json.Unmarshal(payloadJSON, &m); err != nil {
+	p, err := kachorepo.ParseLifecyclePayload(payloadJSON)
+	if err != nil {
 		log.Warn("lifecycle: bad payload JSON", "sequence_no", seq, "err", err)
 		return "", ""
 	}
-	if v, ok := m["parent_resource_id"].(string); ok {
-		parent = v
-	}
-	if v, ok := m["old_project_id"].(string); ok {
-		oldProject = v
-	}
-	return parent, oldProject
+	return p.ParentResourceID, p.OldProjectID
 }

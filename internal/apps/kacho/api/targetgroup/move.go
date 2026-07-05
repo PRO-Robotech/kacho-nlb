@@ -199,11 +199,7 @@ func (u *MoveTargetGroupUseCase) doMove(ctx context.Context, id, srcProject, dst
 	}
 	if err := w.Outbox().Emit(ctx,
 		kachorepo.OutboxResourceTargetGroup, string(moved.ID), string(moved.ProjectID),
-		kachorepo.OutboxActionMoved, map[string]any{
-			"id":             string(moved.ID),
-			"src_project_id": srcProject,
-			"dst_project_id": dstProject,
-		},
+		kachorepo.OutboxActionMoved, tgMovedPayload(string(moved.ID), srcProject, dstProject),
 	); err != nil {
 		return nil, mapDomainErr(err)
 	}

@@ -191,11 +191,7 @@ func (u *MoveLoadBalancerUseCase) doMove(ctx context.Context, id, srcProject, ds
 	}
 	if err := w.Outbox().Emit(ctx,
 		kachorepo.OutboxResourceLoadBalancer, string(moved.ID), string(moved.ProjectID),
-		kachorepo.OutboxActionMoved, map[string]any{
-			"id":             string(moved.ID),
-			"src_project_id": srcProject,
-			"dst_project_id": dstProject,
-		},
+		kachorepo.OutboxActionMoved, lbMovedPayload(string(moved.ID), srcProject, dstProject),
 	); err != nil {
 		return nil, mapDomainErr(err)
 	}
