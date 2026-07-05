@@ -257,7 +257,3 @@ func (u *DeleteUseCase) markFailedAndReturn(ctx context.Context, listenerID, pro
 		"listener_id", listenerID, "err", original)
 	return mapDomainErr(original)
 }
-
-// _ — sentinel-use: подавление unused-import предупреждения в редких
-// перекомпонованных билдах. errors импортируется в логике выше.
-var _ = errors.Is
