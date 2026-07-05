@@ -634,7 +634,9 @@ func TestAZD023_CacheHit_PositiveSecondCheck(t *testing.T) {
 
 func TestAZD024_CacheHit_FastPath(t *testing.T) {
 	var delay atomic.Int64
+	var peerCalls atomic.Int64
 	intr, _, _ := newTestInterceptor(t, func(_ context.Context, _, _, _ string) (bool, error) {
+		peerCalls.Add(1)
 		time.Sleep(time.Duration(delay.Load()))
 		return true, nil
 	})
@@ -644,21 +646,27 @@ func TestAZD024_CacheHit_FastPath(t *testing.T) {
 	req := &lbv1.GetNetworkLoadBalancerRequest{NetworkLoadBalancerId: "nlb-1"}
 	handler := func(context.Context, any) (any, error) { return "ok", nil }
 
-	// Cold: simulated 10ms peer latency.
+	// Cold: simulated 10ms peer latency → the peer IS consulted.
 	delay.Store(int64(10 * time.Millisecond))
-	start := time.Now()
 	_, err := uIntr(ctx, req, info, handler)
 	require.NoError(t, err)
-	cold := time.Since(start)
-	require.GreaterOrEqual(t, cold, 10*time.Millisecond, "first Check should include simulated peer latency")
+	require.Equal(t, int64(1), peerCalls.Load(), "cold Check must consult the peer once")
 
-	// Warm: peer slow — но cache не должен звать peer.
+	// Warm: peer set intentionally slow (100ms). The correctness invariant of a
+	// cache hit is that the peer is NOT consulted — assert the call-count stays
+	// 1 rather than a wall-clock upper bound (a hard latency ceiling is flaky
+	// under -race/GC/CPU-throttle on shared CI; acceptance §AZD-024 ≤20ms p95 is
+	// a metric budget, not a per-call assertion). A regression that dropped the
+	// cache would call the peer and increment the counter (and stall 100ms).
 	delay.Store(int64(100 * time.Millisecond))
-	start = time.Now()
+	start := time.Now()
 	_, err = uIntr(ctx, req, info, handler)
 	require.NoError(t, err)
-	warm := time.Since(start)
-	require.Less(t, warm, 5*time.Millisecond, "warm cache hit must be < 5ms (acceptance §AZD-024 budget ≤20ms p95)")
+	require.Equal(t, int64(1), peerCalls.Load(), "warm cache hit must NOT consult the peer")
+	// Sanity: the warm call clearly short-circuited (well under the 100ms slow
+	// peer). Generous bound — proves the cache path, not a tight budget.
+	require.Less(t, time.Since(start), 100*time.Millisecond,
+		"warm cache hit must short-circuit well under the slow-peer delay")
 }
 
 // ────────────────────────────────────────────────────────────────────────────
