@@ -5,6 +5,7 @@ package loadbalancer
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 
@@ -12,10 +13,12 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/anypb"
 
+	"github.com/PRO-Robotech/kacho-corelib/authz"
 	"github.com/PRO-Robotech/kacho-corelib/ids"
 	"github.com/PRO-Robotech/kacho-corelib/operations"
 	lbv1 "github.com/PRO-Robotech/kacho-proto/gen/go/kacho/cloud/loadbalancer/v1"
 
+	"github.com/PRO-Robotech/kacho-nlb/internal/domain"
 	kachorepo "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho"
 )
 
@@ -26,6 +29,13 @@ import (
 // Sync prechecks:
 //   - LB exists (Get) и `TG.region_id == LB.region_id` (same-region constraint).
 //   - TG exists (Get).
+//   - caller holds `viewer` on the TargetGroup object (handler-side Check —
+//     audit SEC r3 #3): the per-RPC interceptor gates only the LB (v_update);
+//     without a TG-object Check a custom role granting v_update directly on one
+//     LB (without project-editor) could wire in a same-project TG the caller
+//     holds no grant on. The standard FGA cascade (project-editor ⇒ viewer on
+//     same-project TGs) already implies this, so the Check is a no-op for
+//     ordinary bindings; it only bites narrowly-scoped custom grants (CWE-863).
 //
 // Worker: Writer-TX → Attach (ON CONFLICT DO NOTHING) + outbox UPDATED → Commit.
 // Trigger lb_status_recompute (DB-side) переводит LB.status INACTIVE→ACTIVE если
@@ -33,17 +43,20 @@ import (
 //
 // Acceptance:.
 type AttachTargetGroupUseCase struct {
-	repo    Repo
-	opsRepo operations.Repo
-	logger  *slog.Logger
+	repo        Repo
+	opsRepo     operations.Repo
+	checkClient CheckClient
+	logger      *slog.Logger
 }
 
-// NewAttachTargetGroupUseCase конструктор.
-func NewAttachTargetGroupUseCase(repo Repo, opsRepo operations.Repo, logger *slog.Logger) *AttachTargetGroupUseCase {
+// NewAttachTargetGroupUseCase конструктор. checkClient авторизует caller'а на
+// target-group object (`viewer on lb_target_group:<tg>`); nil → TG-authz
+// пропускается (dev/unwired; breakglass также обходит source-check interceptor'а).
+func NewAttachTargetGroupUseCase(repo Repo, opsRepo operations.Repo, checkClient CheckClient, logger *slog.Logger) *AttachTargetGroupUseCase {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &AttachTargetGroupUseCase{repo: repo, opsRepo: opsRepo, logger: logger}
+	return &AttachTargetGroupUseCase{repo: repo, opsRepo: opsRepo, checkClient: checkClient, logger: logger}
 }
 
 // Execute — sync prechecks + ops insert + spawn worker.
@@ -91,6 +104,14 @@ func (u *AttachTargetGroupUseCase) Execute(
 			lb.ProjectID, tg.ProjectID)
 	}
 
+	// Target-group authorization (audit SEC r3 #3 / CWE-863): interceptor gated
+	// the LB only; the caller must ALSO hold `viewer` on the TG object it is
+	// wiring in, else a narrow custom v_update grant on the LB could attach a TG
+	// the caller has no authorization over.
+	if err := u.authorizeTargetGroup(ctx, tgID); err != nil {
+		return nil, err
+	}
+
 	op, err := operations.NewFromContext(ctx,
 		ids.PrefixOperationNLB,
 		fmt.Sprintf("Attach TargetGroup %s → NetworkLoadBalancer %s", tgID, lbID),
@@ -112,6 +133,46 @@ func (u *AttachTargetGroupUseCase) Execute(
 		return u.doAttach(workerCtx, lbID, tgID, projectID)
 	})
 	return &op, nil
+}
+
+// authorizeTargetGroup авторизует caller'а на TG object (`viewer on
+// lb_target_group:<tg>`). nil checkClient или system/empty subject
+// (breakglass/dev — source-check тоже обойдён interceptor'ом) → пропуск.
+func (u *AttachTargetGroupUseCase) authorizeTargetGroup(ctx context.Context, tgID string) error {
+	if u.checkClient == nil {
+		return nil
+	}
+	p := operations.PrincipalFromContext(ctx)
+	subject := domain.FGASubjectFromPrincipal(p.Type, p.ID)
+	if subject == "" {
+		return nil
+	}
+	allowed, err := u.checkClient.Check(ctx, subject, domain.FGARelationViewer,
+		domain.FGAObjectRef(domain.FGAObjectTypeTargetGroup, tgID))
+	if err != nil {
+		return attachTGCheckErr(err, tgID)
+	}
+	if !allowed {
+		return status.Errorf(codes.PermissionDenied,
+			"caller is not authorized (viewer) on target group %s", tgID)
+	}
+	return nil
+}
+
+// attachTGCheckErr маппит ошибку TG-authz Check'а в gRPC-status (fail-closed).
+// no-path → PermissionDenied; iam недоступен → Unavailable; bad args →
+// InvalidArgument; прочее → Internal.
+func attachTGCheckErr(err error, tgID string) error {
+	switch {
+	case errors.Is(err, authz.ErrNoPath):
+		return status.Errorf(codes.PermissionDenied,
+			"caller is not authorized (viewer) on target group %s", tgID)
+	case errors.Is(err, domain.ErrUnavailable):
+		return status.Error(codes.Unavailable, "authorization check unavailable")
+	case errors.Is(err, domain.ErrInvalidArg):
+		return status.Errorf(codes.InvalidArgument, "authorization check: %v", err)
+	}
+	return status.Error(codes.Internal, "authorization check failed")
 }
 
 // doAttach — worker: Attach with ON CONFLICT DO NOTHING + outbox + commit.

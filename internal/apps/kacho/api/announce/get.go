@@ -9,6 +9,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/PRO-Robotech/kacho-nlb/internal/apps/kacho/api/shared"
 	lbv1 "github.com/PRO-Robotech/kacho-proto/gen/go/kacho/cloud/loadbalancer/v1"
 )
 
@@ -40,12 +41,12 @@ func (u *GetAnnounceStateUseCase) Execute(
 		return nil, errInvalidArg("network_load_balancer_id", "required")
 	}
 	if err := validateLoadBalancerID(id); err != nil {
-		return nil, mapErr(err)
+		return nil, shared.MapDomainErr(err)
 	}
 
 	rec, found, err := u.store.LoadState(ctx, id)
 	if err != nil {
-		return nil, mapErr(err)
+		return nil, shared.MapDomainErr(err)
 	}
 	if !found {
 		return nil, status.Errorf(codes.NotFound, "NetworkLoadBalancer %s not found", id)

@@ -50,6 +50,11 @@ const (
 	// destination-project authorization of cross-project Move (the caller must
 	// hold editor on the destination project, not just on the source resource).
 	FGARelationEditor = "editor"
+	// FGARelationViewer — read-relation checked on a resource object. Used by
+	// AttachTargetGroup to verify the caller holds viewer on the TargetGroup it
+	// is wiring into an LB (the per-RPC interceptor authorizes only the LB via
+	// v_update; the TG object needs its own Check — audit SEC r3 #3 / CWE-863).
+	FGARelationViewer = "viewer"
 )
 
 // FGAObjectTypeProject — FGA object type of the IAM project resource. Used as the

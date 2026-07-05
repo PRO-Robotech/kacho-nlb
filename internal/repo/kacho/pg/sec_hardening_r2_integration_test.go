@@ -293,9 +293,17 @@ func TestAddTargets_CumulativeCap_Concurrent(t *testing.T) {
 		return out
 	}
 
-	// Two goroutines each try to add 70 distinct targets. Cap is 100 → at most
-	// one full batch can win; the total must never exceed 100.
-	var wg sync.WaitGroup
+	// Two goroutines each try to add 70 distinct targets. Cap is 100 → exactly
+	// one full batch must win; the other must be rejected (FailedPrecondition).
+	// Asserting only "<= cap" is a false-negative trap: a both-writers-fail
+	// regression (final count 0) also satisfies it. We assert exactly-one-winner:
+	// one Commit succeeds, the other observes the cap rejection, final count == 70.
+	var (
+		wg        sync.WaitGroup
+		mu        sync.Mutex
+		wins      int
+		capReject int
+	)
 	wg.Add(2)
 	for g := 0; g < 2; g++ {
 		g := g
@@ -306,18 +314,32 @@ func TestAddTargets_CumulativeCap_Concurrent(t *testing.T) {
 				return
 			}
 			defer w.Abort()
-			if _, err := w.TargetGroups().AddTargets(ctx, string(tg.ID), mkBatch(g*1000, 70)); err == nil {
-				_ = w.Commit()
+			_, aerr := w.TargetGroups().AddTargets(ctx, string(tg.ID), mkBatch(g*1000, 70))
+			if aerr == nil {
+				if cerr := w.Commit(); cerr == nil {
+					mu.Lock()
+					wins++
+					mu.Unlock()
+				}
+				return
+			}
+			if errors.Is(aerr, kacho.ErrFailedPrecondition) {
+				mu.Lock()
+				capReject++
+				mu.Unlock()
 			}
 		}()
 	}
 	wg.Wait()
 
+	assert.Equal(t, 1, wins, "exactly one concurrent AddTargets batch must win")
+	assert.Equal(t, 1, capReject, "the losing batch must be rejected with FailedPrecondition (cap)")
+
 	rd, _ := repo.Reader(ctx)
 	defer func() { _ = rd.Close() }()
 	targets, err := rd.TargetGroups().ListTargets(ctx, string(tg.ID))
 	require.NoError(t, err)
-	assert.LessOrEqual(t, len(targets), 100, "concurrent AddTargets must never exceed cap")
+	assert.Len(t, targets, 70, "exactly one full batch (70) must have committed — not 0, not >cap")
 }
 
 // --- Finding #5: deletion_protection atomic guard ---------------------------

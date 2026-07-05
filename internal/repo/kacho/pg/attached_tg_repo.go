@@ -94,8 +94,18 @@ type attachedTGWriter struct {
 // моделью. Sync-precheck в use-case'е (lb.ProjectID==tg.ProjectID, region match) —
 // только UX/fast-fail; здесь инвариант прибит атомарно: INSERT ... SELECT с JOIN,
 // который re-check'ает project/region прямо на строках LB/TG в момент вставки.
-// Это сериализуется с конкурентным LB.MoveProject (тот двигает LB только при
-// NOT EXISTS attach) — TOCTOU-race «Move ↔ Attach» закрыт с обеих сторон.
+// Это сериализуется с конкурентным LB/TG.MoveProject (те двигают ресурс только
+// при NOT EXISTS attach) — TOCTOU-race «Move ↔ Attach» закрыт с обеих сторон.
+//
+// `FOR NO KEY UPDATE OF lb, tg` — locking-read source-строк LB/TG. Без него
+// plain-read JOIN под READ COMMITTED видит stale (до-move) project конкурентного
+// незакоммиченного Move'а и вставлял бы cross-project attach (move-first порядок,
+// KAC sec-hardening r3 finding #1). Locking-read вместо этого блокируется на
+// move'нутой row-е; после commit'а Move PostgreSQL через EvalPlanQual пере-
+// оценивает JOIN `tg.project_id = lb.project_id` на СВЕЖЕМ project → mismatch →
+// строка отфильтрована → 0 rows → guard-miss (FailedPrecondition). FOR NO KEY
+// UPDATE (не KEY SHARE) обязателен: он конфликтует с FOR NO KEY UPDATE, который
+// Move берёт на свою row-у, — только так возникает блокировка + re-check.
 //
 // FK на load_balancer_id/target_group_id → SQLSTATE 23503 → ErrFailedPrecondition.
 func (w *attachedTGWriter) Attach(ctx context.Context, lbID, tgID string, priority int32) (*kacho.AttachedTargetGroupRecord, bool, error) {
@@ -108,6 +118,7 @@ func (w *attachedTGWriter) Attach(ctx context.Context, lbID, tgID string, priori
             ON tg.project_id = lb.project_id
            AND tg.region_id  = lb.region_id
          WHERE lb.id = $1 AND tg.id = $2
+           FOR NO KEY UPDATE OF lb, tg
         ON CONFLICT (load_balancer_id, target_group_id) DO NOTHING
         RETURNING %s`, attachedTGCols)
 	row := w.tx.QueryRow(ctx, q, lbID, tgID, priority)

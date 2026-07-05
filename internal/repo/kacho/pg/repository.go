@@ -6,12 +6,21 @@ package pg
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho"
 )
+
+// finalizeTimeout bounds the DETACHED context used for Commit/Rollback. TX
+// finalization is intentionally decoupled from the (cancellable) request context
+// to avoid partial-commit ambiguity on caller cancellation — but a bare
+// context.Background() has NO deadline, so a stalled backend (failover / packet
+// loss) would block the handler goroutine and leak the pooled connection
+// indefinitely (CWE-400). A small bound keeps finalization detached yet capped.
+const finalizeTimeout = 10 * time.Second
 
 // Repository — pgxpool-impl корневого CQRS-контракта (kacho.Repository).
 //
@@ -93,7 +102,9 @@ func (r *readerImpl) Close() error {
 		return nil
 	}
 	r.closed = true
-	if err := r.tx.Rollback(context.Background()); err != nil && !errors.Is(err, pgx.ErrTxClosed) {
+	ctx, cancel := context.WithTimeout(context.Background(), finalizeTimeout)
+	defer cancel()
+	if err := r.tx.Rollback(ctx); err != nil && !errors.Is(err, pgx.ErrTxClosed) {
 		return err
 	}
 	return nil
@@ -150,7 +161,9 @@ func (w *writerImpl) Commit() error {
 		return nil
 	}
 	w.finalised = true
-	return w.tx.Commit(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), finalizeTimeout)
+	defer cancel()
+	return w.tx.Commit(ctx)
 }
 
 // Abort откатывает TX. Идемпотентен — после Commit no-op, можно ставить через
@@ -160,5 +173,7 @@ func (w *writerImpl) Abort() {
 		return
 	}
 	w.finalised = true
-	_ = w.tx.Rollback(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), finalizeTimeout)
+	defer cancel()
+	_ = w.tx.Rollback(ctx)
 }

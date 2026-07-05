@@ -67,8 +67,13 @@ func TestListener_UniquePortProto(t *testing.T) {
 	assert.True(t, errors.Is(err, kacho.ErrAlreadyExists), "got %v", err)
 }
 
-// TestListener_RegionVipUnique_RaceTest — partial UNIQUE
-// (region_id, allocated_address, port, protocol) WHERE status<>'DELETING'.
+// NOTE: the listener-level partial UNIQUE listeners_region_vip_uniq
+// (region_id, allocated_address, port, protocol) from baseline 0001 was
+// DELIBERATELY dropped in migration 0009 — VIP uniqueness moved to the
+// LoadBalancer level (load_balancers_region_v4_uniq / _v6_uniq), race-tested in
+// load_balancer_vip_concurrent_integration_test.go. There is no listener-level
+// region-VIP invariant to test; see docs/architecture/known-divergences.md.
+
 // TestListener_PortOutOfRange — CHECK port BETWEEN 1 AND 65535.
 func TestListener_PortOutOfRange(t *testing.T) {
 	repo, cleanup := newRepo(t, setupTestDB(t))

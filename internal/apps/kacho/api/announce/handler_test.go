@@ -164,6 +164,36 @@ func TestReportAnnounceState_Upsert_Idempotent(t *testing.T) {
 	require.Equal(t, 2, store.reportCalls)
 }
 
+// TestGetAnnounceState_UnknownCodeNormalizedToInternal — a store error that is a
+// gRPC status carrying codes.Unknown must NOT be forwarded verbatim; it must be
+// normalized to Internal (no-leak), matching shared.MapDomainErr used by the
+// loadbalancer/listener/targetgroup handlers (audit ARCH r3 #4). A per-package
+// pass-through that forwards any status (incl. Unknown) is the divergence the
+// shared mapper was created to eliminate.
+func TestGetAnnounceState_UnknownCodeNormalizedToInternal(t *testing.T) {
+	id := freshLBID(t)
+	store := &fakeStore{loadErr: status.Error(codes.Unknown, "opaque backend boom")}
+	h := newAnnounceHandler(store)
+	_, err := h.GetAnnounceState(context.Background(),
+		&lbv1.GetLoadBalancerAnnounceStateRequest{NetworkLoadBalancerId: id})
+	require.Equal(t, codes.Internal, status.Code(err),
+		"Unknown-coded store error must be normalized to Internal, not forwarded verbatim")
+}
+
+// TestReportAnnounceState_FailedPreconditionMapped — a domain FailedPrecondition
+// sentinel (e.g. FK to a missing LB) maps to gRPC FailedPrecondition.
+func TestReportAnnounceState_FailedPreconditionMapped(t *testing.T) {
+	id := freshLBID(t)
+	store := &fakeStore{reportErr: domain.ErrFailedPrecondition}
+	h := newAnnounceHandler(store)
+	_, err := h.ReportAnnounceState(context.Background(),
+		&lbv1.ReportLoadBalancerAnnounceStateRequest{
+			NetworkLoadBalancerId: id,
+			Zones:                 []*lbv1.AnnounceZoneState{{ZoneId: "zone-a"}},
+		})
+	require.Equal(t, codes.FailedPrecondition, status.Code(err))
+}
+
 func TestReportAnnounceState_EmptyID_InvalidArgument(t *testing.T) {
 	h := newAnnounceHandler(&fakeStore{})
 	_, err := h.ReportAnnounceState(context.Background(),
