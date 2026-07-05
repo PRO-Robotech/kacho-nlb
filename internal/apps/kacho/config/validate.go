@@ -140,6 +140,19 @@ func (c Config) Validate() error {
 			errs = multierr.Append(errs, fmt.Errorf(
 				"production mode: nlb→iam authz edge must be mTLS — set mtls.iam-register.enable=true (insecure Check edge forbidden)"))
 		}
+		// Per-object List authorization fail-closed (security.md, defense-in-depth
+		// parity с breakglass-gate). list-filter — единственный authz-слой для
+		// ScopeFiltered List RPC (interceptor их пропускает); отключение или
+		// fail-open превращает List в нефильтрованный passthrough → cross-tenant
+		// enumeration. В проде: enabled обязателен, fail-open запрещён.
+		if !c.Authz.ListFilter.Enabled {
+			errs = multierr.Append(errs, fmt.Errorf(
+				"production mode: authz.list-filter.enabled must be true (per-object List authorization required; disabling it enables cross-tenant enumeration)"))
+		}
+		if c.Authz.ListFilter.FailOpen {
+			errs = multierr.Append(errs, fmt.Errorf(
+				"production mode: authz.list-filter.fail-open forbidden (fail-closed only; fail-open returns unfiltered results during IAM outage)"))
+		}
 	}
 
 	// Jobs.target-drain (фаза B drain runner). Interval должен быть > 0;
