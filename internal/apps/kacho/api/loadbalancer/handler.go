@@ -83,7 +83,7 @@ func NewHandler(
 		start:           NewStartLoadBalancerUseCase(repo, opsRepo, logger),
 		stop:            NewStopLoadBalancerUseCase(repo, opsRepo, logger),
 		move:            NewMoveLoadBalancerUseCase(repo, opsRepo, peerProject, peerCheck, logger),
-		attachTG:        NewAttachTargetGroupUseCase(repo, opsRepo, logger),
+		attachTG:        NewAttachTargetGroupUseCase(repo, opsRepo, peerCheck, logger),
 		detachTG:        NewDetachTargetGroupUseCase(repo, opsRepo, logger),
 		getTargetStates: NewGetTargetStatesUseCase(repo),
 		listOps:         NewListOperationsUseCase(opsRepo),

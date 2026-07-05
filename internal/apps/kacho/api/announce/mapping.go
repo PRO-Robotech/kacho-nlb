@@ -4,8 +4,6 @@
 package announce
 
 import (
-	"errors"
-
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -30,29 +28,11 @@ func errInvalidArg(field, msg string) error {
 	return status.Errorf(codes.InvalidArgument, "%s: %s", field, msg)
 }
 
-// mapErr транслирует sentinel-ошибки repo-слоя в gRPC-status. Уже gRPC-shaped
-// ошибки (sync-валидация) пробрасываются как есть; Internal — без leak'а pgx.
-func mapErr(err error) error {
-	if err == nil {
-		return nil
-	}
-	if _, ok := status.FromError(err); ok {
-		return err
-	}
-	switch {
-	case errors.Is(err, kachorepo.ErrNotFound):
-		return status.Error(codes.NotFound, "not found")
-	case errors.Is(err, kachorepo.ErrFailedPrecondition):
-		return status.Error(codes.FailedPrecondition, "failed precondition")
-	case errors.Is(err, kachorepo.ErrInvalidArg):
-		return status.Error(codes.InvalidArgument, "invalid argument")
-	case errors.Is(err, kachorepo.ErrUnavailable):
-		return status.Error(codes.Unavailable, "service unavailable")
-	default:
-		// Internal: НЕ leak'аем raw pgx-текст наружу.
-		return status.Error(codes.Internal, "internal error")
-	}
-}
+// Ошибки repo-слоя транслируются единым shared.MapDomainErr (см. get.go /
+// report.go) — тот же sentinel→gRPC маппер, что у loadbalancer/listener/
+// targetgroup. Локальной копии больше нет: расходящийся pass-through (форвардил
+// любой status, включая codes.Unknown) и потеря sentinel-текста — ровно та
+// дивергенция, ради устранения которой заведён общий маппер (audit ARCH r3 #4).
 
 // zoneFromProto — proto AnnounceZoneState → domain.AnnounceZone (inbound write).
 func zoneFromProto(z *lbv1.AnnounceZoneState) domain.AnnounceZone {

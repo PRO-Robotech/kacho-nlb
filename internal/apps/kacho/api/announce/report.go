@@ -9,6 +9,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/PRO-Robotech/kacho-nlb/internal/apps/kacho/api/shared"
 	"github.com/PRO-Robotech/kacho-nlb/internal/domain"
 	lbv1 "github.com/PRO-Robotech/kacho-proto/gen/go/kacho/cloud/loadbalancer/v1"
 )
@@ -44,7 +45,7 @@ func (u *ReportAnnounceStateUseCase) Execute(
 		return nil, errInvalidArg("network_load_balancer_id", "required")
 	}
 	if err := validateLoadBalancerID(id); err != nil {
-		return nil, mapErr(err)
+		return nil, shared.MapDomainErr(err)
 	}
 
 	zones := make([]domain.AnnounceZone, 0, len(req.GetZones()))
@@ -56,7 +57,7 @@ func (u *ReportAnnounceStateUseCase) Execute(
 	}
 
 	if err := u.store.ReportZones(ctx, id, zones); err != nil {
-		return nil, mapErr(err)
+		return nil, shared.MapDomainErr(err)
 	}
 	return &lbv1.ReportLoadBalancerAnnounceStateResponse{}, nil
 }
