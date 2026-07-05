@@ -23,6 +23,7 @@ import (
 	"context"
 	"database/sql"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -326,6 +327,60 @@ func TestDrainOnce_PerTGDelay(t *testing.T) {
 	assert.Equal(t, 1, tgs)
 	assert.Equal(t, 1, countOutboxForTG(t, ctx, pool, tgShort))
 	assert.Equal(t, 0, countOutboxForTG(t, ctx, pool, tgLong))
+}
+
+// TestDrainOnce_MultiReplica — N реплик тикают drainOnce одновременно по одной
+// expired DRAINING строке. Single-statement `DELETE ... RETURNING` + outbox
+// INSERT CTE полагается на row-level lock Postgres: ровно одна транзакция
+// удаляет строку и эмитит outbox row, остальные видят её уже удалённой и
+// возвращают 0. Аналог TestFreeIP_MultiReplica (тот — через FOR UPDATE SKIP
+// LOCKED; здесь — через DELETE-атомарность). Гейт против будущего рефактора,
+// расщепляющего drainSQL на SELECT-then-DELETE (потеря exactly-once).
+func TestDrainOnce_MultiReplica(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test")
+	}
+	ctx := context.Background()
+	dsn := setupTestDB(t)
+	pool, err := coredb.NewPool(ctx, dsn)
+	require.NoError(t, err)
+	defer pool.Close()
+
+	tgID, _ := insertTargetGroup(t, ctx, pool, 1) // delay=1s
+	insertDrainingTarget(t, ctx, pool, tgID, "i-contested", 10*time.Second)
+
+	r := newRunner(t, pool, 1*time.Second)
+
+	const replicas = 8
+	start := make(chan struct{}) // барьер — все goroutine стартуют одновременно
+	var wg sync.WaitGroup
+	deletedTotals := make([]int64, replicas)
+	tgTotals := make([]int, replicas)
+	for i := 0; i < replicas; i++ {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			<-start
+			deleted, tgs, e := r.drainOnce(ctx)
+			require.NoError(t, e)
+			deletedTotals[idx] = deleted
+			tgTotals[idx] = tgs
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+
+	var sumDeleted int64
+	var sumTGs int
+	for i := 0; i < replicas; i++ {
+		sumDeleted += deletedTotals[i]
+		sumTGs += tgTotals[i]
+	}
+
+	assert.Equal(t, int64(1), sumDeleted, "exactly one replica deleted the contested target")
+	assert.Equal(t, 1, sumTGs, "exactly one replica emitted the TG outbox row")
+	assert.Equal(t, 0, countTargets(t, ctx, pool), "target deleted exactly once")
+	assert.Equal(t, 1, countOutboxForTG(t, ctx, pool, tgID), "exactly one UPDATED outbox row (no duplicate drain_complete)")
 }
 
 // =============================================================================
