@@ -758,6 +758,25 @@ func (f *fakeProjectClient) Get(ctx context.Context, id string) (*iam.Project, e
 	return &iam.Project{ID: id, Status: "ACTIVE"}, nil
 }
 
+// fakeCheckClient — in-memory CheckClient (iam.InternalIAMService.Check) двойник.
+type fakeCheckClient struct {
+	allowed     bool
+	err         error
+	calls       int
+	gotSubject  string
+	gotRelation string
+	gotObject   string
+}
+
+func (f *fakeCheckClient) Check(_ context.Context, subject, relation, object string) (bool, error) {
+	f.calls++
+	f.gotSubject, f.gotRelation, f.gotObject = subject, relation, object
+	if f.err != nil {
+		return false, f.err
+	}
+	return f.allowed, nil
+}
+
 type fakeRegionClient struct {
 	getFunc func(ctx context.Context, id string) (*geo.Region, error)
 }
@@ -819,6 +838,7 @@ var (
 	_ kachorepo.Repository   = (*fakeRepo)(nil)
 	_ operations.Repo        = (*fakeOpsRepo)(nil)
 	_ ProjectClient          = (*fakeProjectClient)(nil)
+	_ CheckClient            = (*fakeCheckClient)(nil)
 	_ RegionClient           = (*fakeRegionClient)(nil)
 	_ InstanceClient         = (*fakeInstanceClient)(nil)
 	_ NetworkInterfaceClient = (*fakeNICClient)(nil)

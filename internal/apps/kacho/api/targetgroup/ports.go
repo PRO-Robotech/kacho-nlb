@@ -30,6 +30,13 @@ type OpsRepo = operations.Repo
 // ProjectClient — iam.ProjectService.Get adapter.
 type ProjectClient = iamclient.ProjectClient
 
+// CheckClient — per-object FGA authorization gate (iam.InternalIAMService.Check).
+// Move использует его для авторизации caller'а на DESTINATION project (`editor on
+// project:<dst>`) — per-RPC interceptor проверяет только source-ресурс, поэтому
+// dst-authz — задача handler'а (audit SEC-high #2). nil → check пропускается
+// (dev/unwired; breakglass также обходит source-check).
+type CheckClient = iamclient.CheckClient
+
 // RegionClient — geo.RegionService.Get adapter (stateless pass-through;
 // kacho-geo). Используется sync-precheck в Create use-case'е для
 // валидации `region_id` через kacho-geo (ребро nlb→geo).

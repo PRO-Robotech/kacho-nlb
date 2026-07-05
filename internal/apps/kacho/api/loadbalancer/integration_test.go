@@ -120,7 +120,7 @@ func makeHandler(t *testing.T, repo *kachopg.Repository, opsRepo operations.Repo
 	// возвращающим уникальный адрес на вызов (DB-сторона саги — реальная). Subnet-
 	// client / address-reader / zone-client — nil (placement / link / drain precheck
 	// пропускаются без vpc/geo; эти сьюты гоняют subnet-auto семейства).
-	return loadbalancer.NewHandler(repo, opsRepo, nil, nil, nil, nil, nil, &stubAddressClient{}, nil, logger)
+	return loadbalancer.NewHandler(repo, opsRepo, nil, nil, nil, nil, nil, nil, &stubAddressClient{}, nil, logger)
 }
 
 // stubAddressClient — заглушка vpc InternalAddressClient для integration-стенда

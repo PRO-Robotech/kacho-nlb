@@ -340,7 +340,7 @@ func runServe(configPath string) error {
 	// (Internal-vs-external инвариант: Internal.* живут на internalSrv).
 	lbHandler := lbhandler.NewHandler(
 		repo, opsRepo,
-		peers.Project, peers.Region, peers.Zone,
+		peers.Project, peers.Check, peers.Region, peers.Zone,
 		peers.Subnet, peers.Address, peers.InternalAddress,
 		peers.ListFilter,
 		logger,
@@ -364,7 +364,7 @@ func runServe(configPath string) error {
 	// (см. drainRunner ниже). Зарегистрирован ТОЛЬКО на publicSrv.
 	tgHandler := targetgroup.NewHandler(
 		repo, opsRepo,
-		peers.Project, peers.Region,
+		peers.Project, peers.Check, peers.Region,
 		peers.Instance, peers.NetworkInterface, peers.Subnet,
 		peers.ListFilter,
 		logger,

@@ -25,7 +25,7 @@ func TestMove_Happy(t *testing.T) {
 	tg := makeTG("prj-src", "movable")
 	repo.seedTG(tg)
 	opsRepo := newFakeOpsRepo()
-	uc := NewMoveTargetGroupUseCase(repo, opsRepo, &fakeProjectClient{}, nil)
+	uc := NewMoveTargetGroupUseCase(repo, opsRepo, &fakeProjectClient{}, nil, nil)
 
 	op, err := uc.Execute(context.Background(), &lbv1.MoveTargetGroupRequest{
 		TargetGroupId:        string(tg.ID),
@@ -54,7 +54,7 @@ func TestMove_SameProject_InvalidArg(t *testing.T) {
 	repo := newFakeRepo()
 	tg := makeTG("prj-x", "same-proj")
 	repo.seedTG(tg)
-	uc := NewMoveTargetGroupUseCase(repo, newFakeOpsRepo(), &fakeProjectClient{}, nil)
+	uc := NewMoveTargetGroupUseCase(repo, newFakeOpsRepo(), &fakeProjectClient{}, nil, nil)
 
 	_, err := uc.Execute(context.Background(), &lbv1.MoveTargetGroupRequest{
 		TargetGroupId:        string(tg.ID),
@@ -70,7 +70,7 @@ func TestMove_HasAttachedLB(t *testing.T) {
 	tg := makeTG("prj-y", "attached")
 	repo.seedTG(tg)
 	repo.seedAttached("nlb-1", string(tg.ID))
-	uc := NewMoveTargetGroupUseCase(repo, newFakeOpsRepo(), &fakeProjectClient{}, nil)
+	uc := NewMoveTargetGroupUseCase(repo, newFakeOpsRepo(), &fakeProjectClient{}, nil, nil)
 
 	_, err := uc.Execute(context.Background(), &lbv1.MoveTargetGroupRequest{
 		TargetGroupId:        string(tg.ID),
@@ -89,7 +89,7 @@ func TestMove_DestProjectNotFound(t *testing.T) {
 	uc := NewMoveTargetGroupUseCase(repo, newFakeOpsRepo(),
 		&fakeProjectClient{getFunc: func(_ context.Context, id string) (*iam.Project, error) {
 			return nil, projectNotFound(id)
-		}}, nil)
+		}}, nil, nil)
 
 	_, err := uc.Execute(context.Background(), &lbv1.MoveTargetGroupRequest{
 		TargetGroupId:        string(tg.ID),
@@ -100,7 +100,7 @@ func TestMove_DestProjectNotFound(t *testing.T) {
 }
 
 func TestMove_MissingFields(t *testing.T) {
-	uc := NewMoveTargetGroupUseCase(newFakeRepo(), newFakeOpsRepo(), &fakeProjectClient{}, nil)
+	uc := NewMoveTargetGroupUseCase(newFakeRepo(), newFakeOpsRepo(), &fakeProjectClient{}, nil, nil)
 	for _, tc := range []struct {
 		name string
 		req  *lbv1.MoveTargetGroupRequest
@@ -116,10 +116,71 @@ func TestMove_MissingFields(t *testing.T) {
 }
 
 func TestMove_NotFound(t *testing.T) {
-	uc := NewMoveTargetGroupUseCase(newFakeRepo(), newFakeOpsRepo(), &fakeProjectClient{}, nil)
+	uc := NewMoveTargetGroupUseCase(newFakeRepo(), newFakeOpsRepo(), &fakeProjectClient{}, nil, nil)
 	_, err := uc.Execute(context.Background(), &lbv1.MoveTargetGroupRequest{
 		TargetGroupId:        "tgr-missing",
 		DestinationProjectId: "prj-dst",
 	})
 	require.Equal(t, codes.NotFound, status.Code(err))
+}
+
+// SECURITY (audit SEC-high #2 / CWE-862/863): the caller must be authorized on
+// the DESTINATION project (editor on project:<dst>). A caller with editor on the
+// source TG but NO grant on the destination must be denied, else it injects its
+// TG into a victim's project. Deny → PermissionDenied and the TG must NOT move.
+func TestMove_DeniesUnauthorizedDestination(t *testing.T) {
+	repo := newFakeRepo()
+	tg := makeTG("prj-src", "movable")
+	repo.seedTG(tg)
+	chk := &fakeCheckClient{allowed: false}
+	uc := NewMoveTargetGroupUseCase(repo, newFakeOpsRepo(), &fakeProjectClient{}, chk, nil)
+
+	_, err := uc.Execute(ctxWithUser("usr_attacker"), &lbv1.MoveTargetGroupRequest{
+		TargetGroupId:        string(tg.ID),
+		DestinationProjectId: "prj-victim",
+	})
+	require.Equal(t, codes.PermissionDenied, status.Code(err))
+	require.Equal(t, domain.ProjectID("prj-src"), repo.tgs[string(tg.ID)].ProjectID,
+		"TG must not be re-parented when dst authz is denied")
+	require.Equal(t, 1, chk.calls)
+	require.Equal(t, "user:usr_attacker", chk.gotSubject)
+	require.Equal(t, domain.FGARelationEditor, chk.gotRelation)
+	require.Equal(t, "project:prj-victim", chk.gotObject)
+}
+
+// Authorized (editor) on the destination → Move proceeds.
+func TestMove_AllowsAuthorizedDestination(t *testing.T) {
+	repo := newFakeRepo()
+	tg := makeTG("prj-src", "movable")
+	repo.seedTG(tg)
+	chk := &fakeCheckClient{allowed: true}
+	opsRepo := newFakeOpsRepo()
+	uc := NewMoveTargetGroupUseCase(repo, opsRepo, &fakeProjectClient{}, chk, nil)
+
+	op, err := uc.Execute(ctxWithUser("usr_owner"), &lbv1.MoveTargetGroupRequest{
+		TargetGroupId:        string(tg.ID),
+		DestinationProjectId: "prj-dst",
+	})
+	require.NoError(t, err)
+	final := awaitOpDone(t, opsRepo, op.ID)
+	require.Nil(t, final.Error)
+	require.Equal(t, domain.ProjectID("prj-dst"), repo.tgs[string(tg.ID)].ProjectID)
+	require.Equal(t, 1, chk.calls)
+}
+
+// IAM unavailable during the dst-authz check → fail-closed Unavailable.
+func TestMove_DestCheckUnavailableFailsClosed(t *testing.T) {
+	repo := newFakeRepo()
+	tg := makeTG("prj-src", "movable")
+	repo.seedTG(tg)
+	// CheckClient contract: transport-unavailable surfaces as domain.ErrUnavailable.
+	chk := &fakeCheckClient{err: domain.ErrUnavailable}
+	uc := NewMoveTargetGroupUseCase(repo, newFakeOpsRepo(), &fakeProjectClient{}, chk, nil)
+
+	_, err := uc.Execute(ctxWithUser("usr_owner"), &lbv1.MoveTargetGroupRequest{
+		TargetGroupId:        string(tg.ID),
+		DestinationProjectId: "prj-dst",
+	})
+	require.Equal(t, codes.Unavailable, status.Code(err))
+	require.Equal(t, domain.ProjectID("prj-src"), repo.tgs[string(tg.ID)].ProjectID)
 }

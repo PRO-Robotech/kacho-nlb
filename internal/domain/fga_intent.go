@@ -46,7 +46,16 @@ const (
 	FGARelationAdmin        = "admin"
 	FGARelationProject      = "project"
 	FGARelationLoadBalancer = "load_balancer"
+	// FGARelationEditor — write-relation checked on a project for the
+	// destination-project authorization of cross-project Move (the caller must
+	// hold editor on the destination project, not just on the source resource).
+	FGARelationEditor = "editor"
 )
+
+// FGAObjectTypeProject — FGA object type of the IAM project resource. Used as the
+// destination-project object ("project:<id>") for the Move destination-authz
+// Check (audit SEC-high #2). Mirrors kacho-iam / api-gateway permission_catalog.
+const FGAObjectTypeProject = "project"
 
 // FGA register-intent event types (parity with the CHECK constraint in
 // migration 0002 and with kacho-iam RegisterResource/UnregisterResource).
