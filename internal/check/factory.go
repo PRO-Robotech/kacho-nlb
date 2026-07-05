@@ -38,11 +38,6 @@ type Options struct {
 	// CacheTTL — TTL positive-кеша (default 5s, ≤10s).
 	CacheTTL time.Duration
 
-	// CacheSize — LRU capacity Check-кеша. Сейчас kacho-corelib/authz.Cache не
-	// использует LRU-bound (sync.Map с lazy-eviction); поле зарезервировано для
-	// будущей версии. Передаётся в interceptor для логирования.
-	CacheSize int
-
 	// AllowSystemPrincipal — если true, system:bootstrap пропускается без
 	// Check (для миграций / фоновых job'ов).
 	AllowSystemPrincipal bool

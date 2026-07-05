@@ -36,8 +36,11 @@ import (
 //     - auto-alloc (BYO=false): vpc.InternalAddressService.FreeIP(address_id).
 //     - BYO       (BYO=true): vpc.InternalAddressService.ClearReference(address_id).
 //     Failure → outbox `nlb_listener:<id> FAILED` + ops.MarkDone(error UNAVAILABLE);
-//     listener row остаётся в `status='DELETING'` — background `free_ip_runner`
-//     реконсилирует её (release-by-address + delete + finalize) на следующем тике.
+//     listener row остаётся в `status='DELETING'`. Авто-реконсилятора для
+//     застрявших листенеров НЕТ (free_ip_runner сканирует ТОЛЬКО load_balancers,
+//     не listeners; viporigin_reconcile — one-shot boot-time backfill). Recovery
+//     — идемпотентно повторно вызванный DeleteListener RPC: step-1 (SetStatusCAS)
+//     пропускается, т.к. status уже DELETING, и worker перезапускает release+delete.
 //  3. repo.Writer.Listeners.Delete + 2× outbox emit (`nlb_listener:<id> DELETED`
 //     + `nlb_load_balancer:<lb_id> UPDATED`).
 //  4. ops.MarkDone(response=Empty).
@@ -238,7 +241,8 @@ func (u *DeleteUseCase) releaseVIP(ctx context.Context, addressID, listenerID st
 
 // markFailedAndReturn — best-effort outbox emit `nlb_listener:<id> FAILED`
 // + return wrapped error для ops.MarkError. listener row остаётся в DELETING
-// state — её реконсилирует background `free_ip_runner` на следующем тике.
+// state; авто-реконсилятора нет (free_ip_runner сканирует load_balancers, не
+// listeners) — recovery через идемпотентно повторно вызванный DeleteListener RPC.
 func (u *DeleteUseCase) markFailedAndReturn(ctx context.Context, listenerID, projectID string, original error) error {
 	w, err := u.repo.Writer(ctx)
 	if err == nil {

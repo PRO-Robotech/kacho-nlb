@@ -187,7 +187,6 @@ func runServe(configPath string) error {
 		Logger:              logger,
 		CheckTimeout:        cfg.Authz.IAM.RequestTimeout,
 		CacheTTL:            cfg.Authz.Cache.TTL,
-		CacheSize:           cfg.Authz.Cache.Size,
 		DenyRateLimitPerSec: 100, // I10 default; tunable в будущем config-поле.
 	})
 	if err != nil {

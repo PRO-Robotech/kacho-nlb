@@ -4,13 +4,12 @@
 package announce
 
 import (
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/PRO-Robotech/kacho-corelib/ids"
 	corevalidate "github.com/PRO-Robotech/kacho-corelib/validate"
 
+	"github.com/PRO-Robotech/kacho-nlb/internal/apps/kacho/api/shared"
 	"github.com/PRO-Robotech/kacho-nlb/internal/domain"
 	kachorepo "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho"
 	lbv1 "github.com/PRO-Robotech/kacho-proto/gen/go/kacho/cloud/loadbalancer/v1"
@@ -23,9 +22,10 @@ func validateLoadBalancerID(id string) error {
 	return corevalidate.ResourceID("network load balancer", ids.PrefixLoadBalancer, id)
 }
 
-// errInvalidArg — InvalidArgument с указанием поля для sync-проверок handler'а.
+// errInvalidArg — тонкий делегатор к единому `shared.ErrInvalidArg`
+// (см. audit LEAN #11).
 func errInvalidArg(field, msg string) error {
-	return status.Errorf(codes.InvalidArgument, "%s: %s", field, msg)
+	return shared.ErrInvalidArg(field, msg)
 }
 
 // Ошибки repo-слоя транслируются единым shared.MapDomainErr (см. get.go /

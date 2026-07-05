@@ -67,7 +67,15 @@ jobs:
       - uses: actions/setup-go@v6
         with: { go-version-file: kacho-nlb/go.mod, cache-dependency-path: kacho-nlb/go.sum }
       - run: go mod download
-      - run: go test ./internal/repo/... -race -count=1 -timeout 300s
+      # ВЕСЬ suite БЕЗ -short: testcontainers/concurrency-тесты гардятся
+      # `if testing.Short(){ t.Skip }`, поэтому в unit-джобе (-short) они
+      # пропускаются. Раньше здесь стоял scope `./internal/repo/...`, из-за чего
+      # integration/concurrency-тесты ВНЕ internal/repo (jobs free-ip/target-drain
+      # multi-replica exactly-once, operation cancel-CAS, internal-lifecycle
+      # semaphore/slots, migrations VIP-uniq self-heal, apps loadbalancer/
+      # targetgroup) не гонялись НИГДЕ — false assurance (audit TEST #1). `-p 1`
+      # сериализует пакеты, чтобы не плодить параллельные Postgres-контейнеры.
+      - run: go test ./... -race -count=1 -timeout 600s -p 1
 
   helm-render-guard:
     name: helm lint + render guard (deploy chart)
