@@ -36,20 +36,6 @@ type InternalAddressClient = vpcclient.InternalAddressClient
 // transactional-outbox (FGARegisterOutbox emit в writer-tx + register-drainer →
 // IAM), не прямым FGA-клиентом. FGA object-types / relations — `internal/domain`.
 
-// addressOwner — package-internal helper для построения VPC owner tuple
-// (`{Kind:"nlb_listener", ID:<listener-id>}`). Используется при alloc,
-// SetReference, FreeIP, ClearReference.
-func addressOwner(listenerID string) vpcclient.AddressOwner {
-	return vpcclient.AddressOwner{
-		Kind: addressOwnerKindNLBListener,
-		ID:   listenerID,
-	}
-}
-
-// addressOwnerKindNLBListener — Reference.kind для NLB Listener в vpc.Address
-// `used_by` («owner="nlb_listener:<id>"`).
-const addressOwnerKindNLBListener = "nlb_listener"
-
 // FGA object-type strings live in `internal/domain` (single source of truth,
 // kacho-nlb-wide): `domain.FGAObjectTypeListener` / `domain.FGAObjectTypeLoadBalancer`.
 

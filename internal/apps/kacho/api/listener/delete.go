@@ -169,7 +169,7 @@ func (u *DeleteUseCase) doDelete(ctx context.Context, cur *kachorepo.ListenerRec
 	// без обращения к vpc за именем Address (anti data-loss).
 	if addressID != "" {
 		byo := cur.VipOrigin == domain.VipOriginBYO
-		if err := u.releaseVIP(ctx, addressID, listenerID, byo); err != nil {
+		if err := u.releaseVIP(ctx, addressID, byo); err != nil {
 			return nil, u.markFailedAndReturn(ctx, listenerID, projectID, err)
 		}
 	}
@@ -228,15 +228,14 @@ func (u *DeleteUseCase) doDelete(ctx context.Context, cur *kachorepo.ListenerRec
 //	byo == false → FreeIP (kacho-vpc delete Address целиком).
 //
 // Failure мапится в gRPC через mapDomainErr. NotFound → idempotent ok.
-func (u *DeleteUseCase) releaseVIP(ctx context.Context, addressID, listenerID string, byo bool) error {
+func (u *DeleteUseCase) releaseVIP(ctx context.Context, addressID string, byo bool) error {
 	if u.internalAddrs == nil {
 		return status.Error(codes.Unavailable, "vpc internal-address client not configured")
 	}
-	owner := addressOwner(listenerID)
 	if byo {
-		return u.internalAddrs.ClearReference(ctx, addressID, owner)
+		return u.internalAddrs.ClearReference(ctx, addressID)
 	}
-	return u.internalAddrs.FreeIP(ctx, addressID, owner)
+	return u.internalAddrs.FreeIP(ctx, addressID)
 }
 
 // markFailedAndReturn — best-effort outbox emit `nlb_listener:<id> FAILED`
@@ -246,7 +245,13 @@ func (u *DeleteUseCase) releaseVIP(ctx context.Context, addressID, listenerID st
 func (u *DeleteUseCase) markFailedAndReturn(ctx context.Context, listenerID, projectID string, original error) error {
 	w, err := u.repo.Writer(ctx)
 	if err == nil {
-		_ = w.Outbox().Emit(ctx,
+		committed := false
+		defer func() {
+			if !committed {
+				w.Abort()
+			}
+		}()
+		if emitErr := w.Outbox().Emit(ctx,
 			outboxResourceTypeListener, listenerID, projectID,
 			outboxActionFailed, map[string]any{
 				"id":         listenerID,
@@ -254,8 +259,20 @@ func (u *DeleteUseCase) markFailedAndReturn(ctx context.Context, listenerID, pro
 				"reason":     "release_vip_failed",
 				"error":      original.Error(),
 			},
-		)
-		_ = w.Commit()
+		); emitErr != nil {
+			// FAILED-marker не записан: аудит/outbox-trail неполон. Логируем
+			// отдельным сигналом (audit READ #5, CWE-252) — не глотаем молча.
+			loggerOrDiscard(u.logger).Warn("listener.Delete FAILED-marker outbox emit failed; compensation trail incomplete",
+				"listener_id", listenerID, "emit_err", emitErr)
+		} else if commitErr := w.Commit(); commitErr != nil {
+			loggerOrDiscard(u.logger).Warn("listener.Delete FAILED-marker persist failed; compensation trail incomplete",
+				"listener_id", listenerID, "commit_err", commitErr)
+		} else {
+			committed = true
+		}
+	} else {
+		loggerOrDiscard(u.logger).Warn("listener.Delete FAILED-marker writer-open failed; compensation trail incomplete",
+			"listener_id", listenerID, "writer_err", err)
 	}
 	loggerOrDiscard(u.logger).Warn("listener.Delete release VIP failed; listener kept in DELETING",
 		"listener_id", listenerID, "err", original)

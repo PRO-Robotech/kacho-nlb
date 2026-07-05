@@ -373,7 +373,7 @@ func TestInternalAddressClient_FreeIP_Idempotent(t *testing.T) {
 	conn := startFakeVPC(t, nil, nil, addrSvc, intAddrSvc, &fakeOperationService{})
 
 	c := NewInternalAddressClient(conn, conn)
-	err := c.FreeIP(ctxBackground(), "e9b-already-gone", AddressOwner{Kind: "nlb_listener", ID: "lst-1"})
+	err := c.FreeIP(ctxBackground(), "e9b-already-gone")
 	require.NoError(t, err, "FreeIP must be idempotent: NotFound treated as success")
 }
 
@@ -383,7 +383,7 @@ func TestInternalAddressClient_FreeIP_HappyPath(t *testing.T) {
 	conn := startFakeVPC(t, nil, nil, addrSvc, intAddrSvc, &fakeOperationService{})
 
 	c := NewInternalAddressClient(conn, conn)
-	err := c.FreeIP(ctxBackground(), "e9b-ip-1", AddressOwner{Kind: "nlb_listener", ID: "lst-1"})
+	err := c.FreeIP(ctxBackground(), "e9b-ip-1")
 	require.NoError(t, err)
 	assert.Equal(t, 1, addrSvc.deleteCalls)
 }
@@ -413,7 +413,7 @@ func TestInternalAddressClient_ClearReference_Idempotent(t *testing.T) {
 	conn := startFakeVPC(t, nil, nil, &fakeAddressForAlloc{}, intAddrSvc, &fakeOperationService{})
 
 	c := NewInternalAddressClient(conn, conn)
-	err := c.ClearReference(ctxBackground(), "e9b-gone", AddressOwner{Kind: "k", ID: "i"})
+	err := c.ClearReference(ctxBackground(), "e9b-gone")
 	require.NoError(t, err, "ClearReference NotFound is idempotent")
 }
 
@@ -422,7 +422,7 @@ func TestInternalAddressClient_ClearReference_HappyPath(t *testing.T) {
 	conn := startFakeVPC(t, nil, nil, &fakeAddressForAlloc{}, intAddrSvc, &fakeOperationService{})
 
 	c := NewInternalAddressClient(conn, conn)
-	err := c.ClearReference(ctxBackground(), "e9b-ip-1", AddressOwner{Kind: "nlb_listener", ID: "lst-1"})
+	err := c.ClearReference(ctxBackground(), "e9b-ip-1")
 	require.NoError(t, err)
 	require.Len(t, intAddrSvc.clearCalls, 1)
 	assert.Equal(t, "e9b-ip-1", intAddrSvc.clearCalls[0].AddressId)
@@ -587,7 +587,7 @@ func TestInternalAddressClient_FreeIP_Unavailable(t *testing.T) {
 	c := NewInternalAddressClient(conn, conn)
 	ctx, cancel := context.WithTimeout(ctxBackground(), 200*time.Millisecond)
 	defer cancel()
-	err := c.FreeIP(ctx, "e9b-ip-1", AddressOwner{Kind: "k", ID: "i"})
+	err := c.FreeIP(ctx, "e9b-ip-1")
 	require.Error(t, err)
 	if !errors.Is(err, domain.ErrUnavailable) && !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("expected ErrUnavailable or DeadlineExceeded; got %v", err)

@@ -42,7 +42,10 @@ repository:
   type: POSTGRES              # only POSTGRES supported
   postgres:
     # REQUIRED. Сюда же смотрит `cmd/migrator` (DSN priority: --dsn > ENV >
-    # этот файл).
+    # этот файл). `sslmode=disable` допустим только т.к. этот sample — `mode: dev`
+    # (см. выше). В production (`mode: production`) config.Validate отвергает
+    # disable/allow/prefer — DSN обязан нести sslmode=require|verify-ca|verify-full
+    # (audit SEC #1, security.md «mTLS/TLS ВЕЗДЕ»).
     url: postgres://kacho:secret@pg.kacho.svc.cluster.local:5432/kacho_nlb?sslmode=disable&search_path=kacho_nlb,public
     # max-conns: 0 → pgxpool default.
     max-conns: 0

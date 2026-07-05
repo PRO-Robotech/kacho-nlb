@@ -54,8 +54,8 @@ type InternalAddressClient interface {
 	AllocateExternalIP(ctx context.Context, req vpcclient.AllocateExternalIPRequest) (*vpcclient.AllocateResponse, error)
 	AllocateExternalIPv6(ctx context.Context, req vpcclient.AllocateExternalIPRequest) (*vpcclient.AllocateResponse, error)
 	AttachExisting(ctx context.Context, req vpcclient.AttachExistingRequest) (*vpcclient.AllocateResponse, error)
-	FreeIP(ctx context.Context, addressID string, owner vpcclient.AddressOwner) error
-	ClearReference(ctx context.Context, addressID string, owner vpcclient.AddressOwner) error
+	FreeIP(ctx context.Context, addressID string) error
+	ClearReference(ctx context.Context, addressID string) error
 }
 
 // SubnetClient — Get(subnetID) → *vpcclient.Subnet. sync-precheck placement подсети

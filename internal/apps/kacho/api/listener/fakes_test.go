@@ -857,7 +857,7 @@ func (c *fakeInternalAddressClient) AllocateInternalIPv6(_ context.Context, req 
 		Value:     c.nextAllocV6Value,
 	}, nil
 }
-func (c *fakeInternalAddressClient) FreeIP(_ context.Context, id string, _ vpcclient.AddressOwner) error {
+func (c *fakeInternalAddressClient) FreeIP(_ context.Context, id string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.freeCalls = append(c.freeCalls, id)
@@ -869,7 +869,7 @@ func (c *fakeInternalAddressClient) SetReference(_ context.Context, id string, o
 	c.setRefCalls = append(c.setRefCalls, setRefCall{addressID: id, owner: owner})
 	return c.setRefErr
 }
-func (c *fakeInternalAddressClient) ClearReference(_ context.Context, id string, _ vpcclient.AddressOwner) error {
+func (c *fakeInternalAddressClient) ClearReference(_ context.Context, id string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.clearCalls = append(c.clearCalls, id)

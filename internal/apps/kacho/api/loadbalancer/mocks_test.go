@@ -797,14 +797,14 @@ func (f *fakeAddressClient) AttachExisting(ctx context.Context, req vpcclient.At
 	return &vpcclient.AllocateResponse{AddressID: req.AddressID, Value: "10.0.0.250"}, nil
 }
 
-func (f *fakeAddressClient) FreeIP(ctx context.Context, addressID string, _ vpcclient.AddressOwner) error {
+func (f *fakeAddressClient) FreeIP(ctx context.Context, addressID string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.freed = append(f.freed, addressID)
 	return nil
 }
 
-func (f *fakeAddressClient) ClearReference(ctx context.Context, addressID string, _ vpcclient.AddressOwner) error {
+func (f *fakeAddressClient) ClearReference(ctx context.Context, addressID string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.cleared = append(f.cleared, addressID)

@@ -181,16 +181,33 @@ func (w *listenerWriter) Insert(ctx context.Context, l *domain.Listener) (*kacho
 	if vipOrigin == "" {
 		vipOrigin = string(domain.VipOriginAuto)
 	}
+	// project_id/region_id — денормализованное зеркало родительского LB. Берём их
+	// НЕ из software-captured snapshot'а (`l.ProjectID`/`l.RegionID`, прочитанного
+	// в sync-фазе Create), а атомарно из строки load_balancers под locking-read
+	// `FOR NO KEY UPDATE OF lb`. Иначе TOCTOU (audit DATA #2, CWE-362, запрет #10):
+	// LB мог сменить проект через LoadBalancer.MoveProject между sync-валидацией и
+	// этим async INSERT'ом — plain-INSERT берёт лишь FK KEY SHARE на LB-row, что НЕ
+	// конфликтует с `FOR NO KEY UPDATE` каскада Move → листенер персистится со
+	// stale project_id, а Move-каскад его не видит. Locking-read сериализует INSERT
+	// с MoveProject (тот берёт FOR NO KEY UPDATE на ту же LB-row + каскадит
+	// listeners.project_id): либо INSERT блокируется до commit'а Move и через
+	// EvalPlanQual видит СВЕЖИЙ project, либо каскад Move видит уже закоммиченный
+	// листенер. Зеркалит guard в attached_tg_repo.go Attach (sec-hardening r6).
+	// 0 rows → LB исчез (concurrent Delete) → FailedPrecondition.
 	q := fmt.Sprintf(`
         INSERT INTO kacho_nlb.listeners
             (id, load_balancer_id, project_id, region_id, name, description, labels,
              protocol, port, target_port, ip_version,
              address_id, allocated_address, subnet_id, proxy_protocol_v2,
              default_target_group_id, status, vip_origin)
-        VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+        SELECT $1, lb.id, lb.project_id, lb.region_id, $3, $4, $5::jsonb,
+               $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16
+          FROM kacho_nlb.load_balancers lb
+         WHERE lb.id = $2
+           FOR NO KEY UPDATE OF lb
         RETURNING %s`, listenerCols)
 	row := w.tx.QueryRow(ctx, q,
-		string(l.ID), string(l.LoadBalancerID), string(l.ProjectID), string(l.RegionID),
+		string(l.ID), string(l.LoadBalancerID),
 		string(l.Name), string(l.Description), labelsJSON,
 		string(l.Protocol), int32(l.Port), int32(l.TargetPort), string(l.IPVersion),
 		dto.OptString(l.AddressID), string(l.AllocatedAddress), dto.OptString(l.SubnetID),
@@ -198,6 +215,10 @@ func (w *listenerWriter) Insert(ctx context.Context, l *domain.Listener) (*kacho
 	)
 	rec, err := scanListener(row)
 	if err != nil {
+		if pgxIsNoRows(err) {
+			return nil, fmt.Errorf("%w: parent load balancer %s not found (concurrently deleted)",
+				kacho.ErrFailedPrecondition, string(l.LoadBalancerID))
+		}
 		return nil, mapPgErr(err, "Listener", string(l.ID))
 	}
 	return rec, nil

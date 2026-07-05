@@ -460,11 +460,29 @@ func TestRun_TransientErrorContinues(t *testing.T) {
 	require.NoError(t, err)
 
 	r := newRunner(t, pool, 50*time.Millisecond)
+	// Детерминированный сигнал: дожидаемся, что хотя бы один tick РЕАЛЬНО поймал
+	// SQL-ошибку (dropped table), прежде чем cancel'ить — иначе тест мог пройти
+	// вакуумно, если под нагрузкой CI ни один tick не успел выполниться за
+	// фиксированный sleep (audit TEST #7, CWE-367). Буферизованный канал, чтобы
+	// tick-goroutine не блокировался после первого сигнала.
+	tickErr := make(chan error, 8)
+	r.onTickErr = func(err error) {
+		select {
+		case tickErr <- err:
+		default:
+		}
+	}
 	runErr := make(chan error, 1)
 	go func() { runErr <- r.Run(ctx) }()
 
-	// Дать пару тиков на отлов error.
-	time.Sleep(200 * time.Millisecond)
+	// Ждём наблюдаемую transient-ошибку (не wall-clock): доказывает, что error-
+	// ветка tick'а действительно исполнилась (continue-on-transient покрыт).
+	select {
+	case err := <-tickErr:
+		require.Error(t, err, "onTickErr must fire with the SQL error against the dropped table")
+	case <-time.After(5 * time.Second):
+		t.Fatal("no tick observed the transient SQL error within 5s — error path never exercised")
+	}
 
 	cancel()
 	select {

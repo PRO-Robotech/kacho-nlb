@@ -48,6 +48,19 @@ mismatch → 0 rows → `FailedPrecondition`. `FOR NO KEY UPDATE` (не `FOR KEY
 берёт на свою row-у. Обоснование и race-тесты — `sec_hardening_r3_integration_test.go`
 (sec-hardening r3, finding #1).
 
+**Тот же паттерн у `Listener.Insert`.** Листенер несёт денормализованное
+зеркало `project_id`/`region_id` родительского LB. Раньше `Listener.Insert` был
+plain-`INSERT` с software-captured (в sync-фазе Create) project_id — тот же
+move-first TOCTOU: `LoadBalancer.MoveProject` каскадит
+`UPDATE listeners SET project_id ... WHERE load_balancer_id=$lb` под
+`FOR NO KEY UPDATE` на LB-row, а plain-INSERT берёт лишь FK `KEY SHARE` (не
+конфликтует) → листенер персистится со stale project_id, а Move-каскад его не
+видит. Фикс (sec-hardening r6, finding DATA #2): `Insert` теперь
+`INSERT ... SELECT lb.project_id, lb.region_id ... FROM load_balancers lb
+WHERE lb.id=$lb FOR NO KEY UPDATE OF lb` — сериализуется с MoveProject точно как
+Attach. Race-тест — `TestListenerCreate_MoveFirst_ProjectConsistent`
+(`sec_hardening_r6_integration_test.go`).
+
 ## lb_status_recompute — CAS-guard на финальной записи статуса
 
 **Что.** Триггер `lb_status_recompute()` (пересчёт `INACTIVE↔ACTIVE` при
@@ -102,3 +115,47 @@ call-site стиль во всех пакетах. Это repo-wide конвен
 конвенции; логика при этом уже не дублируется (живёт единожды в `shared`). Дрейф
 поведения невозможен: изменение правится в одном `shared.*`, wrapper'ы его лишь
 пробрасывают (sec-hardening r5b, LEAN-finding «peerErrToStatus wrappers»).
+
+## Peer-client порты определены в `internal/clients/*`, а use-case их только алиасит
+
+**Что.** `architecture.md` предписывает, что port-интерфейсы (`<Peer>Client`)
+определяет внутренний слой (use-case). В kacho-nlb конкретные peer-порты и их
+transfer-DTO физически объявлены в adapter-пакетах `internal/clients/*`
+(`iam.ProjectClient`+`iam.Project`, `geo.RegionClient`/`ZoneClient`,
+`vpc.SubnetClient`/`AddressClient`/`InternalAddressClient` + их request/response
+DTO), а `apps/kacho/api/<res>/ports.go` их **алиасит** (`type ProjectClient =
+iamclient.ProjectClient`). Формально стрелка зависимости смотрит из use-case в
+adapter, а не наоборот.
+
+**Почему by-design (а не инвертировать).** Peer-DTO — это тонкие value-структуры
+над gRPC-stub'ами конкретного домена (owner API), у которых **единственный**
+консумер — этот сервис; они не несут доменной логики kacho-nlb. Держать их
+определение рядом с адаптером, который маршалит их из proto-stub'ов, — единый
+источник истины формы; инверсия (объявить порты+DTO в use-case и реализовывать в
+adapter) продублировала бы ~6 интерфейсов и ~10 DTO в двух местах и потребовала бы
+конвертации proto↔use-case-DTO на каждом вызове ради чистоты стрелки, без выигрыша
+в тестируемости (use-case-тесты всё равно строят те же value-структуры через
+package-local fake'и). Замена одного консумера или второй контракт — редизайн
+adapter-пакета в любом случае. Осознанный trade-off «single-definition DTO vs.
+формальная dependency-inversion» в пользу первого (sec-hardening r6, ARCH-finding
+«port ownership»). Композиционный wiring остаётся в `cmd/kacho-loadbalancer/main.go`.
+
+## Нет глобального `statement_timeout`/`lock_timeout` на DB-соединении
+
+**Что.** Пул создаётся из DSN без server-side per-statement bound
+(`statement_timeout`/`lock_timeout`/`idle_in_transaction_session_timeout` не
+заданы ни в DSN, ни в values). Верхняя граница выполнения запроса — только
+gRPC-context-deadline, пробрасываемый в pgx.
+
+**Почему принятый defense-in-depth-риск, а не глобальный GUC.** Blast radius
+ограничен: все list/read-пути keyset-пагинированы и клампятся
+(`pageSizeOrDefault` cap 1000, `ListTargets` — `MaxTargetsPerGroup`), contested
+write-пути — атомарные CAS/`FOR NO KEY UPDATE`/`SKIP LOCKED` (короткие). Наивная
+установка глобального `statement_timeout` на общий DSN опасна: тот же DSN
+использует `cmd/migrator` — жёсткий per-statement timeout может оборвать
+легитимный длинный DDL/`CREATE INDEX`/backfill на большой таблице (migration-abort
+хуже, чем удержанный коннект). Правильный фикс — **per-request server-side timeout
+interceptor** (unary/stream) на listener'е, не GUC на shared-DSN; он ограничивает
+именно request-path, не трогая migrator/DDL. До его появления полагаемся на
+context-deadline (sec-hardening r6, SEC-finding «no statement_timeout», принято как
+defense-in-depth-долг, не blocking-баг).

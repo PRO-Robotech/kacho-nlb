@@ -152,10 +152,10 @@ type vipBinding struct {
 // FK 23503 backstop → ErrFailedPrecondition (листенер появился между sync-check и delete).
 func (u *DeleteLoadBalancerUseCase) doDelete(ctx context.Context, id, projectID string, vip vipBinding) (*anypb.Any, error) {
 	// Per-family release VIP до удаления строки (раздельно v4/v6).
-	if err := u.releaseVIP(ctx, id, vip.addressIDV4, vip.originV4); err != nil {
+	if err := u.releaseVIP(ctx, vip.addressIDV4, vip.originV4); err != nil {
 		return nil, mapDomainErr(err)
 	}
-	if err := u.releaseVIP(ctx, id, vip.addressIDV6, vip.originV6); err != nil {
+	if err := u.releaseVIP(ctx, vip.addressIDV6, vip.originV6); err != nil {
 		return nil, mapDomainErr(err)
 	}
 
@@ -195,25 +195,24 @@ func (u *DeleteLoadBalancerUseCase) doDelete(ctx context.Context, id, projectID 
 }
 
 // releaseVIP — освобождает VIP одного семейства по address_id (§3.9): owned (auto)
-// → two-step owner-scoped ClearReference → FreeIP (иначе FreeIP==AddressService.
-// Delete упрётся в собственный Delete-guard на owned-референсе); linked →
-// ClearReference без Delete (tenant-адрес уцелевает). Пустой addressID → no-op.
-// Идемпотентно (NotFound → успех; окно cleared-but-not-deleted добивает free_ip_runner).
-func (u *DeleteLoadBalancerUseCase) releaseVIP(ctx context.Context, lbID, addressID string, origin domain.VipOrigin) error {
+// → two-step ClearReference → FreeIP (иначе FreeIP==AddressService.Delete упрётся
+// в собственный Delete-guard на owned-референсе); linked → ClearReference без
+// Delete (tenant-адрес уцелевает). Пустой addressID → no-op. Идемпотентно
+// (NotFound → успех; окно cleared-but-not-deleted добивает free_ip_runner).
+func (u *DeleteLoadBalancerUseCase) releaseVIP(ctx context.Context, addressID string, origin domain.VipOrigin) error {
 	if addressID == "" {
 		return nil
 	}
 	if u.addressClient == nil {
 		return status.Error(codes.Unavailable, "vpc internal address client not configured")
 	}
-	owner := lbAddressOwner(lbID, "")
 	if origin == domain.VipOriginAuto {
 		// owned: снять собственный owned-референс, затем удалить адрес.
-		if err := u.addressClient.ClearReference(ctx, addressID, owner); err != nil {
+		if err := u.addressClient.ClearReference(ctx, addressID); err != nil {
 			return err
 		}
-		return u.addressClient.FreeIP(ctx, addressID, owner)
+		return u.addressClient.FreeIP(ctx, addressID)
 	}
 	// linked (tenant-owned): снять только референс.
-	return u.addressClient.ClearReference(ctx, addressID, owner)
+	return u.addressClient.ClearReference(ctx, addressID)
 }
