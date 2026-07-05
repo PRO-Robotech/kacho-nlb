@@ -6,6 +6,7 @@ package vpc
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"google.golang.org/grpc"
@@ -124,6 +125,10 @@ type internalAddressClient struct {
 	addrs    vpcpb.AddressServiceClient
 	internal vpcpb.InternalAddressServiceClient
 	ops      operationpb.OperationServiceClient
+	// logger — для наблюдаемости best-effort компенсаций (напр. failed
+	// compensating FreeIP → leaked Address в kacho-vpc). Никогда не nil:
+	// конструкторы дефолтят на slog.Default() (main.go делает slog.SetDefault).
+	logger *slog.Logger
 }
 
 // NewInternalAddressClient оборачивает grpc-conn'ы в typed adapter.
@@ -141,6 +146,7 @@ func NewInternalAddressClient(publicConn, internalConn grpc.ClientConnInterface)
 		addrs:    vpcpb.NewAddressServiceClient(publicConn),
 		internal: vpcpb.NewInternalAddressServiceClient(internalConn),
 		ops:      operationpb.NewOperationServiceClient(publicConn),
+		logger:   slog.Default(),
 	}
 }
 
@@ -153,7 +159,7 @@ func NewInternalAddressClientFromStubs(
 	if addrs == nil || internal == nil || ops == nil {
 		return nil
 	}
-	return &internalAddressClient{addrs: addrs, internal: internal, ops: ops}
+	return &internalAddressClient{addrs: addrs, internal: internal, ops: ops, logger: slog.Default()}
 }
 
 // AllocateExternalIP — см. контракт InternalAddressClient.AllocateExternalIP.
@@ -257,8 +263,18 @@ func (c *internalAddressClient) allocFromCreate(
 	// auto-alloc → owned=true (адрес заказан LB неявно, lifecycle связан).
 	if err := c.SetReference(ctx, addr.GetId(), owner, true); err != nil {
 		// Best-effort cleanup: tear down half-allocated address. Не маскируем
-		// исходную ошибку (она важнее для caller'а).
-		_ = c.FreeIP(ctx, addr.GetId(), owner)
+		// исходную ошибку (она важнее для caller'а). Если компенсация тоже
+		// падает — адрес orphaned в kacho-vpc; логируем Warn, чтобы leaked-адрес
+		// был наблюдаем и реконсайлируем (иначе — silent IP leak).
+		if freeErr := c.FreeIP(ctx, addr.GetId(), owner); freeErr != nil {
+			c.logger.Warn("address_compensation_free_failed",
+				"address_id", addr.GetId(),
+				"owner_kind", owner.Kind,
+				"owner_id", owner.ID,
+				"set_reference_err", err.Error(),
+				"free_err", freeErr.Error(),
+			)
+		}
 		return nil, err
 	}
 	return &AllocateResponse{AddressID: addr.GetId(), Value: readIP(addr)}, nil

@@ -4,8 +4,10 @@
 package vpc
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"sync"
 	"testing"
 	"time"
@@ -210,6 +212,45 @@ func TestInternalAddressClient_AllocateExternalIP_SetReferenceFailsTriggersClean
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, domain.ErrFailedPrecondition))
 	assert.Equal(t, 1, addrSvc.deleteCalls, "cleanup must call Delete to free half-allocated address")
+}
+
+// TestInternalAddressClient_CompensatingFreeIPFailure_IsLogged — регрессия к
+// audit-finding "silent IP leak": когда SetReference падает ПОСЛЕ успешного
+// Create, а компенсирующий FreeIP тоже падает, только-что аллоцированный Address
+// оказывается orphaned в kacho-vpc. Раньше ошибка FreeIP глоталась (`_ =`) без
+// какого-либо следа. Теперь клиент обязан эмитить Warn-лог, чтобы leaked-адрес
+// был наблюдаем и реконсайлируем оператором. Исходная ошибка (SetReference)
+// остаётся возвращаемой.
+func TestInternalAddressClient_CompensatingFreeIPFailure_IsLogged(t *testing.T) {
+	prev := slog.Default()
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	var buf bytes.Buffer
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})))
+
+	allocResp := &vpcpb.Address{
+		Id: "e9b-leak-1",
+		Address: &vpcpb.Address_ExternalIpv4Address{
+			ExternalIpv4Address: &vpcpb.ExternalIpv4Address{Address: "203.0.113.9"},
+		},
+	}
+	// Create succeeds; Delete (FreeIP compensation) fails with Unavailable;
+	// SetReference fails → triggers the doomed compensation.
+	addrSvc := &fakeAddressForAlloc{createResp: allocResp, deleteErr: status.Error(codes.Unavailable, "vpc down")}
+	intAddrSvc := &fakeInternalAddressService{setErr: status.Error(codes.AlreadyExists, "already attached")}
+	conn := startFakeVPC(t, nil, nil, addrSvc, intAddrSvc, &fakeOperationService{})
+
+	c := NewInternalAddressClient(conn, conn)
+	_, err := c.AllocateExternalIP(ctxBackground(), AllocateExternalIPRequest{
+		ProjectID: "prj-1", ZoneID: "z", Owner: AddressOwner{Kind: "nlb_listener", ID: "lst-1"},
+	})
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, domain.ErrFailedPrecondition), "original SetReference error must be returned")
+	assert.GreaterOrEqual(t, addrSvc.deleteCalls, 1, "compensation must attempt FreeIP")
+
+	logged := buf.String()
+	assert.Contains(t, logged, "address_compensation_free_failed",
+		"leaked address must be logged for observability")
+	assert.Contains(t, logged, "e9b-leak-1", "log must carry the leaked address id")
 }
 
 func TestInternalAddressClient_AllocateExternalIP_PoolExhausted(t *testing.T) {
