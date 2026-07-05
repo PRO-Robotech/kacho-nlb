@@ -14,7 +14,7 @@ import (
 	"github.com/PRO-Robotech/kacho-corelib/operations"
 	lbv1 "github.com/PRO-Robotech/kacho-proto/gen/go/kacho/cloud/loadbalancer/v1"
 
-	kachopg "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho/pg"
+	kachorepo "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho"
 )
 
 // DetachTargetGroupUseCase — idempotent DELETE from attached_target_groups
@@ -99,8 +99,8 @@ func (u *DetachTargetGroupUseCase) doDetach(ctx context.Context, lbID, tgID, pro
 		return nil, mapDomainErr(err)
 	}
 	if err := w.Outbox().Emit(ctx,
-		kachopg.OutboxResourceLoadBalancer, lbID, projectID,
-		kachopg.OutboxActionUpdated, map[string]any{
+		kachorepo.OutboxResourceLoadBalancer, lbID, projectID,
+		kachorepo.OutboxActionUpdated, map[string]any{
 			"id":              lbID,
 			"target_group_id": tgID,
 			"action":          "detach",

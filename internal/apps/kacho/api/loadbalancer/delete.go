@@ -19,7 +19,6 @@ import (
 
 	"github.com/PRO-Robotech/kacho-nlb/internal/domain"
 	kachorepo "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho"
-	kachopg "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho/pg"
 )
 
 // lbUnregisterIntent builds the FGA-unregister-intent (project-hierarchy)
@@ -170,8 +169,8 @@ func (u *DeleteLoadBalancerUseCase) doDelete(ctx context.Context, id, projectID 
 		return nil, mapDomainErr(err)
 	}
 	if err := w.Outbox().Emit(ctx,
-		kachopg.OutboxResourceLoadBalancer, id, projectID,
-		kachopg.OutboxActionDeleted, map[string]any{"id": id, "project_id": projectID},
+		kachorepo.OutboxResourceLoadBalancer, id, projectID,
+		kachorepo.OutboxActionDeleted, map[string]any{"id": id, "project_id": projectID},
 	); err != nil {
 		return nil, mapDomainErr(err)
 	}

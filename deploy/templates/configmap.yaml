@@ -107,6 +107,13 @@ data:
         cache-max-entries: {{ .Values.config.authz.listFilter.cacheMaxEntries }}
         fail-open: {{ .Values.config.authz.listFilter.failOpen }}
       breakglass: {{ .Values.config.authz.breakglass }}
+      # Anti-impersonation allow-list (trusted x-kacho-principal-* forwarders).
+      # Required non-empty in production+mTLS (config.Validate fail-closed gate).
+      trusted-forwarder-sans:
+        {{- with .Values.config.authz.trustedForwarderSANs }}
+        {{- toYaml . | nindent 8 }}
+        {{- else }} []
+        {{- end }}
 
     fga:
       endpoint: {{ .Values.config.fga.endpoint | quote }}

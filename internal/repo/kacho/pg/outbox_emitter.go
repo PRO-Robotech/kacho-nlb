@@ -23,7 +23,8 @@ type outboxEmitter struct {
 // CHECK constraints на resource_type / action заложены в миграции 0001 — typo
 // в caller'е → SQLSTATE 23514 → ErrInvalidArg в mapPgErr. Это намеренный
 // belt-and-suspenders: каждый caller обязан использовать константы
-// (`OutboxResource*` / `OutboxAction*` ниже), но DB их валидирует тоже.
+// (`kacho.OutboxResource*` / `kacho.OutboxAction*` из leaf-пакета), но DB их
+// валидирует тоже.
 func (e *outboxEmitter) Emit(ctx context.Context, resourceType, resourceID, projectID, action string, payload map[string]any) error {
 	payloadJSON := []byte(`{}`)
 	if len(payload) > 0 {
@@ -41,19 +42,3 @@ func (e *outboxEmitter) Emit(ctx context.Context, resourceType, resourceID, proj
 	}
 	return nil
 }
-
-// Outbox resource_type values (parity с CHECK в миграции 0001).
-const (
-	OutboxResourceLoadBalancer = "nlb_load_balancer"
-	OutboxResourceListener     = "nlb_listener"
-	OutboxResourceTargetGroup  = "nlb_target_group"
-)
-
-// Outbox action values.
-const (
-	OutboxActionCreated = "CREATED"
-	OutboxActionUpdated = "UPDATED"
-	OutboxActionDeleted = "DELETED"
-	OutboxActionMoved   = "MOVED"
-	OutboxActionFailed  = "FAILED"
-)

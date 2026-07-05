@@ -22,8 +22,8 @@ import (
 	"log/slog"
 
 	"github.com/PRO-Robotech/kacho-corelib/operations"
-	operationpb "github.com/PRO-Robotech/kacho-proto/gen/go/kacho/cloud/operation"
 	lbv1 "github.com/PRO-Robotech/kacho-proto/gen/go/kacho/cloud/loadbalancer/v1"
+	operationpb "github.com/PRO-Robotech/kacho-proto/gen/go/kacho/cloud/operation"
 
 	"github.com/PRO-Robotech/kacho-nlb/internal/authzfilter"
 )
@@ -62,6 +62,7 @@ func NewHandler(
 	repo Repo,
 	opsRepo operations.Repo,
 	peerProject ProjectClient,
+	peerCheck CheckClient,
 	peerRegion RegionClient,
 	peerZone ZoneClient,
 	peerSubnet SubnetClient,
@@ -81,7 +82,7 @@ func NewHandler(
 		deleteUC:        NewDeleteLoadBalancerUseCase(repo, opsRepo, peerInternalAddr, logger),
 		start:           NewStartLoadBalancerUseCase(repo, opsRepo, logger),
 		stop:            NewStopLoadBalancerUseCase(repo, opsRepo, logger),
-		move:            NewMoveLoadBalancerUseCase(repo, opsRepo, peerProject, logger),
+		move:            NewMoveLoadBalancerUseCase(repo, opsRepo, peerProject, peerCheck, logger),
 		attachTG:        NewAttachTargetGroupUseCase(repo, opsRepo, logger),
 		detachTG:        NewDetachTargetGroupUseCase(repo, opsRepo, logger),
 		getTargetStates: NewGetTargetStatesUseCase(repo),

@@ -16,7 +16,7 @@ import (
 	lbv1 "github.com/PRO-Robotech/kacho-proto/gen/go/kacho/cloud/loadbalancer/v1"
 
 	"github.com/PRO-Robotech/kacho-nlb/internal/domain"
-	kachopg "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho/pg"
+	kachorepo "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho"
 )
 
 // (nlb-side): Update(labels) re-emits the FGA-register
@@ -87,7 +87,7 @@ func TestUpdate_MutableFields(t *testing.T) {
 	// Outbox UPDATED.
 	events := repo.outboxEvents()
 	require.Len(t, events, 1)
-	assert.Equal(t, kachopg.OutboxActionUpdated, events[0].Action)
+	assert.Equal(t, kachorepo.OutboxActionUpdated, events[0].Action)
 }
 
 // immutable project_id / region_id → InvalidArgument с фиксированным текстом.

@@ -17,7 +17,7 @@ import (
 	lbv1 "github.com/PRO-Robotech/kacho-proto/gen/go/kacho/cloud/loadbalancer/v1"
 
 	"github.com/PRO-Robotech/kacho-nlb/internal/domain"
-	kachopg "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho/pg"
+	kachorepo "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho"
 )
 
 // фаза A (immediate DRAINING-mark + outbox UPDATED + done<500ms).
@@ -63,7 +63,7 @@ func TestRemove_PhaseAMarksDraining(t *testing.T) {
 	// Outbox UPDATED.
 	events := repo.outboxEvents()
 	require.Len(t, events, 1)
-	assert.Equal(t, kachopg.OutboxActionUpdated, events[0].Action)
+	assert.Equal(t, kachorepo.OutboxActionUpdated, events[0].Action)
 }
 
 // identity not in TG → no-op (no outbox, no error).

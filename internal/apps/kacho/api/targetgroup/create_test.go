@@ -18,7 +18,7 @@ import (
 	lbv1 "github.com/PRO-Robotech/kacho-proto/gen/go/kacho/cloud/loadbalancer/v1"
 
 	"github.com/PRO-Robotech/kacho-nlb/internal/domain"
-	kachopg "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho/pg"
+	kachorepo "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho"
 )
 
 // mkCreateReq — минимальный валидный CreateTargetGroupRequest с HTTP HC.
@@ -70,8 +70,8 @@ func TestCreate_Happy(t *testing.T) {
 	// Outbox: exactly one CREATED row.
 	events := repo.outboxEvents()
 	require.Len(t, events, 1)
-	assert.Equal(t, kachopg.OutboxResourceTargetGroup, events[0].ResourceType)
-	assert.Equal(t, kachopg.OutboxActionCreated, events[0].Action)
+	assert.Equal(t, kachorepo.OutboxResourceTargetGroup, events[0].ResourceType)
+	assert.Equal(t, kachorepo.OutboxActionCreated, events[0].Action)
 }
 
 // empty targets allowed.

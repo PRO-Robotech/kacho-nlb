@@ -17,7 +17,7 @@ import (
 	lbv1 "github.com/PRO-Robotech/kacho-proto/gen/go/kacho/cloud/loadbalancer/v1"
 
 	"github.com/PRO-Robotech/kacho-nlb/internal/domain"
-	kachopg "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho/pg"
+	kachorepo "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho"
 )
 
 // UpdateLoadBalancerUseCase — UpdateMask discipline + async update.
@@ -168,8 +168,8 @@ func (u *UpdateLoadBalancerUseCase) doUpdate(ctx context.Context, lb domain.Load
 		return nil, mapDomainErr(err)
 	}
 	if err := w.Outbox().Emit(ctx,
-		kachopg.OutboxResourceLoadBalancer, string(updated.ID), string(updated.ProjectID),
-		kachopg.OutboxActionUpdated, lbOutboxPayload(updated),
+		kachorepo.OutboxResourceLoadBalancer, string(updated.ID), string(updated.ProjectID),
+		kachorepo.OutboxActionUpdated, lbOutboxPayload(updated),
 	); err != nil {
 		return nil, mapDomainErr(err)
 	}

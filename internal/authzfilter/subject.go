@@ -17,8 +17,8 @@ import (
 // SubjectFromCtx — извлекает FGA subject ("user:<id>" / "service_account:<id>")
 // из ctx через operations.PrincipalFromContext (nlb-конвенция: principal кладётся
 // grpcsrv.UnaryPrincipalExtract на обоих listener'ах). system / unauthenticated
-// principal → "" (use-case трактует "" как bypass — фоновые/dev вызовы не
-// фильтруются; production-mode anonymous отбивается interceptor'ом ДО handler'а).
+// principal → "". Пустой subject НЕ трактуется как bypass: Resolve прокидывает
+// его в filter, который fail-close'ит (enabled FGAFilter → Unauthenticated).
 //
 // Зеркало internal/domain.FGASubjectFromPrincipal — единый формат subject-строки.
 func SubjectFromCtx(ctx context.Context) string {
@@ -29,12 +29,20 @@ func SubjectFromCtx(ctx context.Context) string {
 // Resolve — единый entry-point для List use-case'ов всех ресурсов nlb. Извлекает
 // subject из ctx, вызывает filter.ListAllowedIDs и нормализует решение:
 //
-//   - filter == nil               → bypass (list-filter disabled / dev).
-//   - subject == "" (system)      → bypass (фоновые/dev вызовы без identity).
-//   - filter вернул BypassAll      → bypass (admin / wildcard-grant / fail-open).
+//   - filter == nil               → bypass (list-filter disabled / dev — явно
+//     не сконфигурирован filter в composition root).
+//   - subject == "" (system)      → subject прокидывается в filter КАК ЕСТЬ
+//     (fail-closed). Реальный FGAFilter вернёт Unauthenticated (enabled) либо
+//     BypassAll (disabled — enabled=false проверяется ДО subject); никакого
+//     short-circuit-bypass на пустом subject'е здесь НЕТ — это была
+//     cross-tenant enumeration дыра (audit SEC-high #1 / CWE-862): запрос,
+//     потерявший forwarded-principal, не должен перечислять чужой проект.
+//   - filter вернул BypassAll      → bypass (admin / wildcard-grant / fail-open /
+//     enabled=false).
 //   - filter вернул Empty/пусто    → Decision{Empty:true} (use-case вернёт пустой ответ).
 //   - иначе                        → Decision{AllowedIDs:...} (пересечение в SQL).
-//   - filter error                 → возвращается как есть (fail-closed Unavailable).
+//   - filter error                 → возвращается как есть (fail-closed
+//     Unauthenticated/Unavailable).
 //
 // Use-case'ы НЕ дублируют subject-extraction/bypass-логику — зовут Resolve.
 func Resolve(ctx context.Context, filter Filter, resourceType, action string) (Decision, error) {
@@ -42,9 +50,6 @@ func Resolve(ctx context.Context, filter Filter, resourceType, action string) (D
 		return Decision{BypassAll: true}, nil
 	}
 	subject := SubjectFromCtx(ctx)
-	if subject == "" {
-		return Decision{BypassAll: true}, nil
-	}
 	dec, err := filter.ListAllowedIDs(ctx, subject, resourceType, action)
 	if err != nil {
 		// Fail-closed: любая ошибка фильтра — Unavailable. FGAFilter уже

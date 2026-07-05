@@ -328,7 +328,8 @@ func TestFGAFilter_MissingResourceTypeOrAction(t *testing.T) {
 
 // per-request timeout is enforced and surfaced as Unavailable (NOT silent bypass).
 func TestFGAFilter_TimeoutEnforced(t *testing.T) {
-	mock := &mockAuthClient{sleep: 100 * time.Millisecond, responses: []*iamv1.ListObjectsResponse{{}}}
+	const mockSleep = 100 * time.Millisecond
+	mock := &mockAuthClient{sleep: mockSleep, responses: []*iamv1.ListObjectsResponse{{}}}
 	cfg := DefaultConfig()
 	cfg.Timeout = 10 * time.Millisecond
 	f := NewFGAFilter(mock, cfg)
@@ -336,14 +337,23 @@ func TestFGAFilter_TimeoutEnforced(t *testing.T) {
 	t0 := time.Now()
 	_, err := f.ListAllowedIDs(context.Background(), "user:usr_alice", ResourceTypeLoadBalancer, ActionLoadBalancerList)
 	elapsed := time.Since(t0)
+	// Primary correctness: the per-request timeout must surface as Unavailable
+	// (fail-closed, not a silent bypass) rather than blocking for the full
+	// downstream sleep. If the timeout were NOT enforced the mock would sleep the
+	// full mockSleep and return a nil-error response → err==nil catches that.
 	if err == nil {
 		t.Fatalf("expected timeout error")
 	}
-	if elapsed > 80*time.Millisecond {
-		t.Fatalf("timeout not enforced — elapsed=%s", elapsed)
-	}
 	if got := status.Code(err); got != codes.Unavailable {
 		t.Fatalf("timeout: expected Unavailable, got %s", got)
+	}
+	// Preemption sanity: the call returned before the downstream would have
+	// completed (well under mockSleep). Bound is the mock sleep, not a tight
+	// fixed ceiling gated on the 10ms timeout — the latter is flaky under
+	// -race/GC/CPU-throttle on shared CI (a late-scheduled timeout goroutine can
+	// breach an 80ms budget with no real regression).
+	if elapsed >= mockSleep {
+		t.Fatalf("timeout not enforced — call blocked for the full downstream sleep, elapsed=%s", elapsed)
 	}
 }
 

@@ -5,6 +5,7 @@ package loadbalancer
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 
@@ -12,12 +13,13 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/anypb"
 
+	"github.com/PRO-Robotech/kacho-corelib/authz"
 	"github.com/PRO-Robotech/kacho-corelib/ids"
 	"github.com/PRO-Robotech/kacho-corelib/operations"
 	lbv1 "github.com/PRO-Robotech/kacho-proto/gen/go/kacho/cloud/loadbalancer/v1"
 
 	"github.com/PRO-Robotech/kacho-nlb/internal/domain"
-	kachopg "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho/pg"
+	kachorepo "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho"
 )
 
 // MoveLoadBalancerUseCase — change project_id (cross-project) keeping region.
@@ -37,20 +39,23 @@ type MoveLoadBalancerUseCase struct {
 	repo          Repo
 	opsRepo       operations.Repo
 	projectClient ProjectClient
+	checkClient   CheckClient
 	logger        *slog.Logger
 }
 
-// NewMoveLoadBalancerUseCase конструктор.
+// NewMoveLoadBalancerUseCase конструктор. checkClient авторизует caller'а на
+// destination project (`editor on project:<dst>`); nil → dst-authz пропускается
+// (dev/unwired).
 func NewMoveLoadBalancerUseCase(
 	repo Repo, opsRepo operations.Repo,
-	pc ProjectClient, logger *slog.Logger,
+	pc ProjectClient, checkClient CheckClient, logger *slog.Logger,
 ) *MoveLoadBalancerUseCase {
 	if logger == nil {
 		logger = slog.Default()
 	}
 	return &MoveLoadBalancerUseCase{
 		repo: repo, opsRepo: opsRepo,
-		projectClient: pc, logger: logger,
+		projectClient: pc, checkClient: checkClient, logger: logger,
 	}
 }
 
@@ -101,6 +106,15 @@ func (u *MoveLoadBalancerUseCase) Execute(
 		}
 	}
 
+	// Destination-project authorization (audit SEC-high #2 / CWE-862/863): the
+	// per-RPC interceptor authorizes the caller on the SOURCE LB only; the caller
+	// must ALSO hold `editor` on the destination project, else it could inject
+	// the LB into a victim's project. This is a handler-side Check by design (an
+	// RPCEntry has a single object extractor and cannot check the destination).
+	if err := u.authorizeDestination(ctx, dst); err != nil {
+		return nil, err
+	}
+
 	op, err := operations.NewFromContext(ctx,
 		ids.PrefixOperationNLB,
 		fmt.Sprintf("Move NetworkLoadBalancer %s → %s", id, dst),
@@ -123,6 +137,46 @@ func (u *MoveLoadBalancerUseCase) Execute(
 	return &op, nil
 }
 
+// authorizeDestination авторизует caller'а на destination project
+// (`editor on project:<dst>`). nil checkClient или system/empty subject
+// (breakglass/dev — source-check тоже обойдён interceptor'ом) → пропуск.
+func (u *MoveLoadBalancerUseCase) authorizeDestination(ctx context.Context, dst string) error {
+	if u.checkClient == nil {
+		return nil
+	}
+	p := operations.PrincipalFromContext(ctx)
+	subject := domain.FGASubjectFromPrincipal(p.Type, p.ID)
+	if subject == "" {
+		return nil
+	}
+	allowed, err := u.checkClient.Check(ctx, subject, domain.FGARelationEditor,
+		domain.FGAObjectRef(domain.FGAObjectTypeProject, dst))
+	if err != nil {
+		return moveDestCheckErr(err, dst)
+	}
+	if !allowed {
+		return status.Errorf(codes.PermissionDenied,
+			"caller is not authorized (editor) on destination project %s", dst)
+	}
+	return nil
+}
+
+// moveDestCheckErr маппит ошибку destination-authz Check'а в gRPC-status
+// (fail-closed). no-path (нет grant'а) → PermissionDenied; iam недоступен →
+// Unavailable; bad args → InvalidArgument; прочее → Internal.
+func moveDestCheckErr(err error, dst string) error {
+	switch {
+	case errors.Is(err, authz.ErrNoPath):
+		return status.Errorf(codes.PermissionDenied,
+			"caller is not authorized (editor) on destination project %s", dst)
+	case errors.Is(err, domain.ErrUnavailable):
+		return status.Error(codes.Unavailable, "authorization check unavailable")
+	case errors.Is(err, domain.ErrInvalidArg):
+		return status.Errorf(codes.InvalidArgument, "authorization check: %v", err)
+	}
+	return status.Error(codes.Internal, "authorization check failed")
+}
+
 // doMove — worker: Writer-TX → MoveProject + outbox MOVED → Commit → FGA rewrite.
 func (u *MoveLoadBalancerUseCase) doMove(ctx context.Context, id, srcProject, dstProject string) (*anypb.Any, error) {
 	w, err := u.repo.Writer(ctx)
@@ -136,8 +190,8 @@ func (u *MoveLoadBalancerUseCase) doMove(ctx context.Context, id, srcProject, ds
 		return nil, mapDomainErr(err)
 	}
 	if err := w.Outbox().Emit(ctx,
-		kachopg.OutboxResourceLoadBalancer, string(moved.ID), string(moved.ProjectID),
-		kachopg.OutboxActionMoved, map[string]any{
+		kachorepo.OutboxResourceLoadBalancer, string(moved.ID), string(moved.ProjectID),
+		kachorepo.OutboxActionMoved, map[string]any{
 			"id":             string(moved.ID),
 			"src_project_id": srcProject,
 			"dst_project_id": dstProject,
@@ -147,8 +201,8 @@ func (u *MoveLoadBalancerUseCase) doMove(ctx context.Context, id, srcProject, ds
 	}
 	// Also emit UPDATED for downstream watchers that don't subscribe to MOVED.
 	if err := w.Outbox().Emit(ctx,
-		kachopg.OutboxResourceLoadBalancer, string(moved.ID), string(moved.ProjectID),
-		kachopg.OutboxActionUpdated, lbOutboxPayload(moved),
+		kachorepo.OutboxResourceLoadBalancer, string(moved.ID), string(moved.ProjectID),
+		kachorepo.OutboxActionUpdated, lbOutboxPayload(moved),
 	); err != nil {
 		return nil, mapDomainErr(err)
 	}

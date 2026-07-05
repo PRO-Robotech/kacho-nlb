@@ -19,7 +19,7 @@ import (
 	lbv1 "github.com/PRO-Robotech/kacho-proto/gen/go/kacho/cloud/loadbalancer/v1"
 
 	"github.com/PRO-Robotech/kacho-nlb/internal/domain"
-	kachopg "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho/pg"
+	kachorepo "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho"
 )
 
 // AddTargetsUseCase — добавляет targets в TG.
@@ -144,8 +144,8 @@ func (u *AddTargetsUseCase) doAdd(ctx context.Context, tgID string, targets []do
 	}
 	if inserted > 0 {
 		if err := w.Outbox().Emit(ctx,
-			kachopg.OutboxResourceTargetGroup, tgID, string(tg.ProjectID),
-			kachopg.OutboxActionUpdated, map[string]any{
+			kachorepo.OutboxResourceTargetGroup, tgID, string(tg.ProjectID),
+			kachorepo.OutboxActionUpdated, map[string]any{
 				"id":             tgID,
 				"project_id":     string(tg.ProjectID),
 				"region_id":      string(tg.RegionID),

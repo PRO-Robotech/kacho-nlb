@@ -53,7 +53,9 @@ const gatewaySAN = "spiffe://kacho.cloud/ns/kacho/sa/kacho-api-gateway"
 // RED-демонстрация: вернуть на любой листенер grpcsrv.UnaryPrincipalExtract —
 // тест падает.
 func TestListeners_UseTrustAwarePrincipalExtract(t *testing.T) {
-	src := readMainSrc(t)
+	// Цепочки собираются в buildInterceptorChains (wiring.go) как named-return
+	// слайсы (`publicUnary = []…{…}`); source-guard проверяет их там.
+	src := readSrcFile(t, "wiring.go")
 
 	type listener struct {
 		name        string
@@ -63,13 +65,13 @@ func TestListeners_UseTrustAwarePrincipalExtract(t *testing.T) {
 		legacy      string
 	}
 	for _, l := range []listener{
-		{"publicUnary", "publicUnary := []grpc.UnaryServerInterceptor{",
+		{"publicUnary", "publicUnary = []grpc.UnaryServerInterceptor{",
 			"grpcsrv.UnaryCertIdentityExtract()", "grpcsrv.UnaryTrustedPrincipalExtract(", "grpcsrv.UnaryPrincipalExtract()"},
-		{"internalUnary", "internalUnary := []grpc.UnaryServerInterceptor{",
+		{"internalUnary", "internalUnary = []grpc.UnaryServerInterceptor{",
 			"grpcsrv.UnaryCertIdentityExtract()", "grpcsrv.UnaryTrustedPrincipalExtract(", "grpcsrv.UnaryPrincipalExtract()"},
-		{"publicStream", "publicStream := []grpc.StreamServerInterceptor{",
+		{"publicStream", "publicStream = []grpc.StreamServerInterceptor{",
 			"grpcsrv.StreamCertIdentityExtract()", "grpcsrv.StreamTrustedPrincipalExtract(", "grpcsrv.StreamPrincipalExtract()"},
-		{"internalStream", "internalStream := []grpc.StreamServerInterceptor{",
+		{"internalStream", "internalStream = []grpc.StreamServerInterceptor{",
 			"grpcsrv.StreamCertIdentityExtract()", "grpcsrv.StreamTrustedPrincipalExtract(", "grpcsrv.StreamPrincipalExtract()"},
 	} {
 		block := braceBlockAfter(t, src, l.marker)
@@ -232,11 +234,11 @@ func chainUnaryServer(interceptors ...grpc.UnaryServerInterceptor) grpc.UnarySer
 	}
 }
 
-func readMainSrc(t *testing.T) string {
+func readSrcFile(t *testing.T, name string) string {
 	t.Helper()
-	b, err := os.ReadFile("main.go")
+	b, err := os.ReadFile(name)
 	if err != nil {
-		t.Fatalf("read main.go: %v", err)
+		t.Fatalf("read %s: %v", name, err)
 	}
 	return string(b)
 }
@@ -248,7 +250,7 @@ func braceBlockAfter(t *testing.T, src, marker string) string {
 	t.Helper()
 	i := strings.Index(src, marker)
 	if i < 0 {
-		t.Fatalf("main.go: marker %q не найден", marker)
+		t.Fatalf("source: marker %q не найден", marker)
 	}
 	open := strings.LastIndexByte(src[:i+len(marker)], '{')
 	depth := 0
@@ -263,7 +265,7 @@ func braceBlockAfter(t *testing.T, src, marker string) string {
 			}
 		}
 	}
-	t.Fatalf("main.go: несбалансированные скобки после marker %q", marker)
+	t.Fatalf("source: несбалансированные скобки после marker %q", marker)
 	return ""
 }
 

@@ -27,6 +27,13 @@ type Repo = kachorepo.Repository
 // в Create/Move (NotFound → InvalidArgument; недоступен → Unavailable).
 type ProjectClient = iamclient.ProjectClient
 
+// CheckClient — per-object FGA authorization gate (iam.InternalIAMService.Check).
+// Move использует его для авторизации caller'а на DESTINATION project (`editor on
+// project:<dst>`) — per-RPC interceptor проверяет только source-ресурс, поэтому
+// dst-authz — задача handler'а (audit SEC-high #2). nil → check пропускается
+// (dev/unwired; breakglass также обходит source-check).
+type CheckClient = iamclient.CheckClient
+
 // RegionClient — Get(regionID) → *geoclient.Region. sync-precheck `region_id`
 // через geo.RegionService.Get (ребро nlb→geo).
 type RegionClient = geoclient.RegionClient

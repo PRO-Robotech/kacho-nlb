@@ -140,6 +140,34 @@ func (c Config) Validate() error {
 			errs = multierr.Append(errs, fmt.Errorf(
 				"production mode: nlb→iam authz edge must be mTLS — set mtls.iam-register.enable=true (insecure Check edge forbidden)"))
 		}
+		// Per-object List authorization fail-closed (security.md, defense-in-depth
+		// parity с breakglass-gate). list-filter — единственный authz-слой для
+		// ScopeFiltered List RPC (interceptor их пропускает); отключение или
+		// fail-open превращает List в нефильтрованный passthrough → cross-tenant
+		// enumeration. В проде: enabled обязателен, fail-open запрещён.
+		if !c.Authz.ListFilter.Enabled {
+			errs = multierr.Append(errs, fmt.Errorf(
+				"production mode: authz.list-filter.enabled must be true (per-object List authorization required; disabling it enables cross-tenant enumeration)"))
+		}
+		if c.Authz.ListFilter.FailOpen {
+			errs = multierr.Append(errs, fmt.Errorf(
+				"production mode: authz.list-filter.fail-open forbidden (fail-closed only; fail-open returns unfiltered results during IAM outage)"))
+		}
+		// Trusted-forwarder allow-list (anti-impersonation). Пустой allow-list в
+		// grpcsrv.WithTrustedForwarders означает «доверять форвардинг
+		// x-kacho-principal-* ЛЮБОМУ mTLS-verified peer'у» (back-compat trust-all).
+		// В общем mTLS-mesh (все воркеры под одним internal-CA) это confused-deputy:
+		// любой сервис с валидным клиентским cert'ом форжит произвольного principal'а,
+		// и FGA Check оценивает подделанный subject. В проде с mTLS-server allow-list
+		// обязан быть непустым (перечисляет SAN доверенного форвардера — api-gateway).
+		// При one-way TLS (mtls.server off) ни один peer не verified → forwarded
+		// principal снимается с любого peer'а → SystemPrincipal → fail-closed, поэтому
+		// allow-list там не требуется.
+		if c.MTLS.Server.Enable && len(c.Authz.TrustedForwarderSANs) == 0 {
+			errs = multierr.Append(errs, fmt.Errorf(
+				"production mode: authz.trusted-forwarder-sans must be non-empty when mtls.server.enable=true "+
+					"(empty allow-list trusts any mTLS-verified peer to forward the end-user principal — impersonation vector)"))
+		}
 	}
 
 	// Jobs.target-drain (фаза B drain runner). Interval должен быть > 0;

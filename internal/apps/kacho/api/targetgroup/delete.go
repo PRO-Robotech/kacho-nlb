@@ -18,7 +18,7 @@ import (
 	lbv1 "github.com/PRO-Robotech/kacho-proto/gen/go/kacho/cloud/loadbalancer/v1"
 
 	"github.com/PRO-Robotech/kacho-nlb/internal/domain"
-	kachopg "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho/pg"
+	kachorepo "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho"
 )
 
 // DeleteTargetGroupUseCase — sync precheck + async delete
@@ -130,8 +130,8 @@ func (u *DeleteTargetGroupUseCase) doDelete(ctx context.Context, id, projectID s
 		return nil, mapDomainErr(err)
 	}
 	if err := w.Outbox().Emit(ctx,
-		kachopg.OutboxResourceTargetGroup, id, projectID,
-		kachopg.OutboxActionDeleted, map[string]any{"id": id, "project_id": projectID},
+		kachorepo.OutboxResourceTargetGroup, id, projectID,
+		kachorepo.OutboxActionDeleted, map[string]any{"id": id, "project_id": projectID},
 	); err != nil {
 		return nil, mapDomainErr(err)
 	}

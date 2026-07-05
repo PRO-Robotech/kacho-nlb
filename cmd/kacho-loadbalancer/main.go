@@ -33,27 +33,15 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 
-	"github.com/PRO-Robotech/kacho-corelib/authz"
 	coredb "github.com/PRO-Robotech/kacho-corelib/db"
 	"github.com/PRO-Robotech/kacho-corelib/grpcclient"
 	"github.com/PRO-Robotech/kacho-corelib/grpcsrv"
 	"github.com/PRO-Robotech/kacho-corelib/observability"
 	"github.com/PRO-Robotech/kacho-corelib/operations"
 	"github.com/PRO-Robotech/kacho-corelib/outbox/bootgate"
-	"github.com/PRO-Robotech/kacho-corelib/outbox/drainer"
 	"github.com/PRO-Robotech/kacho-corelib/outbox/metrics"
 
-	operationpb "github.com/PRO-Robotech/kacho-proto/gen/go/kacho/cloud/operation"
-	lbv1 "github.com/PRO-Robotech/kacho-proto/gen/go/kacho/cloud/loadbalancer/v1"
-
-	announceapi "github.com/PRO-Robotech/kacho-nlb/internal/apps/kacho/api/announce"
-	internallifecycle "github.com/PRO-Robotech/kacho-nlb/internal/apps/kacho/api/internal_lifecycle"
-	"github.com/PRO-Robotech/kacho-nlb/internal/apps/kacho/api/listener"
-	lbhandler "github.com/PRO-Robotech/kacho-nlb/internal/apps/kacho/api/loadbalancer"
-	"github.com/PRO-Robotech/kacho-nlb/internal/apps/kacho/api/operation"
-	"github.com/PRO-Robotech/kacho-nlb/internal/apps/kacho/api/targetgroup"
 	"github.com/PRO-Robotech/kacho-nlb/internal/apps/kacho/config"
-	"github.com/PRO-Robotech/kacho-nlb/internal/apps/kacho/jobs"
 	"github.com/PRO-Robotech/kacho-nlb/internal/authzfilter"
 	"github.com/PRO-Robotech/kacho-nlb/internal/check"
 	"github.com/PRO-Robotech/kacho-nlb/internal/clients"
@@ -61,8 +49,6 @@ import (
 	geoclient "github.com/PRO-Robotech/kacho-nlb/internal/clients/geo"
 	iamclient "github.com/PRO-Robotech/kacho-nlb/internal/clients/iam"
 	vpcclient "github.com/PRO-Robotech/kacho-nlb/internal/clients/vpc"
-	"github.com/PRO-Robotech/kacho-nlb/internal/domain"
-	"github.com/PRO-Robotech/kacho-nlb/internal/fgaboot"
 	"github.com/PRO-Robotech/kacho-nlb/internal/observability/health"
 	nlbmetrics "github.com/PRO-Robotech/kacho-nlb/internal/observability/metrics"
 	// dto/type2pb init регистрирует все DTO трансферы (domain ↔ proto) в реестре.
@@ -221,17 +207,6 @@ func runServe(configPath string) error {
 	var outboxRec metrics.Recorder = metricsAdapter
 	var lroRec operations.Recorder = metricsAdapter
 
-	// background — фоновые loop'ы под супервизором (errgroup): неожиданный exit
-	// флипает readiness в shutting-down и триггерит graceful-shutdown (не
-	// fire-and-forget). Заполняется ниже (LRO-reconciler, target-drain,
-	// authz-invalidator, register-drainer + outbox-backstop) и запускается перед
-	// Serve.
-	type bgWorker struct {
-		name string
-		run  func(context.Context) error
-	}
-	var background []bgWorker
-
 	// LRO worker (default-registry) поднимается ДО приёма трафика: ConfigureDefault
 	// подключает Prometheus-Recorder (live terminal-write/inflight метрики — раньше
 	// NopRecorder), Start делает Ready=true без единой мутации (нет
@@ -240,17 +215,24 @@ func runServe(configPath string) error {
 		return fmt.Errorf("start LRO worker: %w", err)
 	}
 
-	// Durable LRO recovery: доменный resolver + corelib-reconciler поверх schema
-	// kacho_nlb. RecoverAll прогоняется ДО приёма трафика (осиротевшие операции
-	// умершего worker'а — backlog-overflow, terminal-write retry exhausted,
-	// shutdown, crash mid-op — разрешаются в терминал, иначе клиентский poll
-	// OperationService.Get навсегда done=false); периодический Run — backstop под
-	// супервизором.
-	lroReconciler := startLRORecovery(ctx, pool, repo, lroRec, logger)
-	background = append(background, bgWorker{"lro-reconciler", func(c context.Context) error {
-		lroReconciler.Run(c)
-		return nil
-	}})
+	// Supervised background loop'ы (errgroup): LRO-reconciler, target-drain, free-ip,
+	// authz-invalidator, fga-register-drainer + outbox-backstop, vip-origin. Собираются
+	// здесь (drainer/backstop-ресурсы + bootGate.SetConnected как side-effect), но
+	// запускаются errgroup'ом перед Serve. vipOriginGate нужен для readiness ниже.
+	background, vipOriginGate, err := assembleBackgroundWorkers(ctx, backgroundDeps{
+		pool:       pool,
+		repo:       repo,
+		lroRec:     lroRec,
+		outboxRec:  outboxRec,
+		bootGate:   bootGate,
+		authzCache: authzCache,
+		peers:      peers,
+		cfg:        cfg,
+		logger:     logger,
+	})
+	if err != nil {
+		return err
+	}
 
 	// gRPC servers (public :9090 + internal :9091).
 	// OperationService зарегистрирован здесь как полный end-to-end путь.
@@ -291,29 +273,8 @@ func runServe(configPath string) error {
 	// a mutating tenant-resource Create is refused (UNAVAILABLE) when require-iam is
 	// armed and the register-drainer is not IAM-connected, so no resource is created
 	// without a deliverable owner-tuple intent. Read RPCs are untouched.
-	forwarders := cfg.Authz.TrustedForwarderSANs
-	publicUnary := []grpc.UnaryServerInterceptor{
-		fgaboot.GuardCreateUnary(bootGate),
-		grpcsrv.UnaryCertIdentityExtract(),
-		grpcsrv.UnaryTrustedPrincipalExtract(grpcsrv.WithTrustedForwarders(forwarders...)),
-		authzIntr.Unary(),
-	}
-	publicStream := []grpc.StreamServerInterceptor{
-		grpcsrv.StreamCertIdentityExtract(),
-		grpcsrv.StreamTrustedPrincipalExtract(grpcsrv.WithTrustedForwarders(forwarders...)),
-		authzIntr.Stream(),
-	}
-	// Internal :9091 — тот же authN+authZ, что и public (security-инвариант).
-	internalUnary := []grpc.UnaryServerInterceptor{
-		grpcsrv.UnaryCertIdentityExtract(),
-		grpcsrv.UnaryTrustedPrincipalExtract(grpcsrv.WithTrustedForwarders(forwarders...)),
-		authzIntr.Unary(),
-	}
-	internalStream := []grpc.StreamServerInterceptor{
-		grpcsrv.StreamCertIdentityExtract(),
-		grpcsrv.StreamTrustedPrincipalExtract(grpcsrv.WithTrustedForwarders(forwarders...)),
-		authzIntr.Stream(),
-	}
+	publicUnary, publicStream, internalUnary, internalStream := buildInterceptorChains(
+		bootGate, authzIntr, cfg.Authz.TrustedForwarderSANs)
 	publicSrv := grpcsrv.NewServer(
 		serverCreds,
 		grpc.ChainUnaryInterceptor(publicUnary...),
@@ -325,77 +286,17 @@ func runServe(configPath string) error {
 		grpc.ChainStreamInterceptor(internalStream...),
 	)
 
-	// OperationService (kacho.cloud.operation.OperationService): Get + Cancel.
-	// Public per proto annotation `(kacho.iam.authz.v1.permission) = "<exempt>"` —
-	// interceptor не делает per-RPC FGA Check (op-id опакен, поллится creator'ом
-	// сразу после Create). Cross-tenant защита — на уровне use-case: Get/Cancel
-	// owner-scoped по принципалу-создателю (см. internal/apps/kacho/api/operation).
-	// List-операций НЕТ на этом сервисе — per-resource history exposed через
-	// `<Resource>Service.ListOperations`.
-	operationpb.RegisterOperationServiceServer(publicSrv, operation.NewHandler(opsRepo))
-
-	// NetworkLoadBalancerService. 12 публичных RPC: Get/List/Create/
-	// Update/Delete/Start/Stop/Move/AttachTargetGroup/DetachTargetGroup/
-	// GetTargetStates/ListOperations. Зарегистрирован ТОЛЬКО на publicSrv
-	// (Internal-vs-external инвариант: Internal.* живут на internalSrv).
-	lbHandler := lbhandler.NewHandler(
-		repo, opsRepo,
-		peers.Project, peers.Region, peers.Zone,
-		peers.Subnet, peers.Address, peers.InternalAddress,
-		peers.ListFilter,
-		logger,
-	)
-	lbv1.RegisterNetworkLoadBalancerServiceServer(publicSrv, lbHandler)
-
-	// ListenerService: Get/List/Create/Update/Delete/ListOperations.
-	// VIP консолидирован на LoadBalancer — листенер сам адрес не аллоцирует;
-	// InternalAddress нужен только для release legacy-VIP в Delete (nil → Unavailable).
-	lbv1.RegisterListenerServiceServer(publicSrv, listener.NewHandler(
-		repo,
-		opsRepo,
-		peers.InternalAddress,
-		peers.ListFilter,
-		logger,
-	))
-
-	// TargetGroupService (+): 9 публичных RPC: Get/List/Create/
-	// Update/Delete/Move/AddTargets/RemoveTargets/ListOperations. фаза B drain
-	// (DELETE expired DRAINING targets) выполняется отдельным background-runner'ом
-	// (см. drainRunner ниже). Зарегистрирован ТОЛЬКО на publicSrv.
-	tgHandler := targetgroup.NewHandler(
-		repo, opsRepo,
-		peers.Project, peers.Region,
-		peers.Instance, peers.NetworkInterface, peers.Subnet,
-		peers.ListFilter,
-		logger,
-	)
-	lbv1.RegisterTargetGroupServiceServer(publicSrv, tgHandler)
-
-	// InternalResourceLifecycleService. Server-stream Subscribe(req)
-	// для (kacho-iam consumer FGA tuple-sync). Зарегистрирован ТОЛЬКО на
-	// internalSrv — Internal.* НЕ маршрутизируется
-	// через api-gateway на external TLS endpoint. Кросс-репо edge:
-	// `iam → nlb.InternalResourceLifecycleService.Subscribe`.
-	//
-	// dsn — используется handler'ом для dedicated pgx.Conn (LISTEN/NOTIFY вне
-	// pool'а); MaxStreams ограничивает concurrent streams (защита pgxpool от
-	// исчерпания одним buggy/looping kacho-iam pod'ом).
-	lifecycleHandler := internallifecycle.NewHandler(
-		kachopg.NewLifecycleFeed(cfg.Repository.Postgres.URL),
-		cfg.InternalLifecycle.MaxStreams,
-		logger,
-	)
-	lbv1.RegisterInternalResourceLifecycleServiceServer(internalSrv, lifecycleHandler)
-
-	// InternalLoadBalancerAnnounceService. Наблюдаемая per-zone announce-state
-	// anycast-VIP (control-plane сторона feedback-петли data plane → nlb): read
-	// viewer-gated (v_get), inbound write least-priv (announce_writer). Зарегистрирован
-	// ТОЛЬКО на internalSrv (:9091) — инфра-чувствительные данные (BGP/route/VRF/
-	// kernel/infra-id) не выходят на external endpoint; per-RPC Check энфорсится тем
-	// же authzIntr, что и на public (НЕ exempt). announce-store — standalone поверх
-	// master-pool'а (не CQRS-ресурс: data-plane feedback, idempotent upsert без outbox).
-	announceHandler := announceapi.NewHandler(kachopg.NewAnnounceStore(pool), logger)
-	lbv1.RegisterInternalLoadBalancerAnnounceServiceServer(internalSrv, announceHandler)
+	// Регистрация всех per-resource handler'ов на public/internal серверах
+	// (Internal-vs-external инвариант: Internal.* — только на internalSrv). См.
+	// registerGRPCServices (wiring.go) — per-service распределение/doc'и там же.
+	registerGRPCServices(publicSrv, internalSrv, grpcWiring{
+		repo:    repo,
+		opsRepo: opsRepo,
+		peers:   peers,
+		pool:    pool,
+		cfg:     cfg,
+		logger:  logger,
+	})
 
 	publicListener, err := listenEndpoint(cfg.APIServer.Endpoint)
 	if err != nil {
@@ -410,113 +311,6 @@ func runServe(configPath string) error {
 		"public", publicListener.Addr().String(),
 		"internal", internalListener.Addr().String(),
 	)
-
-	// Background jobs: двухфазный target drain-runner. Tick-loop по
-	// `cfg.Jobs.TargetDrain.Interval`; ctx cancel → штатный exit; transient errors
-	// → log + continue. Идёт в supervised background (errgroup).
-	drainRunner := jobs.NewTargetDrainRunner(pool, logger, cfg.Jobs.TargetDrain.Interval)
-	background = append(background, bgWorker{"target-drain", drainRunner.Run})
-
-	// free_ip_runner: reconcile застрявших листенеров — durable-handle
-	// create-orphan ('CREATING' с персистнутым address_id) + незавершённый Delete
-	// ('DELETING') старше age-порога. Освобождает VIP по address_id
-	// (vip_origin='auto' → FreeIP, 'byo' → ClearReference) + удаляет/финализирует
-	// handle. Multi-replica-safe (FOR UPDATE SKIP LOCKED). Требует vpc
-	// internal-address client (release): без него reconcile не может безопасно
-	// удалять handle (иначе утечка VIP) → runner не стартует.
-	if peers.InternalAddress != nil {
-		freeIPRunner := jobs.NewFreeIPRunner(pool, peers.InternalAddress, logger,
-			cfg.Jobs.FreeIP.Interval, cfg.Jobs.FreeIP.AgeThreshold)
-		background = append(background, bgWorker{"free-ip-runner", freeIPRunner.Run})
-	} else {
-		logger.Warn("free_ip_runner_disabled — no vpc internal-address client; stuck-listener VIP reconcile inactive")
-	}
-
-	// FGA Check cache invalidator: LISTEN `kacho_iam_subjects` на iam-DB через
-	// DEDICATED pgx-conn (LISTEN/NOTIFY требует non-pooled conn). На каждый NOTIFY →
-	// invalidate cache по subject_id; на conn-drop → backoff + conservative
-	// InvalidateAll. Включается ТОЛЬКО при enable=true И заданном IAMDirectDSN
-	// (прямой cross-DB DSN к kacho_iam Postgres); иначе cache живёт TTL-only
-	// invalidation.
-	if cfg.Authz.ListenInvalidator.Enable && strings.TrimSpace(cfg.Authz.ListenInvalidator.IAMDirectDSN) != "" {
-		channel := cfg.Authz.ListenInvalidator.Channel
-		if channel == "" {
-			channel = "kacho_iam_subjects"
-		}
-		inv := &authz.ListenInvalidator{
-			ConnString: cfg.Authz.ListenInvalidator.IAMDirectDSN,
-			Channel:    channel,
-			Cache:      authzCache,
-			Logger:     logger,
-		}
-		background = append(background, bgWorker{"authz-listen-invalidator", inv.Run})
-	} else {
-		logger.Info("authz_listen_invalidator_disabled",
-			"enable", cfg.Authz.ListenInvalidator.Enable,
-			"dsn_configured", cfg.Authz.ListenInvalidator.IAMDirectDSN != "")
-	}
-
-	// FGA register-drainer: corelib outbox/drainer on
-	// `kacho_nlb.fga_register_outbox`; FOR UPDATE SKIP LOCKED claim → exactly-once
-	// across replicas. Each row → kacho-iam InternalIAMService.RegisterResource /
-	// UnregisterResource (mTLS when cfg.MTLS.IAMRegister.Enable). IAM Unavailable →
-	// retry with backoff, intent stays durable. Wired with a real iam peer it opens
-	// the boot-gate + starts the reconciler/metrics backstop — all under the
-	// errgroup supervisor (not fire-and-forget). Default-on: без него созданные
-	// ресурсы не получат owner-tuple.
-	if cfg.FGA.RegisterDrainer.Enable && peers.Register != nil {
-		d, derr := drainer.New[domain.FGARegisterIntent](
-			pool,
-			drainer.Config{
-				Table:        nlbFGAOutboxTable,
-				Channel:      nlbFGAOutboxChannel,
-				BatchSize:    cfg.FGA.RegisterDrainer.BatchSize,
-				PollFallback: cfg.FGA.RegisterDrainer.PollFallback,
-				MaxAttempts:  cfg.FGA.RegisterDrainer.MaxAttempts,
-				BackoffMin:   cfg.FGA.RegisterDrainer.BackoffMin,
-				BackoffMax:   cfg.FGA.RegisterDrainer.BackoffMax,
-			},
-			iamclient.DecodeFGARegisterIntent,
-			iamclient.NewRegisterApplier(peers.Register),
-			logger,
-			// Each poisoned row bumps outbox_poisoned_total{table=…}.
-			drainer.WithPoisonObserver[domain.FGARegisterIntent](func() {
-				outboxRec.IncPoisoned(nlbFGAOutboxTable)
-			}),
-		)
-		if derr != nil {
-			return fmt.Errorf("build fga register-drainer: %w", derr)
-		}
-		background = append(background, bgWorker{"fga-register-drainer", d.Run})
-		// Drainer wired with a real iam peer → IAM-register delivery path is up:
-		// open the boot-gate + start the reconciler/metrics backstop.
-		bootGate.SetConnected(true)
-		reconRun, colRun, berr := startBackstop(ctx, pool, outboxRec, logger)
-		if berr != nil {
-			return fmt.Errorf("start outbox backstop: %w", berr)
-		}
-		background = append(background,
-			bgWorker{"fga-register-reconciler", reconRun},
-			bgWorker{"outbox-metrics-collector", colRun},
-		)
-		logger.Info("fga_register_drainer_started", "mtls", cfg.MTLS.IAMRegister.Enable)
-	} else {
-		logger.Warn("fga_register_drainer_disabled_or_no_iam_peer — created resources will not get their per-resource FGA owner-tuple",
-			"enable", cfg.FGA.RegisterDrainer.Enable, "iam_peer", peers.Register != nil)
-	}
-
-	// Boot-once backfill listeners.vip_origin: проставляет release-дискриминатор
-	// (auto/byo) уже существующим листенерам по реальному Address из vpc. Держит
-	// readiness not-ready (fail-closed) до успешного завершения — пока pre-existing
-	// BYO-листенеры не получили реальный vip_origin, их Delete мог бы уйти по
-	// FreeIP-ветке и удалить чужой статический адрес. Свежий стенд (нет строк) →
-	// no-op → readiness сразу ready. Idempotent; gated через readiness-checker.
-	vipOriginGate := &vipOriginReconcileGate{}
-	vipOriginReconciler := jobs.NewVIPOriginReconciler(
-		jobs.NewPgVIPOriginStore(pool), peers.Address, logger)
-	background = append(background, bgWorker{"vip-origin-reconcile", func(c context.Context) error {
-		return runVIPOriginReconcile(c, vipOriginReconciler, vipOriginGate, logger)
-	}})
 
 	// Dependency-aware readiness: /readyz отражает здоровье database / register-
 	// drainer (= IAM-достижимость в nlb) / lro-worker / vip-origin-reconcile;

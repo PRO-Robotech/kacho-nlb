@@ -18,7 +18,6 @@ import (
 
 	"github.com/PRO-Robotech/kacho-nlb/internal/domain"
 	kachorepo "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho"
-	kachopg "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho/pg"
 )
 
 // RemoveTargetsUseCase — фаза A.
@@ -135,8 +134,8 @@ func (u *RemoveTargetsUseCase) doRemove(ctx context.Context, tgID string, target
 	}
 	if affected > 0 {
 		if err := w.Outbox().Emit(ctx,
-			kachopg.OutboxResourceTargetGroup, tgID, string(tg.ProjectID),
-			kachopg.OutboxActionUpdated, map[string]any{
+			kachorepo.OutboxResourceTargetGroup, tgID, string(tg.ProjectID),
+			kachorepo.OutboxActionUpdated, map[string]any{
 				"id":             tgID,
 				"project_id":     string(tg.ProjectID),
 				"region_id":      string(tg.RegionID),

@@ -23,7 +23,7 @@ func TestMove_HappyPath(t *testing.T) {
 	repo := newFakeRepo()
 	lbID := seedLB(t, repo, "prj-src", "edge")
 	opsRepo := newFakeOpsRepo()
-	uc := NewMoveLoadBalancerUseCase(repo, opsRepo, &fakeProjectClient{}, slog.Default())
+	uc := NewMoveLoadBalancerUseCase(repo, opsRepo, &fakeProjectClient{}, nil, slog.Default())
 	op, err := uc.Execute(context.Background(), &lbv1.MoveNetworkLoadBalancerRequest{
 		NetworkLoadBalancerId: lbID,
 		DestinationProjectId:  "prj-dst",
@@ -44,7 +44,7 @@ func TestMove_SameProject(t *testing.T) {
 	t.Parallel()
 	repo := newFakeRepo()
 	lbID := seedLB(t, repo, "prj-a", "edge")
-	uc := NewMoveLoadBalancerUseCase(repo, newFakeOpsRepo(), &fakeProjectClient{}, nil)
+	uc := NewMoveLoadBalancerUseCase(repo, newFakeOpsRepo(), &fakeProjectClient{}, nil, nil)
 	_, err := uc.Execute(context.Background(), &lbv1.MoveNetworkLoadBalancerRequest{
 		NetworkLoadBalancerId: lbID,
 		DestinationProjectId:  "prj-a",
@@ -59,7 +59,7 @@ func TestMove_BlockedIfAttachedTG(t *testing.T) {
 	repo.pivot[lbID+"/tgr-fake"] = &kachorepo.AttachedTargetGroupRecord{
 		LoadBalancerID: lbID, TargetGroupID: "tgr-fake",
 	}
-	uc := NewMoveLoadBalancerUseCase(repo, newFakeOpsRepo(), &fakeProjectClient{}, nil)
+	uc := NewMoveLoadBalancerUseCase(repo, newFakeOpsRepo(), &fakeProjectClient{}, nil, nil)
 	_, err := uc.Execute(context.Background(), &lbv1.MoveNetworkLoadBalancerRequest{
 		NetworkLoadBalancerId: lbID,
 		DestinationProjectId:  "prj-dst",
@@ -71,7 +71,7 @@ func TestMove_EmptyDst(t *testing.T) {
 	t.Parallel()
 	repo := newFakeRepo()
 	lbID := seedLB(t, repo, "prj-a", "edge")
-	uc := NewMoveLoadBalancerUseCase(repo, newFakeOpsRepo(), nil, nil)
+	uc := NewMoveLoadBalancerUseCase(repo, newFakeOpsRepo(), nil, nil, nil)
 	_, err := uc.Execute(context.Background(), &lbv1.MoveNetworkLoadBalancerRequest{
 		NetworkLoadBalancerId: lbID,
 	})
@@ -80,10 +80,76 @@ func TestMove_EmptyDst(t *testing.T) {
 
 func TestMove_NotFound(t *testing.T) {
 	t.Parallel()
-	uc := NewMoveLoadBalancerUseCase(newFakeRepo(), newFakeOpsRepo(), nil, nil)
+	uc := NewMoveLoadBalancerUseCase(newFakeRepo(), newFakeOpsRepo(), nil, nil, nil)
 	_, err := uc.Execute(context.Background(), &lbv1.MoveNetworkLoadBalancerRequest{
 		NetworkLoadBalancerId: "nlb-x",
 		DestinationProjectId:  "prj-dst",
 	})
 	require.Equal(t, codes.NotFound, status.Code(err))
+}
+
+// SECURITY (audit SEC-high #2 / CWE-862/863): the caller must be authorized on
+// the DESTINATION project (editor on project:<dst>). The per-RPC interceptor only
+// checks the source LB; a caller with editor on the source but NO grant on the
+// destination must be denied — otherwise it can inject its LB into a victim's
+// project. With a check-client that denies, Move → PermissionDenied and the LB
+// must NOT move.
+func TestMove_DeniesUnauthorizedDestination(t *testing.T) {
+	t.Parallel()
+	repo := newFakeRepo()
+	lbID := seedLB(t, repo, "prj-src", "edge")
+	chk := &fakeCheckClient{allowed: false} // caller lacks editor on dst
+	uc := NewMoveLoadBalancerUseCase(repo, newFakeOpsRepo(), &fakeProjectClient{}, chk, slog.Default())
+
+	_, err := uc.Execute(ctxWithUser("usr_attacker"), &lbv1.MoveNetworkLoadBalancerRequest{
+		NetworkLoadBalancerId: lbID,
+		DestinationProjectId:  "prj-victim",
+	})
+	require.Equal(t, codes.PermissionDenied, status.Code(err))
+	require.Equal(t, domain.ProjectID("prj-src"), repo.lbs[lbID].ProjectID,
+		"LB must not be re-parented when dst authz is denied")
+	// Check was performed against the destination project with the editor relation.
+	require.Equal(t, 1, chk.calls)
+	require.Equal(t, "user:usr_attacker", chk.gotSubject)
+	require.Equal(t, domain.FGARelationEditor, chk.gotRelation)
+	require.Equal(t, "project:prj-victim", chk.gotObject)
+}
+
+// A caller authorized (editor) on the destination project passes the dst-authz
+// gate and the Move proceeds.
+func TestMove_AllowsAuthorizedDestination(t *testing.T) {
+	t.Parallel()
+	repo := newFakeRepo()
+	lbID := seedLB(t, repo, "prj-src", "edge")
+	chk := &fakeCheckClient{allowed: true}
+	opsRepo := newFakeOpsRepo()
+	uc := NewMoveLoadBalancerUseCase(repo, opsRepo, &fakeProjectClient{}, chk, slog.Default())
+
+	op, err := uc.Execute(ctxWithUser("usr_owner"), &lbv1.MoveNetworkLoadBalancerRequest{
+		NetworkLoadBalancerId: lbID,
+		DestinationProjectId:  "prj-dst",
+	})
+	require.NoError(t, err)
+	final := awaitOpDone(t, opsRepo, op.ID)
+	require.Nil(t, final.Error)
+	require.Equal(t, domain.ProjectID("prj-dst"), repo.lbs[lbID].ProjectID)
+	require.Equal(t, 1, chk.calls)
+}
+
+// IAM unavailable during the dst-authz check → fail-closed Unavailable (never a
+// silent allow).
+func TestMove_DestCheckUnavailableFailsClosed(t *testing.T) {
+	t.Parallel()
+	repo := newFakeRepo()
+	lbID := seedLB(t, repo, "prj-src", "edge")
+	// CheckClient contract: transport-unavailable surfaces as domain.ErrUnavailable.
+	chk := &fakeCheckClient{err: domain.ErrUnavailable}
+	uc := NewMoveLoadBalancerUseCase(repo, newFakeOpsRepo(), &fakeProjectClient{}, chk, slog.Default())
+
+	_, err := uc.Execute(ctxWithUser("usr_owner"), &lbv1.MoveNetworkLoadBalancerRequest{
+		NetworkLoadBalancerId: lbID,
+		DestinationProjectId:  "prj-dst",
+	})
+	require.Equal(t, codes.Unavailable, status.Code(err))
+	require.Equal(t, domain.ProjectID("prj-src"), repo.lbs[lbID].ProjectID)
 }

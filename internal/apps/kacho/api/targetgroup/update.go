@@ -17,7 +17,7 @@ import (
 	lbv1 "github.com/PRO-Robotech/kacho-proto/gen/go/kacho/cloud/loadbalancer/v1"
 
 	"github.com/PRO-Robotech/kacho-nlb/internal/domain"
-	kachopg "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho/pg"
+	kachorepo "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho"
 )
 
 // UpdateTargetGroupUseCase — UpdateMask discipline + async update
@@ -154,8 +154,8 @@ func (u *UpdateTargetGroupUseCase) doUpdate(ctx context.Context, tg domain.Targe
 		return nil, mapDomainErr(err)
 	}
 	if err := w.Outbox().Emit(ctx,
-		kachopg.OutboxResourceTargetGroup, string(updated.ID), string(updated.ProjectID),
-		kachopg.OutboxActionUpdated, tgOutboxPayload(updated),
+		kachorepo.OutboxResourceTargetGroup, string(updated.ID), string(updated.ProjectID),
+		kachorepo.OutboxActionUpdated, tgOutboxPayload(updated),
 	); err != nil {
 		return nil, mapDomainErr(err)
 	}

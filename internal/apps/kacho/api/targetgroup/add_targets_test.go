@@ -19,7 +19,7 @@ import (
 	"github.com/PRO-Robotech/kacho-nlb/internal/clients/compute"
 	"github.com/PRO-Robotech/kacho-nlb/internal/clients/vpc"
 	"github.com/PRO-Robotech/kacho-nlb/internal/domain"
-	kachopg "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho/pg"
+	kachorepo "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho"
 )
 
 // mkAddUC — конструктор AddTargetsUseCase с дефолтными happy peer-fakes.
@@ -56,7 +56,7 @@ func TestAdd_AllFourIdentities(t *testing.T) {
 
 	events := repo.outboxEvents()
 	require.Len(t, events, 1, "one UPDATED outbox")
-	assert.Equal(t, kachopg.OutboxActionUpdated, events[0].Action)
+	assert.Equal(t, kachorepo.OutboxActionUpdated, events[0].Action)
 }
 
 // idempotent re-add (ON CONFLICT DO NOTHING, no outbox).

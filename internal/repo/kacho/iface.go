@@ -12,6 +12,13 @@
 //   - internal/repo/kacho/pg/ — pgx5 + pgxpool на master/slave.
 //
 // Pagination — общий объект, разделяемый между всеми per-resource Reader'ами.
+//
+// Все CQRS port-интерфейсы per-resource (LoadBalancer / Listener / TargetGroup /
+// AttachedTargetGroup / Outbox / FGARegister) живут ЗДЕСЬ, в этом leaf-пакете —
+// а не в отдельных под-пакетах loadbalancer/ listener/ targetgroup/ outbox/.
+// Причина — избежать import-cycle (dto/type2pb → repo/kacho → domain) и держать
+// единую точку для port-контракта. Не заводите под-пакеты под repo-типы: новый
+// Reader/Writer-метод добавляется в соответствующий iface_<resource>.go здесь.
 package kacho
 
 import "context"
