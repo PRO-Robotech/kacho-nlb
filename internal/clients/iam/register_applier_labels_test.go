@@ -22,7 +22,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 
-	iampb "github.com/PRO-Robotech/kacho-iam/proto/gen/go/kacho/cloud/iam/v1"
+	iampb "github.com/PRO-Robotech/kacho-proto/gen/go/kacho/cloud/iam/v1"
 
 	"github.com/PRO-Robotech/kacho-nlb/internal/clients/iam"
 	"github.com/PRO-Robotech/kacho-nlb/internal/domain"

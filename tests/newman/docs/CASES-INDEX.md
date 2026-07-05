@@ -46,11 +46,11 @@ existing pattern, no separate catalogue entry needed").
 - `*-CR-VAL-LABELS-UPPERCASE-KEY` — VAL/P1 — uppercase label key rejected
 - `*-CR-VAL-LABELS-INVALID-KEY-CHAR` — VAL/P1 — `!`/space in label key
 - `*-CR-VAL-DESC-OVER-256` — VAL,BVA/P2 — description >256 chars
-- `*-CR-VAL-EMPTY-BODY` — VAL/P2 — empty JSON body → 400
+- `*-CR-VAL-EMPTY-BODY` — VAL,NEG/P2 — empty JSON body (no projectId) → 403 PermissionDenied (authz-first: no project scope to authorize, before body validation)
 - `*-CR-VAL-MALFORMED-JSON` — VAL/P2 — invalid JSON syntax → 400/415
 
 ### Negative + cross-service NotFound
-- `*-CR-NEG-REGION-UNKNOWN` — NEG/P0 — unknown region_id (cross-service NotFound) (Verifies REQ-NLB-CR-NEG-REGION)
+- `*-CR-NEG-REGION-UNKNOWN` — NEG/P0 — unknown region_id → async Operation error INVALID_ARGUMENT "Region ... not found" (cross-domain ref-not-found via kacho-geo) (Verifies REQ-NLB-CR-NEG-REGION)
 - `*-CR-NEG-PROJECT-UNKNOWN` — NEG/P0 — unknown project_id (cross-service NotFound)
 - `*-GET-NEG-NF-UNKNOWN` — NEG/P0 — unknown id → 404 NotFound (Verifies REQ-NLB-GET-NEG)
 - `*-UPD-NEG-NF-UNKNOWN` — NEG/P1 — Update unknown id → 404
@@ -107,6 +107,47 @@ existing pattern, no separate catalogue entry needed").
 
 ### Lifecycle conformance
 - `*-LIFECYCLE-CONF` — CRUD,CONF,STATE/P1 — full Create→Get→List-includes→Update→Get-updated→Delete→List-excludes→Get-404
+
+### Sub-phase 8.1 — placement + per-family VIP-source link/allocate model
+
+Source: `docs/specs/sub-phase-8.1-nlb-loadbalancer-placement-link-model-acceptance.md`
+(8.1-01..8.1-36). The LoadBalancer now carries a per-family VIP *source* on Create
+(`v4Source`/`v6Source` = `{subnetId}`|`{addressId}`|`{public}`) + `placementType`
+(INTERNAL only) + `disabledAnnounceZones` (REGIONAL only); output resolves to
+`v4AddressId`/`v6AddressId`. `securityGroupIds`/`crossZoneEnabled`/`networkId`/anycast
+inputs and the listener-level VIP are removed. (Carry-over `*-CR-CRUD-OK` /
+`*-CR-CRUD-INTERNAL` are repurposed to the 8.1 EXTERNAL-public / INTERNAL-ZONAL happy
+paths.) Group A/B/G happy + link cases provision vpc Subnet/Address inline and gate
+strict assertions on the fixture materialising (see load-balancer.py docstring).
+
+Source × type × placement matrix — sync fail-fast negatives (decision-table):
+- `*-CR-VAL-SUBNET-ON-EXTERNAL` — VAL,NEG/P1 — subnet_id source on EXTERNAL → InvalidArgument (8.1-08)
+- `*-CR-VAL-PUBLIC-ON-INTERNAL` — VAL,NEG/P1 — public source on INTERNAL → InvalidArgument (8.1-09)
+- `*-CR-VAL-PLACEMENT-ON-EXTERNAL` — VAL,NEG/P1 — placementType on EXTERNAL → InvalidArgument (8.1-12)
+- `*-CR-VAL-PLACEMENT-MISSING-INTERNAL` — VAL,NEG/P1 — INTERNAL without placementType → InvalidArgument (8.1-12)
+- `*-CR-VAL-DRAIN-ON-ZONAL` — VAL,NEG/P1 — disabledAnnounceZones on ZONAL → InvalidArgument (8.1-13)
+- `*-CR-VAL-DRAIN-COVERS-ALL-ZONES` — VAL,NEG/P1 — drain covering every region zone → InvalidArgument (8.1-14)
+- `*-CR-VAL-DRAIN-ZONE-WRONG-REGION` — VAL,NEG/P2 — drain zone outside the region → InvalidArgument (8.1-15)
+- `*-CR-VAL-PLACEMENT-MISMATCH` — VAL,NEG/P1 — ZONAL LB + REGIONAL subnet source → InvalidArgument (8.1-11)
+- `*-CR-VAL-NO-SOURCE` — VAL,NEG/P0 — no VIP source for any family → InvalidArgument (8.1-19)
+- `*-CR-VAL-ADDRESS-KIND-MISMATCH` — VAL,NEG/P1 — EXTERNAL address linked into INTERNAL → generic Illegal argument addressId (8.1-10)
+- `*-CR-VAL-ADDRESS-FOREIGN-PROJECT` — VAL,NEG/P2 — address of another project → generic Illegal argument addressId (8.1-16)
+- `*-CR-VAL-ADDRESS-FAMILY-SLOT` — VAL,NEG/P2 — v4Source pointing at an IPv6 address → generic Illegal argument addressId (8.1-17)
+
+INTERNAL / EXTERNAL happy source-resolution (inline vpc fixtures, tolerant):
+- `*-CR-CRUD-INTERNAL-REGIONAL` — CRUD/P1 — INTERNAL REGIONAL subnet-auto (anycast) VIP (8.1-02)
+- `*-CR-CRUD-INTERNAL-REGIONAL-DRAIN` — CRUD,STATE/P1 — INTERNAL REGIONAL with disabledAnnounceZones at Create (8.1-03)
+- `*-CR-CRUD-INTERNAL-LINK` — CRUD/P1 — INTERNAL LB linking a pre-created internal Address (8.1-04)
+- `*-CR-CRUD-EXTERNAL-LINK` — CRUD/P1 — EXTERNAL LB linking a pre-created public Address (BYO) (8.1-07)
+- `*-CR-CRUD-DUALSTACK-MIXED` — CRUD/P2 — INTERNAL REGIONAL dualstack: v4 subnet-auto + v6 address-link (8.1-05)
+- `*-CR-CRUD-REMOVED-FIELDS-IGNORED` — CRUD,CONF/P2 — removed fields ignored, not echoed on Get (8.1-32)
+
+Immutability + drain toggle + lean projection + delete-release:
+- `*-UPD-STATE-IMMUTABLE-PLACEMENT` — STATE,VAL/P0 — placementType immutable after Create (8.1-25)
+- `*-UPD-STATE-IMMUTABLE-VIP-SOURCE` — STATE,VAL/P0 — v4Source / v4AddressId immutable after Create (8.1-25)
+- `*-UPD-CRUD-DRAIN-TOGGLE` — CRUD,STATE/P1 — disabledAnnounceZones drain then re-enable on REGIONAL LB (8.1-26)
+- `*-GET-STATE-LEAN-PROJECTION` — STATE,CRUD/P1 — Get exposes only tenant-facing fields, no subnet/network/announce leak (8.1-30)
+- `*-DEL-CRUD-RELEASE-LINKED` — CRUD,STATE/P1 — Delete LB with a linked (BYO) VIP → address survives, reference cleared (8.1-28)
 
 ---
 
@@ -186,7 +227,7 @@ existing pattern, no separate catalogue entry needed").
 - `*-CR-VAL-TARGET-BOGON-LINKLOCAL` — VAL/P1 — external_ip=169.254.x.x → bogon rejected
 - `*-CR-VAL-TARGET-BOGON-MULTICAST` — VAL/P1 — external_ip=224.0.0.0 → bogon rejected
 - `*-CR-VAL-TARGET-BOGON-BROADCAST` — VAL/P1 — external_ip=255.255.255.255 → bogon rejected
-- `*-CR-NEG-REGION-UNKNOWN` — NEG/P0 — unknown region_id (cross-service)
+- `*-CR-NEG-REGION-UNKNOWN` — NEG/P0 — unknown region_id → async Operation error INVALID_ARGUMENT "Region ... not found" (cross-domain ref-not-found)
 
 ### CONF / STATE / NEG
 - `*-CR-CONF-ALREADY-EXISTS` — CONF,IDEM,NEG/P1 — duplicate (project_id,name) → 409 ALREADY_EXISTS (Verifies REQ-DB-TGR-NAME-UNIQ)
@@ -351,8 +392,8 @@ These extended patterns saturate the RPC × class matrix to ≥320 total cases f
 - `*-ATT-NEG-LB-UNKNOWN` — NEG/P1 — Attach to unknown LB id → 404
 - `*-DET-NEG-LB-UNKNOWN` — NEG/P1 — Detach from unknown LB id → 404
 - `*-DET-NEG-TG-UNKNOWN` — NEG/P1 — Detach unknown TG id → 404
-- `*-GTS-NEG-NF-UNKNOWN` — NEG/P1 — GetTargetStates of unknown LB → 404
-- `*-LOPS-NEG-NF-UNKNOWN` — NEG/P1 — ListOperations of unknown id → 404
+- `*-GTS-NEG-NF-UNKNOWN` — NEG/P1 — GetTargetStates of unknown LB (with well-formed targetGroupId query param) → 404 NotFound (target_group_id is required and validated first)
+- `*-LOPS-NEG-NF-UNKNOWN` — NEG/P1 — ListOperations of unknown id → 200 + empty operations (list-by-parent, no existence check)
 - `*-ATT-BVA-PRIORITY-MIN-0` — BVA/P2 — priority=0 (lower bound) → OK
 - `*-ATT-BVA-PRIORITY-MAX-1000` — BVA/P2 — priority=1000 (upper) → OK
 - `*-ATT-BVA-PRIORITY-NEGATIVE` — VAL,BVA/P1 — priority=-1 → InvalidArgument
@@ -360,7 +401,6 @@ These extended patterns saturate the RPC × class matrix to ≥320 total cases f
 - `*-CR-CRUD-NO-OPTIONAL-FIELDS` — CRUD/P2 — Create with only required fields → OK
 - `*-CR-CRUD-WITH-DESCRIPTION` — CRUD/P2 — Create with non-empty description → OK
 - `*-CR-CRUD-AFFINITY-CLIENT-IP` — CRUD/P2 — Create with sessionAffinity=CLIENT_IP_ONLY → OK
-- `*-CR-CRUD-CROSS-ZONE-FALSE` — CRUD/P2 — Create with crossZoneEnabled=false → OK
 - `*-CR-VAL-IPV-UNKNOWN` — VAL/P1 — ip_version=IPV9 → InvalidArgument
 - `*-CR-VAL-TARGET-PORT-ZERO` — VAL,BVA/P1 — target_port=0 → InvalidArgument
 - `*-CR-VAL-TARGET-PORT-OVER` — VAL,BVA/P1 — target_port=65536 → InvalidArgument
@@ -369,7 +409,7 @@ These extended patterns saturate the RPC × class matrix to ≥320 total cases f
 - `*-UPD-CRUD-DEFAULT-TG-CLEAR` — CRUD,STATE/P2 — Update default_target_group_id=null → cleared
 - `*-CR-VAL-TG-NAME-COLLISION-CROSS-REGION` — VAL/P2 — same name in different region → allowed (Verifies REQ-DB-TGR-NAME-UNIQ)
 - `*-RM-VAL-EMPTY-LIST` — VAL/P1 — RemoveTargets with empty list → InvalidArgument
-- `*-LST-FILTER-LABELS` — LSG/P2 — List with filter labels.X="..." → 200
+- `*-LST-FILTER-LABELS` — LSG,VAL,NEG/P2 — List with unsupported filter field labels.X="..." → 400 InvalidArgument (filter whitelist is name only)
 - `*-LST-FILTER-COMBINED` — LSG/P2 — List with combined filter (name + labels) → 200/400
 - `*-CR-CRUD-DELETION-PROTECTION-TRUE` — CRUD,STATE/P2 — Create with deletion_protection=true → persisted
 - `*-UPD-CRUD-DELETION-PROTECTION-TOGGLE` — CRUD,STATE/P2 — Update toggles deletion_protection round-trip
@@ -424,11 +464,11 @@ chain on the seeded umbrella stack).
 - `XRES-E2E-DEFAULT-TG-UNATTACHED-FP` — NEG,STATE/P1 — listener default_target_group_id → un-attached TG → FAILED_PRECONDITION (composite FK)
 - `XRES-E2E-V4-LISTENER-V6-ADDRESS-INVALID` — NEG,VAL/P1 — IPV4 listener + BYO IPv6 Address → InvalidArgument (family mismatch)
 
-### UC-2 — INTERNAL NLB (private VIP from subnet) (6.0-35)
-- `XRES-E2E-INTERNAL-FULL-FLOW` — CRUD,STATE/P0 — INTERNAL LB(networkId, CLIENT_IP_ONLY, crossZone=false)→listener(subnet, internal VIP)→TG→attach→GetTargetStates
-- `XRES-E2E-INTERNAL-NO-NETWORK-INVALID` — NEG,VAL/P0 — INTERNAL without network_id → InvalidArgument
-- `XRES-E2E-EXTERNAL-WITH-NETWORK-INVALID` — NEG,VAL/P1 — EXTERNAL carrying network_id → InvalidArgument (INTERNAL-only)
-- `XRES-E2E-INTERNAL-SG-FOREIGN-REJECTED` — NEG,VAL/P2 — INTERNAL with a foreign/absent security group → rejected (sync precheck)
+### UC-2 — INTERNAL NLB (private VIP from a subnet source) (6.0-35 → 8.1)
+- `XRES-E2E-INTERNAL-FULL-FLOW` — CRUD,STATE/P0 — INTERNAL LB(inline zonal subnet source, placementType=ZONAL, CLIENT_IP_ONLY)→listener→TG→attach→GetTargetStates
+- `XRES-E2E-INTERNAL-NO-NETWORK-INVALID` — NEG,VAL/P0 — INTERNAL LB without placementType/VIP source → InvalidArgument (8.1 replaces the network_id requirement)
+- `XRES-E2E-EXTERNAL-WITH-NETWORK-INVALID` — CRUD,CONF/P1 — EXTERNAL carrying the removed networkId + valid public source → created, field ignored (8.1-32)
+- `XRES-E2E-INTERNAL-SG-FOREIGN-REJECTED` — CRUD,CONF/P2 — LB carrying the removed securityGroupIds + valid public source → created, field ignored (8.1-32)
 
 ### UC-5 — bottom-up teardown with correct address lifecycle (6.0-36)
 - `XRES-E2E-TEARDOWN-BOTTOM-UP` — CRUD,STATE/P0 — clear default → remove target → detach → delete listener (FreeIP) → delete LB → delete TG; final 404s

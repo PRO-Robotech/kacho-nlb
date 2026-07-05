@@ -14,7 +14,7 @@ CASES.append(Case(
     steps=[
         Step(name="trigger-create", method="POST", path="/nlb/v1/networkLoadBalancers",
              body={"projectId": "{{_suiteProjectId}}", "regionId": "{{_suiteRegionId}}",
-                   "name": "opget-inflight-{{runId}}", "type": "EXTERNAL"},
+                   "name": "opget-inflight-{{runId}}", "type": "EXTERNAL", "v4Source": {"public": {}}},
              test_script=[*assert_status(200),
                           *save_from_response("j.id", "opId"),
                           *save_from_response("j.metadata && j.metadata.networkLoadBalancerId", "nlbId"),
@@ -43,7 +43,7 @@ CASES.append(Case(
     steps=[
         Step(name="create", method="POST", path="/nlb/v1/networkLoadBalancers",
              body={"projectId": "{{_suiteProjectId}}", "regionId": "{{_suiteRegionId}}",
-                   "name": "opget-done-{{runId}}", "type": "EXTERNAL"},
+                   "name": "opget-done-{{runId}}", "type": "EXTERNAL", "v4Source": {"public": {}}},
              test_script=[*assert_status(200),
                           *save_from_response("j.id", "opId"),
                           *save_from_response("j.metadata && j.metadata.networkLoadBalancerId", "nlbId")]),
@@ -115,7 +115,7 @@ CASES.append(Case(
     steps=[
         Step(name="create-fast", method="POST", path="/nlb/v1/networkLoadBalancers",
              body={"projectId": "{{_suiteProjectId}}", "regionId": "{{_suiteRegionId}}",
-                   "name": "opcanc-{{runId}}", "type": "EXTERNAL"},
+                   "name": "opcanc-{{runId}}", "type": "EXTERNAL", "v4Source": {"public": {}}},
              test_script=[*assert_status(200), *save_from_response("j.id", "opId"),
                           *save_from_response("j.metadata && j.metadata.networkLoadBalancerId", "nlbId")]),
         poll_operation_until_done(),

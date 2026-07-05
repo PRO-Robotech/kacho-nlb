@@ -17,7 +17,7 @@ import (
 	"github.com/PRO-Robotech/kacho-nlb/internal/apps/kacho/api/announce"
 	"github.com/PRO-Robotech/kacho-nlb/internal/domain"
 	kachorepo "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho"
-	lbv1 "github.com/PRO-Robotech/kacho-nlb/proto/gen/go/kacho/cloud/loadbalancer/v1"
+	lbv1 "github.com/PRO-Robotech/kacho-proto/gen/go/kacho/cloud/loadbalancer/v1"
 )
 
 // fakeStore — ручной двойник announce.Store (port). Фиксирует вызовы и отдаёт

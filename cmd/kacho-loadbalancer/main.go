@@ -43,8 +43,8 @@ import (
 	"github.com/PRO-Robotech/kacho-corelib/outbox/drainer"
 	"github.com/PRO-Robotech/kacho-corelib/outbox/metrics"
 
-	operationpb "github.com/PRO-Robotech/kacho-corelib/proto/gen/go/kacho/cloud/operation"
-	lbv1 "github.com/PRO-Robotech/kacho-nlb/proto/gen/go/kacho/cloud/loadbalancer/v1"
+	operationpb "github.com/PRO-Robotech/kacho-proto/gen/go/kacho/cloud/operation"
+	lbv1 "github.com/PRO-Robotech/kacho-proto/gen/go/kacho/cloud/loadbalancer/v1"
 
 	announceapi "github.com/PRO-Robotech/kacho-nlb/internal/apps/kacho/api/announce"
 	internallifecycle "github.com/PRO-Robotech/kacho-nlb/internal/apps/kacho/api/internal_lifecycle"

@@ -4,7 +4,7 @@
 package type2pb
 
 import (
-	operationv1 "github.com/PRO-Robotech/kacho-corelib/proto/gen/go/kacho/cloud/operation"
+	operationv1 "github.com/PRO-Robotech/kacho-proto/gen/go/kacho/cloud/operation"
 
 	"github.com/PRO-Robotech/kacho-nlb/internal/dto"
 )

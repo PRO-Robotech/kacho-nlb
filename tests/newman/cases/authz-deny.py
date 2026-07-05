@@ -36,7 +36,7 @@ CASES.append(Case(
     steps=[
         Step(name="cr-viewer", method="POST", path=_NLB, auth="jwtProjectViewerA",
              body={"projectId": "{{_suiteProjectId}}", "regionId": "{{_suiteRegionId}}",
-                   "name": "azd-vd-{{runId}}", "type": "EXTERNAL"},
+                   "name": "azd-vd-{{runId}}", "type": "EXTERNAL", "v4Source": {"public": {}}},
              test_script=[*assert_status(403), *assert_grpc_code(7, "PERMISSION_DENIED"),
                           "pm.test('mentions permission denied + loadbalancer perm', () => {",
                           "  const m = (pm.response.json().message || '').toLowerCase();",
@@ -72,7 +72,7 @@ CASES.append(Case(
         # Create as editor, then read as viewer
         Step(name="setup-cr", method="POST", path=_NLB, auth="jwtProjectEditorA",
              body={"projectId": "{{_suiteProjectId}}", "regionId": "{{_suiteRegionId}}",
-                   "name": "azd-vok-{{runId}}", "type": "EXTERNAL"},
+                   "name": "azd-vok-{{runId}}", "type": "EXTERNAL", "v4Source": {"public": {}}},
              test_script=[*assert_status(200), *save_from_response("j.id", "opId"),
                           *save_from_response("j.metadata && j.metadata.networkLoadBalancerId", "nlbId")]),
         poll_operation_until_done(),
@@ -141,7 +141,7 @@ CASES.append(Case(
     steps=[
         Step(name="setup-cr", method="POST", path=_NLB, auth="jwtProjectEditorA",
              body={"projectId": "{{_suiteProjectId}}", "regionId": "{{_suiteRegionId}}",
-                   "name": "azd-mv-{{runId}}", "type": "EXTERNAL"},
+                   "name": "azd-mv-{{runId}}", "type": "EXTERNAL", "v4Source": {"public": {}}},
              test_script=[*assert_status(200), *save_from_response("j.id", "opId"),
                           *save_from_response("j.metadata && j.metadata.networkLoadBalancerId", "nlbId")]),
         poll_operation_until_done(),
@@ -406,7 +406,7 @@ CASES.append(Case(
         # Create op as editor A
         Step(name="cr-as-A", method="POST", path=_NLB, auth="jwtProjectEditorA",
              body={"projectId": "{{_suiteProjectId}}", "regionId": "{{_suiteRegionId}}",
-                   "name": "azd-cancel-{{runId}}", "type": "EXTERNAL"},
+                   "name": "azd-cancel-{{runId}}", "type": "EXTERNAL", "v4Source": {"public": {}}},
              test_script=[*assert_status(200), *save_from_response("j.id", "opId"),
                           *save_from_response("j.metadata && j.metadata.networkLoadBalancerId", "nlbId")]),
         # Try cancel as Editor B (different subject)
@@ -440,7 +440,7 @@ CASES.append(Case(
         # happy path.
         Step(name="probe-cr", method="POST", path=_NLB, auth="jwtProjectEditorA",
              body={"projectId": "{{_suiteProjectId}}", "regionId": "{{_suiteRegionId}}",
-                   "name": "azd-fga-{{runId}}", "type": "EXTERNAL"},
+                   "name": "azd-fga-{{runId}}", "type": "EXTERNAL", "v4Source": {"public": {}}},
              test_script=[
                  "pm.test('either 200 (FGA up) or 403 (FGA down fail-closed)', () => "
                  "  pm.expect(pm.response.code).to.be.oneOf([200, 403, 503]));",
@@ -465,7 +465,7 @@ CASES.append(Case(
     steps=[
         Step(name="cr-anon", method="POST", path=_NLB, auth="anonymous",
              body={"projectId": "{{_suiteProjectId}}", "regionId": "{{_suiteRegionId}}",
-                   "name": "azd-anon-{{runId}}", "type": "EXTERNAL"},
+                   "name": "azd-anon-{{runId}}", "type": "EXTERNAL", "v4Source": {"public": {}}},
              test_script=[
                  "pm.test('401 UNAUTHENTICATED', () => "
                  "  pm.expect(pm.response.code).to.be.oneOf([401, 403]));",
@@ -486,7 +486,7 @@ CASES.append(Case(
         # (drift-test enforces — see acceptance §8 GWT-AZD-019).
         Step(name="probe-cr", method="POST", path=_NLB, auth="jwtProjectEditorA",
              body={"projectId": "{{_suiteProjectId}}", "regionId": "{{_suiteRegionId}}",
-                   "name": "azd-cat-{{runId}}", "type": "EXTERNAL"},
+                   "name": "azd-cat-{{runId}}", "type": "EXTERNAL", "v4Source": {"public": {}}},
              test_script=[
                  "// The 30 loadbalancer.* permissions (design §6.2). If a denial",
                  "// arrives, the message MUST reference one of these strings.",
@@ -543,7 +543,7 @@ CASES.append(Case(
     steps=[
         Step(name="setup-cr-as-editor", method="POST", path=_NLB, auth="jwtProjectEditorA",
              body={"projectId": "{{_suiteProjectId}}", "regionId": "{{_suiteRegionId}}",
-                   "name": "azd-op-{{runId}}", "type": "EXTERNAL"},
+                   "name": "azd-op-{{runId}}", "type": "EXTERNAL", "v4Source": {"public": {}}},
              test_script=[*assert_status(200), *save_from_response("j.id", "opId"),
                           *save_from_response("j.metadata && j.metadata.networkLoadBalancerId", "nlbId")]),
         poll_operation_until_done(),
@@ -620,7 +620,7 @@ CASES.append(Case(
         # request as a stranger denies).
         Step(name="stranger-create", method="POST", path=_NLB, auth="jwtStranger",
              body={"projectId": "{{_suiteProjectId}}", "regionId": "{{_suiteRegionId}}",
-                   "name": "azd-brk-{{runId}}", "type": "EXTERNAL"},
+                   "name": "azd-brk-{{runId}}", "type": "EXTERNAL", "v4Source": {"public": {}}},
              test_script=[
                  "pm.test('breakglass OFF: stranger denied', () => "
                  "  pm.expect(pm.response.code).to.eql(403));",
@@ -635,7 +635,7 @@ CASES.append(Case(
     steps=[
         Step(name="setup-cr", method="POST", path=_NLB, auth="jwtProjectEditorA",
              body={"projectId": "{{_suiteProjectId}}", "regionId": "{{_suiteRegionId}}",
-                   "name": "azd-lcd-{{runId}}", "type": "EXTERNAL"},
+                   "name": "azd-lcd-{{runId}}", "type": "EXTERNAL", "v4Source": {"public": {}}},
              test_script=[*assert_status(200), *save_from_response("j.id", "opId"),
                           *save_from_response("j.metadata && j.metadata.networkLoadBalancerId", "nlbId")]),
         poll_operation_until_done(),
@@ -670,7 +670,7 @@ CASES.append(Case(
         Step(name="viewer-write-denied", method="POST", path=_NLB,
              auth="jwtProjectViewerA",
              body={"projectId": "{{_suiteProjectId}}", "regionId": "{{_suiteRegionId}}",
-                   "name": "azd-cinv-{{runId}}", "type": "EXTERNAL"},
+                   "name": "azd-cinv-{{runId}}", "type": "EXTERNAL", "v4Source": {"public": {}}},
              test_script=[*assert_status(403), *assert_grpc_code(7, "PERMISSION_DENIED")]),
     ],
 ))
@@ -682,7 +682,7 @@ CASES.append(Case(
     steps=[
         Step(name="cr-as-A", method="POST", path=_NLB, auth="jwtProjectEditorA",
              body={"projectId": "{{_suiteProjectId}}", "regionId": "{{_suiteRegionId}}",
-                   "name": "azd-own-{{runId}}", "type": "EXTERNAL"},
+                   "name": "azd-own-{{runId}}", "type": "EXTERNAL", "v4Source": {"public": {}}},
              test_script=[*assert_status(200), *save_from_response("j.id", "opId"),
                           *save_from_response("j.metadata && j.metadata.networkLoadBalancerId", "nlbId")]),
         poll_operation_until_done(),
@@ -701,7 +701,7 @@ CASES.append(Case(
     steps=[
         Step(name="cr-as-sa", method="POST", path=_NLB, auth="jwtServiceAccountEditor",
              body={"projectId": "{{_suiteProjectId}}", "regionId": "{{_suiteRegionId}}",
-                   "name": "azd-sa-{{runId}}", "type": "EXTERNAL"},
+                   "name": "azd-sa-{{runId}}", "type": "EXTERNAL", "v4Source": {"public": {}}},
              test_script=[
                  "pm.test('OK or 403 (env may not yet seed SA binding)', () => "
                  "  pm.expect(pm.response.code).to.be.oneOf([200, 403]));",
@@ -724,7 +724,7 @@ CASES.append(Case(
         Step(name="cr-as-group-member", method="POST", path=_NLB,
              auth="jwtGroupMemberEditor",
              body={"projectId": "{{_suiteProjectId}}", "regionId": "{{_suiteRegionId}}",
-                   "name": "azd-grp-{{runId}}", "type": "EXTERNAL"},
+                   "name": "azd-grp-{{runId}}", "type": "EXTERNAL", "v4Source": {"public": {}}},
              test_script=[
                  "pm.test('OK or 403 (env may not yet seed group binding)', () => "
                  "  pm.expect(pm.response.code).to.be.oneOf([200, 403]));",

@@ -45,6 +45,14 @@ CASES = []
 _LB_BASE = "/nlb/v1/networkLoadBalancers"
 _LST_BASE = "/nlb/v1/listeners"
 _TG_BASE = "/nlb/v1/targetGroups"
+_VPC_SUBNETS = "/vpc/v1/subnets"
+
+# sub-phase 8.1 note: the INTERNAL LoadBalancer now takes its VIP from a subnet
+# source (v4Source.subnetId) + placementType, not from a top-level networkId. The
+# removed inputs (networkId / securityGroupIds / crossZoneEnabled) are gone from the
+# proto and silently ignored by grpc-gateway. The INTERNAL journey below provisions
+# a zonal subnet inline; the listener-level fields still follow sub-phase-4.0 and
+# are tracked for a separate listener acceptance.
 
 _HC_TCP = {"name": "hc", "interval": "2s", "timeout": "1s",
            "unhealthyThreshold": 3, "healthyThreshold": 2, "tcp": {"port": 8080}}
@@ -58,28 +66,15 @@ _VALID_TARGET_STATE_JS = (
 )
 
 
-def _network_id_violation_block():
-    """Assert the field violation points at network_id WHEN the gateway surfaces a
-    BadRequest detail. The unambiguous contract (status 400 + grpc code 3) is
-    asserted by the caller; this adds field-level signal without coupling to the
-    detail shape / field-name casing (network_id vs networkId)."""
-    return [
-        "const det = (pm.response.json().details || []).find(d => (d['@type']||'').includes('BadRequest'));",
-        "if (det && det.fieldViolations) {",
-        "  const fields = det.fieldViolations.map(v => v.field);",
-        "  pm.test('violation names the network_id field', () => "
-        "    pm.expect(fields.some(f => f === 'network_id' || f === 'networkId')).to.be.true);",
-        "}",
-    ]
-
-
 # ---------------------------------------------------------------------------
 # Reusable step fragments
 # ---------------------------------------------------------------------------
 
 def _create_external_lb(suffix: str, body_extra: dict = None):
+    # sub-phase 8.1: EXTERNAL LB carries an auto public VIP source on Create.
     body = {"projectId": "{{_suiteProjectId}}", "regionId": "{{_suiteRegionId}}",
-            "type": "EXTERNAL", "name": f"xres-{suffix}-{{{{runId}}}}", **(body_extra or {})}
+            "type": "EXTERNAL", "name": f"xres-{suffix}-{{{{runId}}}}",
+            "v4Source": {"public": {}}, **(body_extra or {})}
     return [
         Step(name="create-lb", method="POST", path=_LB_BASE, body=body,
              test_script=[*assert_status(200),
@@ -137,7 +132,7 @@ CASES.append(Case(
           "→default_tg→GetTargetStates (Verifies 6.0-34)",
     classes=["CRUD", "STATE"], priority="P0",
     steps=[
-        *_create_external_lb("ext-flow", {"sessionAffinity": "FIVE_TUPLE", "crossZoneEnabled": True}),
+        *_create_external_lb("ext-flow", {"sessionAffinity": "FIVE_TUPLE"}),
         # Step 1 assertion: fresh LB has no listener/TG → INACTIVE.
         Step(name="get-lb-inactive", method="GET", path=f"{_LB_BASE}/{{{{nlbId}}}}",
              test_script=[*assert_status(200),
@@ -347,40 +342,60 @@ CASES.append(Case(
           "→listener(subnet, internal VIP)→TG→attach→GetTargetStates (Verifies 6.0-35)",
     classes=["CRUD", "STATE"], priority="P0",
     steps=[
-        # network_id existence is a SYNC fail-closed precheck → 200 when the seed
-        # network resolves, sync 400 ("network not found") on a bare lane, 503 if
-        # vpc is unreachable. Gate the rest of the journey on the LB existing.
-        Step(name="create-internal-lb", method="POST", path=_LB_BASE,
-             body={"projectId": "{{_suiteProjectId}}", "regionId": "{{_suiteRegionId}}",
-                   "type": "INTERNAL", "name": "xres-int-{{runId}}",
-                   "networkId": "{{existingNetworkId}}",
-                   "sessionAffinity": "CLIENT_IP_ONLY", "crossZoneEnabled": False},
+        # sub-phase 8.1: provision a zonal subnet inline, then create an INTERNAL LB
+        # whose VIP is auto-allocated from that subnet (v4Source.subnetId). Gate the
+        # rest of the journey on the subnet + LB actually materialising.
+        Step(name="provision-subnet", method="POST", path=_VPC_SUBNETS,
+             pre_script=[
+                 "var __seq = parseInt(pm.environment.get('_cidrSeq') || '0', 10) + 1;",
+                 "pm.environment.set('_cidrSeq', String(__seq));",
+                 "var __run = (pm.environment.get('runId') || 'x0');",
+                 "var __h = 0; for (var i = 0; i < __run.length; i++) { __h = (__h * 31 + __run.charCodeAt(i)) & 0xffff; }",
+                 "pm.environment.set('_subnetCidr', '10.' + (200 + (__h % 40)) + '.' + (__seq % 250) + '.0/24');",
+             ],
+             body={"projectId": "{{_suiteProjectId}}", "networkId": "{{existingNetworkId}}",
+                   "name": "xres-int-sub-{{runId}}", "v4CidrBlocks": ["{{_subnetCidr}}"],
+                   "placementType": "ZONAL", "zoneId": "{{existingZoneId}}"},
              test_script=[
-                 "pm.test('accepted (Operation) or fail-closed reject (network/vpc dependent)', () => "
-                 "  pm.expect(pm.response.code).to.be.oneOf([200, 400, 503]));",
-                 "pm.environment.unset('nlbId');",
+                 "pm.environment.unset('xresSubnetId');",
                  "if (pm.response.code === 200) {",
                  "  const j = pm.response.json();",
-                 "  pm.test('Operation envelope on accept', () => pm.expect(j.id).to.match(/^nlb[a-z0-9]+$/));",
-                 "  pm.environment.set('opId', j.id);",
-                 "  if (j.metadata && j.metadata.networkLoadBalancerId) "
-                 "    pm.environment.set('nlbId', j.metadata.networkLoadBalancerId);",
+                 "  if (j.id) pm.environment.set('opId', j.id);",
+                 "  if (j.metadata && j.metadata.subnetId) pm.environment.set('xresSubnetId', j.metadata.subnetId);",
+                 "} else { pm.environment.unset('opId'); }",
+             ]),
+        poll_operation_until_done(),
+        Step(name="create-internal-lb", method="POST", path=_LB_BASE,
+             body={"projectId": "{{_suiteProjectId}}", "regionId": "{{_suiteRegionId}}",
+                   "type": "INTERNAL", "placementType": "ZONAL", "name": "xres-int-{{runId}}",
+                   "sessionAffinity": "CLIENT_IP_ONLY",
+                   "v4Source": {"subnetId": "{{xresSubnetId}}"}},
+             test_script=[
+                 "pm.environment.unset('nlbId');",
+                 "if (pm.environment.get('xresSubnetId')) {",
+                 "  pm.test('INTERNAL subnet-source LB accepted as Operation', () => pm.expect(pm.response.code).to.eql(200));",
+                 "  const j = pm.response.json();",
+                 "  if (j.id) pm.environment.set('opId', j.id);",
+                 "  if (j.metadata && j.metadata.networkLoadBalancerId) pm.environment.set('nlbId', j.metadata.networkLoadBalancerId);",
+                 "} else {",
+                 "  pm.environment.unset('opId');",
+                 "  pm.test('no subnet fixture → INTERNAL subnet-source create rejected', () => "
+                 "    pm.expect(pm.response.code).to.be.oneOf([400, 404, 503]));",
                  "}",
              ]),
         poll_operation_until_done(),
         Step(name="get-internal-lb", method="GET", path=f"{_LB_BASE}/{{{{nlbId}}}}",
              test_script=[
                  "pm.environment.unset('xresIntReady');",
-                 "if (pm.response.code === 200 && !pm.environment.get('lastOpError')) {",
+                 "if (pm.environment.get('nlbId') && pm.response.code === 200 && !pm.environment.get('lastOpError')) {",
                  "  pm.environment.set('xresIntReady', '1');",
                  "  const j = pm.response.json();",
                  "  pm.test('type INTERNAL', () => pm.expect(j.type).to.eql('INTERNAL'));",
-                 "  pm.test('networkId round-trips', () => "
-                 "    pm.expect(j.networkId).to.eql(pm.environment.get('existingNetworkId')));",
+                 "  pm.test('placementType ZONAL', () => pm.expect(j.placementType).to.eql('ZONAL'));",
                  "  pm.test('sessionAffinity CLIENT_IP_ONLY round-trips', () => "
                  "    pm.expect(j.sessionAffinity).to.eql('CLIENT_IP_ONLY'));",
-                 "  pm.test('crossZoneEnabled=false round-trips', () => "
-                 "    pm.expect(j.crossZoneEnabled).to.eql(false));",
+                 "  pm.test('v4AddressId resolved to a bound vpc Address', () => "
+                 "    pm.expect(j.v4AddressId).to.match(/^adr[a-z0-9]+$/));",
                  "}",
              ]),
         Step(name="create-internal-listener", method="POST", path=_LST_BASE,
@@ -434,58 +449,68 @@ CASES.append(Case(
         poll_operation_until_done(),
         *_cleanup_lb(),
         *_cleanup_tg(),
+        Step(name="cleanup-int-subnet", method="DELETE", path=f"{_VPC_SUBNETS}/{{{{xresSubnetId}}}}",
+             test_script=[*save_from_response("j.id", "opId")]),
+        poll_operation_until_done(),
     ],
 ))
 
 CASES.append(Case(
     id="XRES-E2E-INTERNAL-NO-NETWORK-INVALID",
-    title="UC-2 negative: INTERNAL LB without network_id → InvalidArgument "
-          "(Verifies 6.0-35/6.0-24)",
+    title="INTERNAL LB with no placementType and no VIP source → InvalidArgument "
+          "(8.1 replaces the old network_id requirement) (Verifies 8.1-12/8.1-19)",
     classes=["NEG", "VAL"], priority="P0",
     steps=[
-        Step(name="create-internal-no-network", method="POST", path=_LB_BASE,
+        Step(name="create-internal-bare", method="POST", path=_LB_BASE,
              body={"projectId": "{{_suiteProjectId}}", "regionId": "{{_suiteRegionId}}",
-                   "type": "INTERNAL", "name": "int-no-net-{{runId}}"},
+                   "type": "INTERNAL", "name": "int-bare-{{runId}}"},
              test_script=[*assert_status(400), *assert_grpc_code(3, "INVALID_ARGUMENT"),
-                          *_network_id_violation_block()]),
+                          "pm.test('rejected for missing placement or missing vip source', () => {",
+                          "  const m = (pm.response.json().message || '').toLowerCase();",
+                          "  pm.expect(m).to.satisfy(s => s.includes('placement_type') || s.includes('vip source'));",
+                          "});"]),
     ],
 ))
 
 CASES.append(Case(
     id="XRES-E2E-EXTERNAL-WITH-NETWORK-INVALID",
-    title="UC-2 negative: EXTERNAL LB carrying network_id → InvalidArgument "
-          "(network_id is INTERNAL-only) (Verifies 6.0-35/6.0-25)",
-    classes=["NEG", "VAL"], priority="P1",
+    title="EXTERNAL LB carrying a removed networkId field + valid public source → "
+          "created (grpc-gateway ignores the removed field) (Verifies 8.1-32)",
+    classes=["CRUD", "CONF"], priority="P1",
     steps=[
-        Step(name="create-external-with-network", method="POST", path=_LB_BASE,
+        Step(name="create-external-with-removed-network", method="POST", path=_LB_BASE,
              body={"projectId": "{{_suiteProjectId}}", "regionId": "{{_suiteRegionId}}",
                    "type": "EXTERNAL", "name": "ext-net-{{runId}}",
-                   "networkId": "{{garbageNetworkId}}"},
-             test_script=[*assert_status(400), *assert_grpc_code(3, "INVALID_ARGUMENT"),
-                          *_network_id_violation_block()]),
+                   "networkId": "{{garbageNetworkId}}", "v4Source": {"public": {}}},
+             test_script=[*assert_status(200), *save_from_response("j.id", "opId"),
+                          *save_from_response("j.metadata && j.metadata.networkLoadBalancerId", "nlbId")]),
+        poll_operation_until_done(),
+        Step(name="get-no-network", method="GET", path=f"{_LB_BASE}/{{{{nlbId}}}}",
+             test_script=[*assert_status(200),
+                          "pm.test('output does not echo the removed networkId', () => "
+                          "  pm.expect(pm.response.json()).to.not.have.property('networkId'));"]),
+        *_cleanup_lb(),
     ],
 ))
 
 CASES.append(Case(
     id="XRES-E2E-INTERNAL-SG-FOREIGN-REJECTED",
-    title="UC-2 negative: INTERNAL LB with a security group not belonging to the "
-          "network → rejected (sync precheck) (Verifies 6.0-35/6.0-29)",
-    classes=["NEG", "VAL"], priority="P2",
+    title="EXTERNAL LB carrying a removed securityGroupIds field + valid public source → "
+          "created (LB-level SG was removed in 8.1; grpc-gateway ignores it) (Verifies 8.1-32)",
+    classes=["CRUD", "CONF"], priority="P2",
     steps=[
-        Step(name="create-internal-bad-sg", method="POST", path=_LB_BASE,
+        Step(name="create-with-removed-sg", method="POST", path=_LB_BASE,
              body={"projectId": "{{_suiteProjectId}}", "regionId": "{{_suiteRegionId}}",
-                   "type": "INTERNAL", "name": "int-sg-{{runId}}",
-                   "networkId": "{{existingNetworkId}}",
-                   "securityGroupIds": ["{{garbageSecurityGroupId}}"]},
-             test_script=[
-                 # network/SG validation is a sync fail-closed precheck: a
-                 # non-existent network or a foreign/absent SG → InvalidArgument;
-                 # vpc unreachable → Unavailable. Never a silent accept.
-                 "pm.test('rejected (InvalidArgument or Unavailable), never created', () => "
-                 "  pm.expect(pm.response.code).to.be.oneOf([400, 503]));",
-                 "if (pm.response.code === 400) "
-                 "  pm.test('grpc INVALID_ARGUMENT (3)', () => pm.expect(pm.response.json().code).to.eql(3));",
-             ]),
+                   "type": "EXTERNAL", "name": "ext-sg-{{runId}}",
+                   "securityGroupIds": ["{{garbageSecurityGroupId}}"], "v4Source": {"public": {}}},
+             test_script=[*assert_status(200), *save_from_response("j.id", "opId"),
+                          *save_from_response("j.metadata && j.metadata.networkLoadBalancerId", "nlbId")]),
+        poll_operation_until_done(),
+        Step(name="get-no-sg", method="GET", path=f"{_LB_BASE}/{{{{nlbId}}}}",
+             test_script=[*assert_status(200),
+                          "pm.test('output does not echo the removed securityGroupIds', () => "
+                          "  pm.expect(pm.response.json()).to.not.have.property('securityGroupIds'));"]),
+        *_cleanup_lb(),
     ],
 ))
 
