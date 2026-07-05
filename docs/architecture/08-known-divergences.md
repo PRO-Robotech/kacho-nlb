@@ -60,3 +60,45 @@ listener/attach INSERT/DELETE) пишет статус через
 CAS коммитил `STOPPING`, а безусловная запись возвращала `ACTIVE`/`INACTIVE`.
 CAS-guard + row-lock сериализуют пересчёт с `SetStatusCAS`; при проигранном CAS
 статус не трогается и spurious-outbox не эмитится (sec-hardening r3, finding #2).
+
+## Composition-root `runServe` — намеренно линейный, длинный wiring (не «толстая функция»)
+
+**Что.** `cmd/kacho-loadbalancer/main.go:runServe` — единственный composition-root
+(CLAUDE.md sanctions `cmd/main.go` как единственное место wiring'а). Функция длинная
+(~300 строк, из них ~190 кода — остальное inline-документация каждого шага), но это
+**не** нарушение layering'а и не «толстый сервис».
+
+**Почему by-design (а не рефакторить в helper'ы дальше).** Тяжёлые шаги уже вынесены
+в `wiring.go`/`observability.go`/`backstop.go`: `dialPeers`, `check.NewInterceptor`,
+`assembleBackgroundWorkers`, `buildInterceptorChains`, `registerGRPCServices`,
+`startDiagnosticListener`, `startLROWorker`, `buildReadinessCheckers`. Остаток
+`runServe` — (1) плоская последовательность создания ресурсов с `defer`-cleanup'ами
+(`cancel`/`pool.Close`/`repo.Close`/`closeAll`) наверху функции, где порядок виден
+целиком, и (2) когезивная shutdown-оркестрация (`triggerShutdown` sync.Once + errgroup
+`g.Go`-блоки). Дальнейшее дробление shutdown-блока в отдельный helper потребовало бы
+протащить ~12 локалов (оба gRPC-сервера, `cancel`, `healthAgg`, `background`,
+`diagTask`/`diagShutdown`, `cfg`, `logger`) через struct и **разнесло бы** порядок
+`defer`/GracefulStop по двум функциям — ровно тот defer-ordering риск, который аудит и
+называет опасностью. Держать этот порядок в одной линейной функции с явными
+комментариями — сознательный trade-off читаемости-vs-безопасности в пользу второго
+(sec-hardening r5b, LEAN-finding «runServe 308 lines»).
+
+## Package-local `shared.*`-делегаторы — намеренная per-package конвенция (не дубль)
+
+**Что.** Каждый use-case пакет (`loadbalancer`, `targetgroup`, `listener`, `announce`,
+`operation`) держит тонкие package-local функции, форвардящие в единый `shared.*`:
+`mapDomainErr`→`shared.MapDomainErr`, `errInvalidArg`→`shared.ErrInvalidArg`,
+`operationToProto`→`shared.OperationToProto`, `stripSentinel`→`shared.StripSentinel`,
+`peerErrToStatus`→`shared.PeerErrToStatus`. Тела 2-3 строки и byte-идентичны между
+пакетами.
+
+**Почему by-design (а не удалять wrapper'ы).** Логика **уже** консолидирована в
+`shared.*` (единый источник истины — audit ARCH #7 / LEAN #10 / #11); package-local
+делегаторы оставлены сознательно, чтобы use-case код звал короткое неквалифицированное
+имя (`peerErrToStatus(err, kind, id)` вместо `shared.PeerErrToStatus(...)`) — единый
+call-site стиль во всех пакетах. Это repo-wide конвенция: 5 видов делегаторов × 5
+пакетов. Удалить только `peerErrToStatus` из двух пакетов, оставив остальные 4
+делегатора-близнеца в тех же файлах, — непоследовательный churn против устоявшейся
+конвенции; логика при этом уже не дублируется (живёт единожды в `shared`). Дрейф
+поведения невозможен: изменение правится в одном `shared.*`, wrapper'ы его лишь
+пробрасывают (sec-hardening r5b, LEAN-finding «peerErrToStatus wrappers»).
