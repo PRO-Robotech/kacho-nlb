@@ -165,7 +165,7 @@ func (c Config) Validate() error {
 		// allow-list там не требуется.
 		if c.MTLS.Server.Enable && len(c.Authz.TrustedForwarderSANs) == 0 {
 			errs = multierr.Append(errs, fmt.Errorf(
-				"production mode: authz.trusted-forwarder-sans must be non-empty when mtls.server.enable=true " +
+				"production mode: authz.trusted-forwarder-sans must be non-empty when mtls.server.enable=true "+
 					"(empty allow-list trusts any mTLS-verified peer to forward the end-user principal — impersonation vector)"))
 		}
 	}
