@@ -104,6 +104,11 @@ authz:
     cache-max-entries: 10000  # cache bound + MaxResults cap
     fail-open: false          # iam down → List → UNAVAILABLE (НЕ нефильтрованный)
   breakglass: false           # dev-only; production validation rejects true
+  # Anti-impersonation allow-list: cert-identity SAN'ы, которым разрешено
+  # форвардить end-user principal (x-kacho-principal-*). Пусто = доверять ЛЮБОМУ
+  # mTLS-verified peer'у (confused-deputy в общем mTLS-mesh). ОБЯЗАН быть непустым
+  # при mode=production И mtls.server.enable=true (обычно SAN api-gateway).
+  trusted-forwarder-sans: []
 
 # ─── FGA tuple write (D-11 sync hierarchy tuples) ───────────────────────────
 fga:

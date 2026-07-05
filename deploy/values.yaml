@@ -88,6 +88,12 @@ config:
       cacheMaxEntries: 10000
       failOpen: false
     breakglass: false         # production validation forbids true
+    # Anti-impersonation allow-list: cert-identity SANs permitted to forward the
+    # end-user principal (x-kacho-principal-*). Empty list = trust ANY mTLS-verified
+    # peer (back-compat), which is a confused-deputy vector in a shared mTLS mesh.
+    # REQUIRED (non-empty) when mode=production AND mtls.enable=true — usually the
+    # api-gateway SPIFFE SAN, e.g. ["spiffe://kacho.cloud/ns/kacho/sa/api-gateway"].
+    trustedForwarderSANs: []
   fga:
     endpoint: ""              # OpenFGA HTTP/gRPC endpoint (empty → tuple-write disabled)
     storeId: ""

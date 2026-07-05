@@ -192,6 +192,7 @@ func TestValidate_Production_SecureTransport_OK(t *testing.T) {
 	cfg.MTLS.Server.Enable = true
 	cfg.MTLS.IAMRegister.Enable = true
 	cfg.Authz.ListFilter.Enabled = true
+	cfg.Authz.TrustedForwarderSANs = []string{"spiffe://kacho.cloud/ns/kacho/sa/api-gateway"}
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("production + secure transport: unexpected err: %v", err)
 	}
@@ -225,6 +226,7 @@ func productionSecureConfig() Config {
 	cfg.MTLS.IAMRegister.Enable = true
 	cfg.Authz.ListFilter.Enabled = true
 	cfg.Authz.ListFilter.FailOpen = false
+	cfg.Authz.TrustedForwarderSANs = []string{"spiffe://kacho.cloud/ns/kacho/sa/api-gateway"}
 	return cfg
 }
 
@@ -272,6 +274,50 @@ func TestValidate_Dev_ListFilterDisabled_OK(t *testing.T) {
 	cfg.Authz.ListFilter.FailOpen = true
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("dev + list-filter disabled/fail-open: unexpected err: %v", err)
+	}
+}
+
+// TestValidate_Production_MTLSRequiresTrustedForwarderSANs — production с mTLS-
+// server и ПУСТЫМ authz.trusted-forwarder-sans обязан fail-close'иться: пустой
+// allow-list в grpcsrv означает «доверять форвардинг x-kacho-principal-* ЛЮБОМУ
+// mTLS-verified peer'у» → в общем mTLS-mesh любой воркер с валидным клиентским
+// cert'ом может форжить произвольного principal'а (confused-deputy). В проде с
+// mTLS-server allow-list обязан быть непустым (перечисляет SAN api-gateway).
+func TestValidate_Production_MTLSRequiresTrustedForwarderSANs(t *testing.T) {
+	cfg := productionSecureConfig() // mtls.server.enable=true
+	cfg.Authz.TrustedForwarderSANs = nil
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "trusted-forwarder-sans") {
+		t.Fatalf("expected trusted-forwarder-sans error in production+mTLS, got %v", err)
+	}
+}
+
+// TestValidate_Production_MTLSWithTrustedForwarderSANs_OK — production+mTLS с
+// непустым allow-list проходит (позитивная ветка).
+func TestValidate_Production_MTLSWithTrustedForwarderSANs_OK(t *testing.T) {
+	cfg := productionSecureConfig()
+	cfg.Authz.TrustedForwarderSANs = []string{"spiffe://kacho.cloud/ns/kacho/sa/api-gateway"}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("production + mTLS + forwarder allow-list: unexpected err: %v", err)
+	}
+}
+
+// TestValidate_Production_OneWayTLS_NoForwarderSANsRequired — production с
+// authn.type=tls (one-way TLS, mTLS-server off) НЕ требует forwarder-sans: без
+// mTLS ни один peer не verified, forwarded principal снимается с любого peer'а →
+// SystemPrincipal → fail-closed. Vulnerability (trust-all-verified) не возникает.
+func TestValidate_Production_OneWayTLS_NoForwarderSANsRequired(t *testing.T) {
+	cfg := minimalValidConfig()
+	cfg.ModeRaw = "production"
+	cfg.Authz.IAM.Addr = "iam.kacho.svc:9091"
+	cfg.MTLS.IAMRegister.Enable = true
+	cfg.Authz.ListFilter.Enabled = true
+	cfg.Authn.Type = "tls"
+	cfg.Authn.TLS.KeyFile = "/etc/tls/key.pem"
+	cfg.Authn.TLS.CertFile = "/etc/tls/cert.pem"
+	cfg.Authz.TrustedForwarderSANs = nil
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("production one-way TLS without forwarder-sans: unexpected err: %v", err)
 	}
 }
 
