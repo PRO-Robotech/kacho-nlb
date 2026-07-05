@@ -9,6 +9,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/PRO-Robotech/kacho-nlb/internal/apps/kacho/api/shared"
 	vpcclient "github.com/PRO-Robotech/kacho-nlb/internal/clients/vpc"
 	"github.com/PRO-Robotech/kacho-nlb/internal/domain"
 )
@@ -50,22 +51,10 @@ func zonePeerErr(err error) error {
 	return status.Error(codes.InvalidArgument, "Illegal argument disabledAnnounceZones")
 }
 
-// peerErrToStatus — маппинг ошибок peer-client (project/region) в gRPC-status.
+// peerErrToStatus — тонкий делегатор к единому `shared.PeerErrToStatus`
+// (один источник истины для project/region precheck, см. audit ARCH #7).
 func peerErrToStatus(err error, kind, id string) error {
-	if err == nil {
-		return nil
-	}
-	switch {
-	case errors.Is(err, domain.ErrNotFound):
-		return status.Errorf(codes.InvalidArgument, "%s %s not found", caser(kind), id)
-	case errors.Is(err, domain.ErrInvalidArg):
-		return status.Errorf(codes.InvalidArgument, "%s: %v", kind, err)
-	case errors.Is(err, domain.ErrFailedPrecondition):
-		return status.Errorf(codes.FailedPrecondition, "%s %s: %v", kind, id, err)
-	case errors.Is(err, domain.ErrUnavailable):
-		return status.Errorf(codes.Unavailable, "%s lookup unavailable", kind)
-	}
-	return status.Errorf(codes.Internal, "%s lookup failed", kind)
+	return shared.PeerErrToStatus(err, kind, id)
 }
 
 // subnetPeerErr — sync-precheck subnet_id через vpc.SubnetService.Get.
@@ -88,16 +77,4 @@ func linkedAddressErr(err error) error {
 		return status.Error(codes.Unavailable, "address lookup unavailable")
 	}
 	return status.Error(codes.Internal, "address lookup failed")
-}
-
-// caser — Title-case 1-char для kind ("project" → "Project").
-func caser(s string) string {
-	if s == "" {
-		return s
-	}
-	b := []byte(s)
-	if b[0] >= 'a' && b[0] <= 'z' {
-		b[0] -= 32
-	}
-	return string(b)
 }

@@ -401,3 +401,88 @@ func TestModeString(t *testing.T) {
 		t.Errorf("ModeProduction.String(): got %q", ModeProduction.String())
 	}
 }
+
+// ─── Peer-edge transport fail-closed (audit SEC #2) ──────────────────────────
+//
+// В production каждое СКОНФИГУРИРОВАННОЕ (addr задан) cross-service ребро
+// (vpc / compute / geo / iam-project) обязано иметь transport-security: mTLS
+// (mtls.<edge>.enable=true) ЛИБО one-way TLS (<edge>.tls=true). Иначе nlb дилит
+// peer по plaintext gRPC (IPAM/instance-resolve/region) → on-path
+// read/tamper (CWE-319). productionSecureConfig() не задаёт peer-addr'ов, поэтому
+// базовый secure-config эти проверки не триггерит (backward-compat).
+
+func TestValidate_Production_VPCEdgeInsecure(t *testing.T) {
+	cfg := productionSecureConfig()
+	cfg.ExtAPI.VPC.Addr = "vpc.kacho.svc:9090" // configured, no mTLS, no tls
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "insecure peer transport on vpc") {
+		t.Fatalf("expected insecure-vpc-edge error in production, got %v", err)
+	}
+}
+
+func TestValidate_Production_ComputeEdgeInsecure(t *testing.T) {
+	cfg := productionSecureConfig()
+	cfg.ExtAPI.Compute.Addr = "compute.kacho.svc:9090"
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "insecure peer transport on compute") {
+		t.Fatalf("expected insecure-compute-edge error in production, got %v", err)
+	}
+}
+
+func TestValidate_Production_GeoEdgeInsecure(t *testing.T) {
+	cfg := productionSecureConfig()
+	cfg.ExtAPI.Geo.Addr = "geo.kacho.svc:9090"
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "insecure peer transport on geo") {
+		t.Fatalf("expected insecure-geo-edge error in production, got %v", err)
+	}
+}
+
+func TestValidate_Production_IAMProjectEdgeInsecure(t *testing.T) {
+	cfg := productionSecureConfig()
+	cfg.ExtAPI.IAM.Addr = "iam.kacho.svc:9090" // ProjectService.Get public edge
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "insecure peer transport on iam-project") {
+		t.Fatalf("expected insecure-iam-project-edge error in production, got %v", err)
+	}
+}
+
+// mTLS на ребре снимает ошибку.
+func TestValidate_Production_VPCEdgeMTLS_OK(t *testing.T) {
+	cfg := productionSecureConfig()
+	cfg.ExtAPI.VPC.Addr = "vpc.kacho.svc:9090"
+	cfg.MTLS.VPC.Enable = true
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("production + vpc mTLS edge: unexpected err: %v", err)
+	}
+}
+
+// One-way TLS bool на ребре тоже снимает ошибку (минимальный уровень).
+func TestValidate_Production_ComputeEdgeOneWayTLS_OK(t *testing.T) {
+	cfg := productionSecureConfig()
+	cfg.ExtAPI.Compute.Addr = "compute.kacho.svc:9090"
+	cfg.ExtAPI.Compute.TLS = true
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("production + compute one-way TLS edge: unexpected err: %v", err)
+	}
+}
+
+// Ребро, заданное только через internal-addr, тоже проверяется.
+func TestValidate_Production_GeoEdgeInternalAddrInsecure(t *testing.T) {
+	cfg := productionSecureConfig()
+	cfg.ExtAPI.Geo.InternalAddr = "geo-internal.kacho.svc:9091"
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "insecure peer transport on geo") {
+		t.Fatalf("expected insecure-geo-edge (internal-addr) error, got %v", err)
+	}
+}
+
+// В dev-mode plaintext peer-ребро допустимо (prod-gate не применяется).
+func TestValidate_Dev_InsecurePeerEdges_OK(t *testing.T) {
+	cfg := minimalValidConfig() // mode=dev
+	cfg.ExtAPI.VPC.Addr = "vpc.kacho.svc:9090"
+	cfg.ExtAPI.Compute.Addr = "compute.kacho.svc:9090"
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("dev + insecure peer edges: unexpected err: %v", err)
+	}
+}

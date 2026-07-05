@@ -140,6 +140,21 @@ func (c Config) Validate() error {
 			errs = multierr.Append(errs, fmt.Errorf(
 				"production mode: nlb→iam authz edge must be mTLS — set mtls.iam-register.enable=true (insecure Check edge forbidden)"))
 		}
+		// Остальные cross-service рёбра (vpc / compute / geo / iam-project) обязаны
+		// иметь transport-security когда сконфигурированы: mTLS (mtls.<edge>.enable)
+		// ЛИБО one-way TLS (<edge>.tls). Без этого dialOne падает в insecure gRPC
+		// (buildCreds → insecure.NewCredentials), и on-path attacker читает/подменяет
+		// IPAM-аллокацию (VIP), instance-resolve, region-валидацию — integrity/
+		// defense-in-depth (CWE-319, audit SEC #2). Прежде проверялись только server
+		// + iam-register. Проверяем только СКОНФИГУРИРОВАННЫЕ рёбра (addr задан),
+		// чтобы dev-подобные частичные prod-конфиги без некоторых peer'ов не ломались.
+		for _, e := range c.peerEdges() {
+			if e.addr != "" && !e.secure {
+				errs = multierr.Append(errs, fmt.Errorf(
+					"production mode: insecure peer transport on %s edge — set mtls.%s.enable=true or %s.tls=true (plaintext peer dial forbidden)",
+					e.name, e.mtlsKey, e.tlsKey))
+			}
+		}
 		// Per-object List authorization fail-closed (security.md, defense-in-depth
 		// parity с breakglass-gate). list-filter — единственный authz-слой для
 		// ScopeFiltered List RPC (interceptor их пропускает); отключение или
@@ -194,6 +209,58 @@ func (c Config) Validate() error {
 	}
 
 	return errs
+}
+
+// peerEdge — проекция одного cross-service ребра для transport-fail-closed gate:
+// имя (для сообщения), резолвнутый addr, флаг «защищено» (mTLS ЛИБО one-way TLS),
+// и config-ключи для actionable-текста. Зеркалит peerDialSpecs в composition root
+// (cmd/kacho-loadbalancer/main.go) — там же строятся реальные conn'ы.
+type peerEdge struct {
+	name    string
+	addr    string
+	secure  bool
+	mtlsKey string
+	tlsKey  string
+}
+
+// peerEdges — таблица cross-service рёбер для production transport-gate. addr =
+// firstNonEmpty(Addr, InternalAddr) (single-addr dev-config тоже покрывается).
+// secure = mtls.<edge>.enable || <edge>.tls. iam-register (authz Check edge)
+// проверяется отдельно строгим mTLS-требованием выше; здесь — публичное
+// iam-project (ProjectService.Get) ребро.
+func (c Config) peerEdges() []peerEdge {
+	firstNonEmpty := func(a, b string) string {
+		if strings.TrimSpace(a) != "" {
+			return strings.TrimSpace(a)
+		}
+		return strings.TrimSpace(b)
+	}
+	return []peerEdge{
+		{
+			name:    "vpc",
+			addr:    firstNonEmpty(c.ExtAPI.VPC.Addr, c.ExtAPI.VPC.InternalAddr),
+			secure:  c.MTLS.VPC.Enable || c.ExtAPI.VPC.TLS,
+			mtlsKey: "vpc", tlsKey: "vpc",
+		},
+		{
+			name:    "compute",
+			addr:    firstNonEmpty(c.ExtAPI.Compute.Addr, c.ExtAPI.Compute.InternalAddr),
+			secure:  c.MTLS.Compute.Enable || c.ExtAPI.Compute.TLS,
+			mtlsKey: "compute", tlsKey: "compute",
+		},
+		{
+			name:    "geo",
+			addr:    firstNonEmpty(c.ExtAPI.Geo.Addr, c.ExtAPI.Geo.InternalAddr),
+			secure:  c.MTLS.Geo.Enable || c.ExtAPI.Geo.TLS,
+			mtlsKey: "geo", tlsKey: "geo",
+		},
+		{
+			name:    "iam-project",
+			addr:    firstNonEmpty(c.ExtAPI.IAM.Addr, c.ExtAPI.IAM.InternalAddr),
+			secure:  c.MTLS.IAMProject.Enable || c.ExtAPI.IAM.TLS,
+			mtlsKey: "iam-project", tlsKey: "iam",
+		},
+	}
 }
 
 // validateEndpoint — `tcp://host:port` парсится как url, схема обязательна,

@@ -10,12 +10,52 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	coredb "github.com/PRO-Robotech/kacho-corelib/db"
 
 	"github.com/PRO-Robotech/kacho-nlb/internal/domain"
 	"github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho"
 )
+
+// waitForLockWaiter deterministically blocks until at least one backend is
+// waiting on a lock (pg_stat_activity.wait_event_type='Lock'), proving the
+// concurrent goroutine has actually reached and is blocked on the contended row
+// lock. Replaces a fixed `time.Sleep(600ms)` barrier that could pass vacuously
+// under CI/host load if the goroutine had not yet issued its locking query
+// before the main TX committed and released the lock — the intended race window
+// then never opened and a genuine lost-update/cross-project-attach regression
+// slipped through green (audit TEST #4, CWE-367). `observer` must be a pool
+// distinct from the transactions under test. Fails the test if no waiter appears
+// within deadline.
+func waitForLockWaiter(t *testing.T, ctx context.Context, observer *pgxpool.Pool, deadline time.Duration) {
+	t.Helper()
+	stop := time.Now().Add(deadline)
+	for time.Now().Before(stop) {
+		var n int
+		err := observer.QueryRow(ctx,
+			`SELECT count(*) FROM pg_stat_activity
+			  WHERE wait_event_type = 'Lock' AND state = 'active'`).Scan(&n)
+		require.NoError(t, err)
+		if n >= 1 {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("timeout: no backend became blocked on a lock within %v — the race window never opened", deadline)
+}
+
+// newObserverPool opens a standalone pool (separate from the tx-under-test pool)
+// for pg_stat_activity introspection in the deterministic lock-wait helper.
+func newObserverPool(t *testing.T, dsn string) *pgxpool.Pool {
+	t.Helper()
+	p, err := coredb.NewPool(context.Background(), dsn)
+	require.NoError(t, err)
+	t.Cleanup(p.Close)
+	return p
+}
 
 // =============================================================================
 // Finding #1 (r3): TargetGroup.MoveProject TOCTOU — cross-project attach.
@@ -108,8 +148,10 @@ func TestTGMoveProject_NotFound(t *testing.T) {
 // then re-evaluate the project JOIN against the committed post-move project and
 // refuse — never producing a cross-project attach.
 func TestTGMoveAttach_MoveFirst_NoCrossProject(t *testing.T) {
-	repo, cleanup := newRepo(t, setupTestDB(t))
+	dsn := setupTestDB(t)
+	repo, cleanup := newRepo(t, dsn)
 	defer cleanup()
+	observer := newObserverPool(t, dsn)
 	ctx := context.Background()
 
 	const srcPrj = "prj0TGMV1234567890lll"
@@ -144,8 +186,10 @@ func TestTGMoveAttach_MoveFirst_NoCrossProject(t *testing.T) {
 		attachCh <- e
 	}()
 
-	// Give the attach goroutine time to reach the (blocking) locking read.
-	time.Sleep(600 * time.Millisecond)
+	// Deterministically wait until the attach goroutine has actually reached and
+	// blocked on the tg row lock wMove holds — proving the two TX overlap before
+	// we release the lock (replaces a fixed 600ms sleep, audit TEST #4).
+	waitForLockWaiter(t, ctx, observer, 10*time.Second)
 	if moveErr == nil {
 		require.NoError(t, wMove.Commit())
 	} else {
@@ -235,8 +279,10 @@ func TestTGMoveAttach_Race_Concurrent(t *testing.T) {
 // explicit ACTIVE→STOPPING transition. The explicit STOPPING must survive: the
 // recompute UPDATE is status-guarded and must not overwrite it.
 func TestLBStatusRecompute_PreservesConcurrentStop(t *testing.T) {
-	repo, cleanup := newRepo(t, setupTestDB(t))
+	dsn := setupTestDB(t)
+	repo, cleanup := newRepo(t, dsn)
 	defer cleanup()
+	observer := newObserverPool(t, dsn)
 	ctx := context.Background()
 
 	const prj = "prj0RECOMP234567890ll"
@@ -286,7 +332,10 @@ func TestLBStatusRecompute_PreservesConcurrentStop(t *testing.T) {
 		detachCh <- e
 	}()
 
-	time.Sleep(600 * time.Millisecond)
+	// Deterministically wait until the detach goroutine's recompute UPDATE is
+	// actually blocked on the lb row lock wStat holds — proving overlap before we
+	// commit STOPPING (replaces a fixed 600ms sleep, audit TEST #4).
+	waitForLockWaiter(t, ctx, observer, 10*time.Second)
 	require.NoError(t, wStat.Commit())
 	require.NoError(t, <-detachCh)
 

@@ -9,7 +9,6 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/anypb"
-	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/PRO-Robotech/kacho-corelib/operations"
 	lbv1 "github.com/PRO-Robotech/kacho-proto/gen/go/kacho/cloud/loadbalancer/v1"
@@ -33,31 +32,10 @@ func listenerRecordToPb(rec *kachorepo.ListenerRecord) (*lbv1.Listener, error) {
 	return dst, nil
 }
 
-// operationToProto — domain `operations.Operation` → proto Operation. Mirrors
-// `operation` package's helper; duplicated here to avoid cross-package leak
-// (handler-only mapping; kacho-vpc-style — see networkinterface/handler.go).
+// operationToProto — тонкий делегатор к единому `shared.OperationToProto`
+// (один источник истины для всех use-case пакетов, см. audit LEAN #10).
 func operationToProto(op *operations.Operation) *operationpb.Operation {
-	if op == nil {
-		return nil
-	}
-	p := &operationpb.Operation{
-		Id:                   op.ID,
-		Description:          op.Description,
-		CreatedAt:            timestamppb.New(op.CreatedAt),
-		CreatedBy:            op.CreatedBy,
-		ModifiedAt:           timestamppb.New(op.ModifiedAt),
-		Done:                 op.Done,
-		Metadata:             op.Metadata,
-		PrincipalType:        op.Principal.Type,
-		PrincipalId:          op.Principal.ID,
-		PrincipalDisplayName: op.Principal.DisplayName,
-	}
-	if op.Error != nil {
-		p.Result = &operationpb.Operation_Error{Error: op.Error}
-	} else if op.Response != nil {
-		p.Result = &operationpb.Operation_Response{Response: op.Response}
-	}
-	return p
+	return shared.OperationToProto(op)
 }
 
 // mapDomainErr — translate domain-sentinel error → gRPC status. Делегирует
