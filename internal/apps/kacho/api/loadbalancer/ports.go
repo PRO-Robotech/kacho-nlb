@@ -68,11 +68,3 @@ type SubnetClient = vpcclient.SubnetClient
 // резолвится под tenant-identity, проверяются kind/family/ownership/placement.
 // Анти-oracle: несоответствие/no-access → generic InvalidArgument.
 type AddressClient = vpcclient.AddressClient
-
-// Logger — узкий port логгера; concrete *slog.Logger удовлетворяет его автоматически.
-type Logger interface {
-	Info(msg string, args ...any)
-	Warn(msg string, args ...any)
-	Error(msg string, args ...any)
-	Debug(msg string, args ...any)
-}

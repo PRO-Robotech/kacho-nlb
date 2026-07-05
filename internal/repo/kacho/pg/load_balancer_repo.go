@@ -401,31 +401,58 @@ func (w *loadBalancerWriter) SetStatusCAS(ctx context.Context, id string, expect
 	return rec, nil
 }
 
-// MoveProject — UPDATE load_balancers SET project_id=$1 + каскад на listeners
-// (denorm sync). Возвращает обновлённый LB-record.
+// MoveProject — atomic project-rewrite LB + каскад на listeners (denorm sync).
+//
+// Инвариант (workspace CLAUDE.md запрет #10, within-service refs на DB-уровне):
+// LB с приаттаченными target-group'ами двигать НЕЛЬЗЯ — иначе attached_target_groups
+// свяжет LB в проекте B с TG в проекте A (cross-project attach, запрещён моделью).
+// Sync-precheck HasAttachedTargetGroups в use-case'е — только UX/fast-fail; здесь
+// гвоздём прибиваем инвариант атомарным `UPDATE ... WHERE NOT EXISTS(attach)`,
+// который сериализуется с конкурентным Attach INSERT'ом (см. AttachedTargetGroups.
+// Attach: тот re-check'ает project внутри своей writer-tx через conditional INSERT).
+// 0 rows при существующем LB → приаттачен TG между sync-check и apply → FailedPrecondition.
 func (w *loadBalancerWriter) MoveProject(ctx context.Context, id, newProjectID string) (*kacho.LoadBalancerRecord, error) {
-	// 1. Каскад на listeners (denorm).
+	// 1. Сам LB — atomic CAS-подобный guard: двигаем только если нет attach'ей.
+	q := fmt.Sprintf(`
+        UPDATE kacho_nlb.load_balancers
+           SET project_id = $2, updated_at = now()
+         WHERE id = $1
+           AND NOT EXISTS (
+               SELECT 1 FROM kacho_nlb.attached_target_groups
+                WHERE load_balancer_id = $1
+           )
+        RETURNING %s`, loadBalancerCols)
+	row := w.tx.QueryRow(ctx, q, id, newProjectID)
+	rec, err := scanLB(row)
+	if err != nil {
+		if pgxIsNoRows(err) {
+			// Различаем «LB нет» (NotFound) и «есть attach'и» (FailedPrecondition).
+			var exists bool
+			if e := w.tx.QueryRow(ctx,
+				`SELECT EXISTS(SELECT 1 FROM kacho_nlb.load_balancers WHERE id = $1)`, id,
+			).Scan(&exists); e != nil {
+				return nil, mapPgErr(e, "NetworkLoadBalancer", id)
+			}
+			if exists {
+				return nil, fmt.Errorf("%w: NetworkLoadBalancer %s has attached target group(s); detach before Move",
+					kacho.ErrFailedPrecondition, id)
+			}
+			return nil, fmt.Errorf("%w: NetworkLoadBalancer %s not found", kacho.ErrNotFound, id)
+		}
+		return nil, mapPgErr(err, "NetworkLoadBalancer", id)
+	}
+	// 2. Каскад на listeners (denorm) — только после успешного move LB.
 	if _, err := w.tx.Exec(ctx,
 		`UPDATE kacho_nlb.listeners SET project_id = $2, updated_at = now() WHERE load_balancer_id = $1`,
 		id, newProjectID,
 	); err != nil {
 		return nil, mapPgErr(err, "Listener", "")
 	}
-	// 2. Сам LB.
-	q := fmt.Sprintf(`
-        UPDATE kacho_nlb.load_balancers
-           SET project_id = $2, updated_at = now()
-         WHERE id = $1
-        RETURNING %s`, loadBalancerCols)
-	row := w.tx.QueryRow(ctx, q, id, newProjectID)
-	rec, err := scanLB(row)
-	if err != nil {
-		return nil, mapPgErr(err, "NetworkLoadBalancer", id)
-	}
 	return rec, nil
 }
 
-// Delete — DELETE WHERE id. FK violation → ErrFailedPrecondition.
+// Delete — DELETE WHERE id (безусловный). FK violation → ErrFailedPrecondition.
+// row absent → ErrNotFound. Используется для compensation-rollback (Create).
 func (w *loadBalancerWriter) Delete(ctx context.Context, id string) error {
 	tag, err := w.tx.Exec(ctx, `DELETE FROM kacho_nlb.load_balancers WHERE id = $1`, id)
 	if err != nil {
@@ -433,6 +460,34 @@ func (w *loadBalancerWriter) Delete(ctx context.Context, id string) error {
 	}
 	if tag.RowsAffected() == 0 {
 		return fmt.Errorf("%w: NetworkLoadBalancer %s not found", kacho.ErrNotFound, id)
+	}
+	return nil
+}
+
+// DeleteIfUnprotected — atomic guarded delete: удаляет строку только если
+// deletion_protection=false. Инвариант прибит на DB-уровне (ban #10) —
+// конкурентный Update(protection=true) между sync-precheck и apply пресекается.
+// 0 rows: различаем «LB нет» (NotFound) vs «защищён» (FailedPrecondition).
+func (w *loadBalancerWriter) DeleteIfUnprotected(ctx context.Context, id string) error {
+	tag, err := w.tx.Exec(ctx,
+		`DELETE FROM kacho_nlb.load_balancers WHERE id = $1 AND deletion_protection = false`, id)
+	if err != nil {
+		return mapPgErr(err, "NetworkLoadBalancer", id)
+	}
+	if tag.RowsAffected() == 0 {
+		var protected bool
+		e := w.tx.QueryRow(ctx,
+			`SELECT deletion_protection FROM kacho_nlb.load_balancers WHERE id = $1`, id,
+		).Scan(&protected)
+		if e != nil {
+			if pgxIsNoRows(e) {
+				return fmt.Errorf("%w: NetworkLoadBalancer %s not found", kacho.ErrNotFound, id)
+			}
+			return mapPgErr(e, "NetworkLoadBalancer", id)
+		}
+		// Row exists → guard заблокировал: защита включена.
+		return fmt.Errorf("%w: NetworkLoadBalancer %s has deletion protection enabled",
+			kacho.ErrFailedPrecondition, id)
 	}
 	return nil
 }

@@ -209,8 +209,11 @@ func (r *targetGroupReader) ListByProject(ctx context.Context, projectID string,
 }
 
 func (r *targetGroupReader) ListTargets(ctx context.Context, tgID string) ([]*kacho.TargetRecord, error) {
-	q := fmt.Sprintf(`SELECT %s FROM kacho_nlb.targets WHERE target_group_id = $1 ORDER BY created_at ASC, id ASC`,
-		targetCols)
+	// LIMIT MaxTargetsPerGroup — safety-net: cap на группу гарантирует ≤100 строк,
+	// но LIMIT защищает Get() от материализации распухшей (legacy/невалидной) группы
+	// в память безусловно (audit CWE-770: unbounded ListTargets).
+	q := fmt.Sprintf(`SELECT %s FROM kacho_nlb.targets WHERE target_group_id = $1 ORDER BY created_at ASC, id ASC LIMIT %d`,
+		targetCols, domain.MaxTargetsPerGroup)
 	rows, err := r.tx.Query(ctx, q, tgID)
 	if err != nil {
 		return nil, mapPgErr(err, "Target", "")
@@ -386,6 +389,35 @@ func (w *targetGroupWriter) MoveProject(ctx context.Context, id, newProjectID st
 // каждый INSERT отдельно (≤MaxTargetsPerGroup=100 за вызов, приемлемая
 // per-target latency для нечастого RPC).
 func (w *targetGroupWriter) AddTargets(ctx context.Context, tgID string, targets []domain.Target) (int, error) {
+	if len(targets) == 0 {
+		return 0, nil
+	}
+	// Cumulative per-group cap (workspace CLAUDE.md запрет #10, «raid protection»):
+	// per-call limit в use-case'е не мешает раздуть группу серией AddTargets. Здесь
+	// прибиваем инвариант на DB-уровне. FOR UPDATE на parent target_groups строке
+	// сериализует конкурентные AddTargets одной группы (иначе два воркера оба
+	// прочитают count<max и оба вставят — race), после чего count стабилен в TX.
+	var locked string
+	if err := w.tx.QueryRow(ctx,
+		`SELECT id FROM kacho_nlb.target_groups WHERE id = $1 FOR UPDATE`, tgID,
+	).Scan(&locked); err != nil {
+		if pgxIsNoRows(err) {
+			return 0, fmt.Errorf("%w: TargetGroup %s not found", kacho.ErrNotFound, tgID)
+		}
+		return 0, mapPgErr(err, "TargetGroup", tgID)
+	}
+	var current int
+	if err := w.tx.QueryRow(ctx,
+		`SELECT count(*) FROM kacho_nlb.targets WHERE target_group_id = $1`, tgID,
+	).Scan(&current); err != nil {
+		return 0, mapPgErr(err, "Target", "")
+	}
+	if current+len(targets) > domain.MaxTargetsPerGroup {
+		return 0, fmt.Errorf(
+			"%w: target group would exceed the maximum of %d targets (current %d, adding %d)",
+			kacho.ErrFailedPrecondition, domain.MaxTargetsPerGroup, current, len(targets))
+	}
+
 	inserted := 0
 	for i := range targets {
 		t := targets[i]

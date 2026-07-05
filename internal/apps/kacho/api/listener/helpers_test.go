@@ -52,13 +52,10 @@ func TestMapDomainErr_AllSentinels(t *testing.T) {
 	}
 }
 
-// TestStripSentinel — фиксированный текст after sentinel prefix.
-func TestStripSentinel(t *testing.T) {
-	t.Parallel()
-	require.Equal(t, "Listener xyz not found", stripSentinel("not found: Listener xyz not found", "not found"))
-	require.Equal(t, "raw text", stripSentinel("raw text", "not found"))
-	require.Equal(t, "not found", stripSentinel("not found", "not found"))
-}
+// StripSentinel behaviour is now unit-tested centrally in
+// internal/apps/kacho/api/shared/errmap_test.go (single source of truth after
+// the mapper de-duplication, audit ARCH-medium). mapDomainErr coverage above
+// still verifies listener делегирует в shared корректно.
 
 // TestOperationToProto_FillsPrincipal — principal mapping correctness.
 func TestOperationToProto_FillsPrincipal(t *testing.T) {

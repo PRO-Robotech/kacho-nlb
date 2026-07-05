@@ -6,6 +6,7 @@ package authzfilter
 import (
 	"context"
 	"errors"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -358,6 +359,10 @@ func TestFGAFilter_TimeoutEnforced(t *testing.T) {
 }
 
 // cache TTL expiry → second call re-hits iam.
+//
+// Детерминированно через инъектированные часы (f.now) — НЕ wall-clock/time.Sleep.
+// Раньше тест спал 40ms при TTL=25ms и был flaky под -race/GC/CPU-throttle
+// (margin всего 15ms); теперь время двигаем вручную, флейка исключена.
 func TestFGAFilter_CacheTTLExpiry(t *testing.T) {
 	mock := &mockAuthClient{
 		responses: []*iamv1.ListObjectsResponse{
@@ -369,6 +374,21 @@ func TestFGAFilter_CacheTTLExpiry(t *testing.T) {
 	cfg.CacheTTL = 25 * time.Millisecond
 	f := NewFGAFilter(mock, cfg)
 
+	// Фиксированные часы под нашим контролем.
+	base := time.Date(2026, 7, 5, 12, 0, 0, 0, time.UTC)
+	var mu sync.Mutex
+	cur := base
+	f.now = func() time.Time {
+		mu.Lock()
+		defer mu.Unlock()
+		return cur
+	}
+	advance := func(d time.Duration) {
+		mu.Lock()
+		defer mu.Unlock()
+		cur = cur.Add(d)
+	}
+
 	d1, err := f.ListAllowedIDs(context.Background(), "user:usr_alice", ResourceTypeLoadBalancer, ActionLoadBalancerList)
 	if err != nil {
 		t.Fatal(err)
@@ -377,8 +397,21 @@ func TestFGAFilter_CacheTTLExpiry(t *testing.T) {
 		t.Fatalf("first call: want 1 id, got %v", d1.IDs())
 	}
 
-	time.Sleep(40 * time.Millisecond)
+	// Внутри TTL — попадание в кеш, iam НЕ дёргается второй раз.
+	advance(10 * time.Millisecond)
+	dCached, err := f.ListAllowedIDs(context.Background(), "user:usr_alice", ResourceTypeLoadBalancer, ActionLoadBalancerList)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !dCached.FromCache || len(dCached.IDs()) != 1 {
+		t.Fatalf("within TTL: want cached 1 id, got %v (fromCache=%v)", dCached.IDs(), dCached.FromCache)
+	}
+	if mock.calls.Load() != 1 {
+		t.Fatalf("within TTL: expected 1 iam call, got %d", mock.calls.Load())
+	}
 
+	// Перешагнули TTL (25ms) — запись протухла, iam зовётся заново.
+	advance(30 * time.Millisecond)
 	d2, err := f.ListAllowedIDs(context.Background(), "user:usr_alice", ResourceTypeLoadBalancer, ActionLoadBalancerList)
 	if err != nil {
 		t.Fatal(err)

@@ -274,6 +274,9 @@ func (w *fakeLBWriter) MoveProject(context.Context, string, string) (*kachorepo.
 func (w *fakeLBWriter) Delete(context.Context, string) error {
 	return errors.New("fakeLBWriter.Delete not implemented")
 }
+func (w *fakeLBWriter) DeleteIfUnprotected(context.Context, string) error {
+	return errors.New("fakeLBWriter.DeleteIfUnprotected not implemented")
+}
 
 // ---- Listener reader/writer ----
 

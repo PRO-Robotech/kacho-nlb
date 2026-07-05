@@ -599,6 +599,9 @@ func (fakeLBStub) MoveProject(context.Context, string, string) (*kachorepo.LoadB
 func (fakeLBStub) Delete(context.Context, string) error {
 	return errors.New("not used")
 }
+func (fakeLBStub) DeleteIfUnprotected(context.Context, string) error {
+	return errors.New("not used")
+}
 
 type fakeListenerStub struct{}
 

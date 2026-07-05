@@ -118,6 +118,11 @@ type FGAFilter struct {
 	cli AuthorizeClient
 	cfg Config
 
+	// now — источник времени для TTL-логики кеша. Инъектируется (по умолчанию
+	// time.Now), чтобы TTL-тесты были детерминированными и не зависели от
+	// wall-clock/time.Sleep (flaky под -race/GC/CPU-throttle).
+	now func() time.Time
+
 	mu    sync.Mutex
 	cache map[string]cacheEntry
 }
@@ -141,8 +146,18 @@ func NewFGAFilter(cli AuthorizeClient, cfg Config) *FGAFilter {
 	return &FGAFilter{
 		cli:   cli,
 		cfg:   cfg,
+		now:   time.Now,
 		cache: make(map[string]cacheEntry, cfg.CacheMaxEntries),
 	}
+}
+
+// nowFn — safe accessor для инъектируемых часов (fallback на time.Now, если
+// FGAFilter сконструирован не через NewFGAFilter).
+func (f *FGAFilter) nowFn() time.Time {
+	if f.now != nil {
+		return f.now()
+	}
+	return time.Now()
 }
 
 // ListAllowedIDs — основной entry-point.
@@ -222,7 +237,7 @@ func (f *FGAFilter) getCache(key string) (Decision, bool) {
 	if !ok {
 		return Decision{}, false
 	}
-	if time.Now().After(e.expires) {
+	if f.nowFn().After(e.expires) {
 		delete(f.cache, key)
 		return Decision{}, false
 	}
@@ -244,7 +259,7 @@ func (f *FGAFilter) putCache(key string, d Decision) {
 			break
 		}
 	}
-	f.cache[key] = cacheEntry{decision: d, expires: time.Now().Add(f.cfg.CacheTTL)}
+	f.cache[key] = cacheEntry{decision: d, expires: f.nowFn().Add(f.cfg.CacheTTL)}
 }
 
 // Size — текущий размер cache (observability/tests).
