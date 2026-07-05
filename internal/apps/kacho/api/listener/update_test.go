@@ -16,7 +16,7 @@ import (
 	"google.golang.org/protobuf/types/known/fieldmaskpb"
 
 	"github.com/PRO-Robotech/kacho-corelib/ids"
-	lbv1 "github.com/PRO-Robotech/kacho-nlb/proto/gen/go/kacho/cloud/loadbalancer/v1"
+	lbv1 "github.com/PRO-Robotech/kacho-proto/gen/go/kacho/cloud/loadbalancer/v1"
 
 	"github.com/PRO-Robotech/kacho-nlb/internal/domain"
 	kachorepo "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho"
@@ -62,11 +62,12 @@ func TestUpdateListener_GWT_LST_019_ImmutableLoadBalancerID(t *testing.T) {
 }
 
 // TestUpdateListener_GWT_LST_020_ImmutableFields — all immutable mask paths
-// individually rejected.
+// individually rejected. VIP консолидирован на LoadBalancer: address_id/ip_version/
+// subnet_id/region_id сняты с листенера (proto reserved) — в immutable-списке их
+// больше нет (адресовать в mask нельзя, путь → "not recognised").
 func TestUpdateListener_GWT_LST_020_ImmutableFields(t *testing.T) {
 	t.Parallel()
-	immutable := []string{"protocol", "port", "ip_version", "address_id", "address_spec",
-		"subnet_id", "region_id", "project_id", "target_port"}
+	immutable := []string{"protocol", "port", "project_id", "target_port"}
 	for _, field := range immutable {
 		t.Run(field, func(t *testing.T) {
 			t.Parallel()

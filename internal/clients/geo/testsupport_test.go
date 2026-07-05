@@ -12,7 +12,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
-	geopb "github.com/PRO-Robotech/kacho-geo/proto/gen/go/kacho/cloud/geo/v1"
+	geopb "github.com/PRO-Robotech/kacho-proto/gen/go/kacho/cloud/geo/v1"
 )
 
 // startFakeGeo поднимает gRPC server in-memory (TCP loopback :0).

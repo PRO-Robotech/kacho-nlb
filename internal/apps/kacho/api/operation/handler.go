@@ -30,7 +30,7 @@ import (
 	"context"
 
 	"github.com/PRO-Robotech/kacho-corelib/operations"
-	operationpb "github.com/PRO-Robotech/kacho-corelib/proto/gen/go/kacho/cloud/operation"
+	operationpb "github.com/PRO-Robotech/kacho-proto/gen/go/kacho/cloud/operation"
 )
 
 // Handler реализует operationpb.OperationServiceServer.

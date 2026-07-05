@@ -15,7 +15,7 @@ import (
 
 	"github.com/PRO-Robotech/kacho-corelib/ids"
 	"github.com/PRO-Robotech/kacho-corelib/operations"
-	lbv1 "github.com/PRO-Robotech/kacho-nlb/proto/gen/go/kacho/cloud/loadbalancer/v1"
+	lbv1 "github.com/PRO-Robotech/kacho-proto/gen/go/kacho/cloud/loadbalancer/v1"
 
 	"github.com/PRO-Robotech/kacho-nlb/internal/domain"
 	kachorepo "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho"
@@ -45,17 +45,18 @@ func lbUnregisterIntent(id, projectID string) domain.FGARegisterIntent {
 // Worker: Writer-TX → Delete (FK 23503 backstop → ErrFailedPrecondition) +
 // outbox-emit DELETED → Commit. Response = google.protobuf.Empty.
 type DeleteLoadBalancerUseCase struct {
-	repo    Repo
-	opsRepo operations.Repo
-	logger  *slog.Logger
+	repo          Repo
+	opsRepo       operations.Repo
+	addressClient InternalAddressClient
+	logger        *slog.Logger
 }
 
 // NewDeleteLoadBalancerUseCase конструктор.
-func NewDeleteLoadBalancerUseCase(repo Repo, opsRepo operations.Repo, logger *slog.Logger) *DeleteLoadBalancerUseCase {
+func NewDeleteLoadBalancerUseCase(repo Repo, opsRepo operations.Repo, ac InternalAddressClient, logger *slog.Logger) *DeleteLoadBalancerUseCase {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &DeleteLoadBalancerUseCase{repo: repo, opsRepo: opsRepo, logger: logger}
+	return &DeleteLoadBalancerUseCase{repo: repo, opsRepo: opsRepo, addressClient: ac, logger: logger}
 }
 
 // Execute — sync prechecks + ops insert + spawn worker.
@@ -82,8 +83,8 @@ func (u *DeleteLoadBalancerUseCase) Execute(
 		return nil, mapDomainErr(err)
 	}
 	if cur.DeletionProtection {
-		return nil, status.Errorf(codes.FailedPrecondition,
-			"NetworkLoadBalancer %s has deletion_protection enabled", id)
+		return nil, status.Error(codes.FailedPrecondition,
+			"load balancer has deletion protection enabled")
 	}
 	hasListeners, err := rd.LoadBalancers().HasListeners(ctx, id)
 	if err != nil {
@@ -121,18 +122,44 @@ func (u *DeleteLoadBalancerUseCase) Execute(
 		return nil, mapDomainErr(err)
 	}
 
+	snap := vipBinding{
+		addressIDV4: string(cur.AddressIDV4),
+		addressIDV6: string(cur.AddressIDV6),
+		originV4:    cur.VipOriginV4,
+		originV6:    cur.VipOriginV6,
+	}
 	projectID := string(cur.ProjectID)
 	operations.Run(ctx, u.opsRepo, op.ID, func(workerCtx context.Context) (*anypb.Any, error) {
-		return u.doDelete(workerCtx, id, projectID)
+		// Worker-ctx детачнут — восстанавливаем principal, чтобы release-вызовы в vpc
+		// (ClearReference/FreeIP) несли identity тенанта (иначе authz_no_principal).
+		return u.doDelete(operations.WithPrincipal(workerCtx, principal), id, projectID, snap)
 	})
 
 	return &op, nil
 }
 
-// doDelete — worker: open Writer → Delete + outbox DELETED → Commit. FK 23503
-// backstop → ErrFailedPrecondition (TOCTOU: листенер появился между sync-check
-// и worker-delete).
-func (u *DeleteLoadBalancerUseCase) doDelete(ctx context.Context, id, projectID string) (*anypb.Any, error) {
+// vipBinding — per-family VIP-привязка LB (release-вход для Delete).
+type vipBinding struct {
+	addressIDV4 string
+	addressIDV6 string
+	originV4    domain.VipOrigin
+	originV6    domain.VipOrigin
+}
+
+// doDelete — worker: per-family release VIP (auto → FreeIP, byo → ClearReference;
+// идемпотентно по address_id) → Writer-TX: Delete + outbox DELETED + fga-unregister
+// → Commit. release-сбой (vpc Unavailable) → fail-closed error, строка остаётся
+// (повторный Delete идемпотентен — release по address_id трактует NotFound как успех).
+// FK 23503 backstop → ErrFailedPrecondition (листенер появился между sync-check и delete).
+func (u *DeleteLoadBalancerUseCase) doDelete(ctx context.Context, id, projectID string, vip vipBinding) (*anypb.Any, error) {
+	// Per-family release VIP до удаления строки (раздельно v4/v6).
+	if err := u.releaseVIP(ctx, id, vip.addressIDV4, vip.originV4); err != nil {
+		return nil, mapDomainErr(err)
+	}
+	if err := u.releaseVIP(ctx, id, vip.addressIDV6, vip.originV6); err != nil {
+		return nil, mapDomainErr(err)
+	}
+
 	w, err := u.repo.Writer(ctx)
 	if err != nil {
 		return nil, mapDomainErr(err)
@@ -163,4 +190,28 @@ func (u *DeleteLoadBalancerUseCase) doDelete(ctx context.Context, id, projectID 
 		return nil, mapDomainErr(err)
 	}
 	return out, nil
+}
+
+// releaseVIP — освобождает VIP одного семейства по address_id (§3.9): owned (auto)
+// → two-step owner-scoped ClearReference → FreeIP (иначе FreeIP==AddressService.
+// Delete упрётся в собственный Delete-guard на owned-референсе); linked →
+// ClearReference без Delete (tenant-адрес уцелевает). Пустой addressID → no-op.
+// Идемпотентно (NotFound → успех; окно cleared-but-not-deleted добивает free_ip_runner).
+func (u *DeleteLoadBalancerUseCase) releaseVIP(ctx context.Context, lbID, addressID string, origin domain.VipOrigin) error {
+	if addressID == "" {
+		return nil
+	}
+	if u.addressClient == nil {
+		return status.Error(codes.Unavailable, "vpc internal address client not configured")
+	}
+	owner := lbAddressOwner(lbID, "")
+	if origin == domain.VipOriginAuto {
+		// owned: снять собственный owned-референс, затем удалить адрес.
+		if err := u.addressClient.ClearReference(ctx, addressID, owner); err != nil {
+			return err
+		}
+		return u.addressClient.FreeIP(ctx, addressID, owner)
+	}
+	// linked (tenant-owned): снять только референс.
+	return u.addressClient.ClearReference(ctx, addressID, owner)
 }

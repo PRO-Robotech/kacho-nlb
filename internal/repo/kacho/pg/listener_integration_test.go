@@ -6,7 +6,6 @@ package pg_test
 import (
 	"context"
 	"errors"
-	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -70,64 +69,6 @@ func TestListener_UniquePortProto(t *testing.T) {
 
 // TestListener_RegionVipUnique_RaceTest — partial UNIQUE
 // (region_id, allocated_address, port, protocol) WHERE status<>'DELETING'.
-// Race-сценарий: 2 goroutines пытаются insert'нуть один и тот же VIP/port.
-// Ровно одна успешна.
-func TestListener_RegionVipUnique_RaceTest(t *testing.T) {
-	repo, cleanup := newRepo(t, setupTestDB(t))
-	defer cleanup()
-	ctx := context.Background()
-
-	lb1 := newLB("prj01LSTR1234567890ll", "race-lb-1")
-	lb2 := newLB("prj01LSTR1234567890ll", "race-lb-2")
-	commitWriter(t, repo, func(w kacho.RepositoryWriter) {
-		_, err := w.LoadBalancers().Insert(ctx, lb1)
-		require.NoError(t, err)
-		_, err = w.LoadBalancers().Insert(ctx, lb2)
-		require.NoError(t, err)
-	})
-
-	var wg sync.WaitGroup
-	var successes, conflicts int
-	var mu sync.Mutex
-	insert := func(parent domain.ResourceID, name string) {
-		defer wg.Done()
-		l := newListener(parent, string(lb1.ProjectID), name, 80)
-		l.AllocatedAddress = "203.0.113.42" // SAME VIP
-		w, err := repo.Writer(ctx)
-		if err != nil {
-			return
-		}
-		defer w.Abort()
-		if _, err := w.Listeners().Insert(ctx, l); err != nil {
-			mu.Lock()
-			if errors.Is(err, kacho.ErrAlreadyExists) {
-				conflicts++
-			}
-			mu.Unlock()
-			return
-		}
-		if err := w.Commit(); err != nil {
-			mu.Lock()
-			if errors.Is(err, kacho.ErrAlreadyExists) {
-				conflicts++
-			}
-			mu.Unlock()
-			return
-		}
-		mu.Lock()
-		successes++
-		mu.Unlock()
-	}
-
-	wg.Add(2)
-	go insert(lb1.ID, "race-lst-1")
-	go insert(lb2.ID, "race-lst-2")
-	wg.Wait()
-
-	assert.Equal(t, 1, successes, "exactly one VIP-allocation succeeds")
-	assert.Equal(t, 1, conflicts, "the other gets ErrAlreadyExists")
-}
-
 // TestListener_PortOutOfRange — CHECK port BETWEEN 1 AND 65535.
 func TestListener_PortOutOfRange(t *testing.T) {
 	repo, cleanup := newRepo(t, setupTestDB(t))

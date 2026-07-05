@@ -13,13 +13,61 @@ CASES = []
 
 _LST_BASE = "/nlb/v1/listeners"
 _LB_BASE = "/nlb/v1/networkLoadBalancers"
+_VPC_SUBNETS = "/vpc/v1/subnets"
+
+# NOTE (sub-phase 8.1 VIP model): the parent LoadBalancer now carries a per-family
+# VIP *source* on Create (v4Source public/subnet/address). This helper produces a
+# valid new-model parent LB (EXTERNAL → auto public VIP; INTERNAL → auto VIP from an
+# inline zonal subnet) so the Listener cases have a lawful LB to attach to. The
+# Listener-level fields exercised below (subnetId / addressId / ipVersion /
+# allocatedAddress) still follow the sub-phase-4.0 listener contract — the 8.1
+# acceptance covers only the LoadBalancer resource, so per-listener VIP semantics
+# are out of scope here and tracked for a separate listener acceptance/rewrite.
 
 
 def _setup_lb(name_suffix: str, lb_type: str = "EXTERNAL"):
+    if lb_type == "INTERNAL":
+        return [
+            Step(name="setup-subnet", method="POST", path=_VPC_SUBNETS,
+                 pre_script=[
+                     "var __seq = parseInt(pm.environment.get('_cidrSeq') || '0', 10) + 1;",
+                     "pm.environment.set('_cidrSeq', String(__seq));",
+                     "var __run = (pm.environment.get('runId') || 'x0');",
+                     "var __h = 0; for (var i = 0; i < __run.length; i++) { __h = (__h * 31 + __run.charCodeAt(i)) & 0xffff; }",
+                     "pm.environment.set('_subnetCidr', '10.' + (200 + (__h % 40)) + '.' + (__seq % 250) + '.0/24');",
+                 ],
+                 body={"projectId": "{{_suiteProjectId}}", "networkId": "{{existingNetworkId}}",
+                       "name": f"lst-sub-{name_suffix}-{{{{runId}}}}", "v4CidrBlocks": ["{{_subnetCidr}}"],
+                       "placementType": "ZONAL", "zoneId": "{{existingZoneId}}"},
+                 test_script=[
+                     "pm.environment.unset('lstSubnetId');",
+                     "if (pm.response.code === 200) {",
+                     "  const j = pm.response.json();",
+                     "  if (j.id) pm.environment.set('opId', j.id);",
+                     "  if (j.metadata && j.metadata.subnetId) pm.environment.set('lstSubnetId', j.metadata.subnetId);",
+                     "} else { pm.environment.unset('opId'); }",
+                 ]),
+            poll_operation_until_done(),
+            Step(name="setup-lb", method="POST", path=_LB_BASE,
+                 body={"projectId": "{{_suiteProjectId}}", "regionId": "{{_suiteRegionId}}",
+                       "name": f"lst-{name_suffix}-{{{{runId}}}}", "type": "INTERNAL",
+                       "placementType": "ZONAL", "v4Source": {"subnetId": "{{lstSubnetId}}"}},
+                 test_script=[
+                     "pm.environment.unset('nlbId');",
+                     "if (pm.environment.get('lstSubnetId')) {",
+                     "  pm.test('parent INTERNAL LB created', () => pm.expect(pm.response.code).to.eql(200));",
+                     "  const j = pm.response.json();",
+                     "  if (j.id) pm.environment.set('opId', j.id);",
+                     "  if (j.metadata && j.metadata.networkLoadBalancerId) pm.environment.set('nlbId', j.metadata.networkLoadBalancerId);",
+                     "} else { pm.environment.unset('opId'); }",
+                 ]),
+            poll_operation_until_done(),
+        ]
     return [
         Step(name="setup-lb", method="POST", path=_LB_BASE,
              body={"projectId": "{{_suiteProjectId}}", "regionId": "{{_suiteRegionId}}",
-                   "name": f"lst-{name_suffix}-{{{{runId}}}}", "type": lb_type},
+                   "name": f"lst-{name_suffix}-{{{{runId}}}}", "type": lb_type,
+                   "v4Source": {"public": {}}},
              test_script=[*assert_status(200), *save_from_response("j.id", "opId"),
                           *save_from_response("j.metadata && j.metadata.networkLoadBalancerId", "nlbId")]),
         poll_operation_until_done(),

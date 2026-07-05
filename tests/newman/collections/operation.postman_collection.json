@@ -1,6 +1,6 @@
 {
   "info": {
-    "_postman_id": "ca69e891-118a-4576-badc-bf29869e47a6",
+    "_postman_id": "008d5ee8-6ae6-4288-8cea-f8039ab889fb",
     "name": "kacho-nlb / newman / operation",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
@@ -57,7 +57,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\"projectId\": \"{{_suiteProjectId}}\", \"regionId\": \"{{_suiteRegionId}}\", \"name\": \"opget-inflight-{{runId}}\", \"type\": \"EXTERNAL\"}",
+              "raw": "{\"projectId\": \"{{_suiteProjectId}}\", \"regionId\": \"{{_suiteRegionId}}\", \"name\": \"opget-inflight-{{runId}}\", \"type\": \"EXTERNAL\", \"v4Source\": {\"public\": {}}}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -125,7 +125,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-1",
           "request": {
             "method": "GET",
             "header": [
@@ -213,7 +213,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-2",
           "request": {
             "method": "GET",
             "header": [
@@ -290,7 +290,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\"projectId\": \"{{_suiteProjectId}}\", \"regionId\": \"{{_suiteRegionId}}\", \"name\": \"opget-done-{{runId}}\", \"type\": \"EXTERNAL\"}",
+              "raw": "{\"projectId\": \"{{_suiteProjectId}}\", \"regionId\": \"{{_suiteRegionId}}\", \"name\": \"opget-done-{{runId}}\", \"type\": \"EXTERNAL\", \"v4Source\": {\"public\": {}}}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -321,7 +321,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-3",
           "request": {
             "method": "GET",
             "header": [
@@ -446,7 +446,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-4",
           "request": {
             "method": "GET",
             "header": [
@@ -650,7 +650,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\"projectId\": \"{{_suiteProjectId}}\", \"regionId\": \"{{_suiteRegionId}}\", \"name\": \"opcanc-{{runId}}\", \"type\": \"EXTERNAL\"}",
+              "raw": "{\"projectId\": \"{{_suiteProjectId}}\", \"regionId\": \"{{_suiteRegionId}}\", \"name\": \"opcanc-{{runId}}\", \"type\": \"EXTERNAL\", \"v4Source\": {\"public\": {}}}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -681,7 +681,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-5",
           "request": {
             "method": "GET",
             "header": [
@@ -806,7 +806,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-6",
           "request": {
             "method": "GET",
             "header": [

@@ -5,8 +5,6 @@ package listener
 
 import (
 	"context"
-	"errors"
-	"fmt"
 	"log/slog"
 	"testing"
 	"time"
@@ -16,680 +14,37 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/PRO-Robotech/kacho-corelib/ids"
-	lbv1 "github.com/PRO-Robotech/kacho-nlb/proto/gen/go/kacho/cloud/loadbalancer/v1"
+	lbv1 "github.com/PRO-Robotech/kacho-proto/gen/go/kacho/cloud/loadbalancer/v1"
 
-	vpcclient "github.com/PRO-Robotech/kacho-nlb/internal/clients/vpc"
 	"github.com/PRO-Robotech/kacho-nlb/internal/domain"
 	kachorepo "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho"
 )
 
-// TestCreateListener_GWT_LST_001_AutoExternal_HappyPath — `auto VIP-alloc`
-// EXTERNAL Listener: AllocateExternalIP called → insert with allocated_address
-// + address_id → 2× outbox events → FGA tuples emitted.
-func TestCreateListener_GWT_LST_001_AutoExternal_HappyPath(t *testing.T) {
-	t.Parallel()
-	suite := newCreateSuite(t, domain.LBTypeExternal)
+// VIP консолидирован на LoadBalancer: Listener.Create — чистый INSERT строки
+// (FK на LB), без acquireVIP-саги и без обращения к vpc. Поэтому use-case больше
+// не получает address/subnet-клиентов. Тесты покрывают: happy-path (ACTIVE +
+// outbox + FGA, без VIP-аллокации), наследование vestigial ip_version от LB,
+// валидацию формы и uniqueness, LB precond'ы.
 
-	op, err := suite.uc.Run(suite.ctxWithSubject(), &lbv1.CreateListenerRequest{
-		LoadBalancerId:  string(suite.lb.ID),
-		Name:            "http",
-		Protocol:        lbv1.Listener_TCP,
-		Port:            80,
-		TargetPort:      8080,
-		IpVersion:       lbv1.IpVersion_IPV4,
-		AddressSpec:     autoSpec(""),
-		ProxyProtocolV2: false,
-	})
-	require.NoError(t, err)
-	require.NotEmpty(t, op.ID)
+const testTimeout = 2 * time.Second
 
-	done := awaitOpDone(t, suite.ops, op.ID, time.Second)
-	require.Nil(t, done.Error, "Operation must succeed; got error=%v", done.Error)
-	require.NotNil(t, done.Response, "Operation must have Listener response")
-
-	// AllocateExternalIP called once with the listener owner.
-	require.Len(t, suite.internalAddrs.allocExternalCalls, 1, "AllocateExternalIP must be called exactly once")
-	call := suite.internalAddrs.allocExternalCalls[0]
-	require.Equal(t, addressOwnerKindNLBListener, call.Owner.Kind)
-	require.Equal(t, string(suite.lb.ProjectID), call.ProjectID)
-
-	// Listener row inserted with allocated_address + address_id.
-	listeners := suite.allListeners()
-	require.Len(t, listeners, 1)
-	got := listeners[0]
-	require.Equal(t, "203.0.113.42", string(got.AllocatedAddress))
-	addrID, hasID := got.AddressID.Maybe()
-	require.True(t, hasID)
-	require.Equal(t, "e9bALLOCSTUB000001", string(addrID))
-	// durable-handle сага: CREATING-handle → ACTIVE на финальном TX-3.
-	require.Equal(t, domain.ListenerStatusActive, got.Status)
-	require.Equal(t, suite.lb.RegionID, got.RegionID)
-	require.Equal(t, suite.lb.ProjectID, got.ProjectID)
-
-	// 2× outbox events emitted in same TX (CREATED listener + UPDATED LB).
-	events := suite.repo.pendingOutbox()
-	require.Len(t, events, 2)
-	require.Equal(t, outboxResourceTypeListener, events[0].ResourceType)
-	require.Equal(t, outboxActionCreated, events[0].Action)
-	require.Equal(t, outboxResourceTypeLoadBalancer, events[1].ResourceType)
-	require.Equal(t, outboxActionUpdated, events[1].Action)
-
-	// one fga.register intent written in the SAME writer-tx as the Insert
-	// (not a direct best-effort FGA call). The intent carries the creator tuple
-	// (#admin) + the parent-link tuple (#load_balancer).
-	intents := suite.repo.committedFGA()
-	require.Len(t, intents, 1, "expected one fga.register intent in writer-tx")
-	require.Equal(t, domain.FGAEventRegister, intents[0].EventType)
-	require.Equal(t, "Listener", intents[0].Intent.Kind)
-	require.Equal(t, string(got.ID), intents[0].Intent.ResourceID)
-
-	tuples := intents[0].Intent.Tuples
-	require.Len(t, tuples, 2, "creator + parent-link tuples")
-
-	creator := tuples[0]
-	require.Equal(t, "user:test-actor", creator.SubjectID)
-	require.Equal(t, domain.FGARelationAdmin, creator.Relation)
-	require.Equal(t, domain.FGAObjectRef(domain.FGAObjectTypeListener, string(got.ID)), creator.Object)
-
-	parent := tuples[1]
-	require.Equal(t, domain.FGAObjectRef(domain.FGAObjectTypeLoadBalancer, string(suite.lb.ID)), parent.SubjectID)
-	require.Equal(t, domain.FGARelationLoadBalancer, parent.Relation)
-	require.Equal(t, domain.FGAObjectRef(domain.FGAObjectTypeListener, string(got.ID)), parent.Object)
+// newCreateUC — use-case без address-клиентов (VIP не аллоцируется).
+func newCreateUC(repo *fakeRepo, ops *fakeOpsRepo) *CreateUseCase {
+	return NewCreateUseCase(repo, ops, slog.Default())
 }
 
-// TestCreateListener_GWT_LST_002_BYO_HappyPath — BYO address_id: AddressService.Get
-// + same-project + ip_version match → SetReference CAS → insert with allocated_address
-// from existing Address.
-func TestCreateListener_GWT_LST_002_BYO_HappyPath(t *testing.T) {
-	t.Parallel()
-	suite := newCreateSuite(t, domain.LBTypeExternal)
-	const addrID = "e9bBYOOWN000000001"
-	suite.addresses.seed(&vpcclient.Address{
-		ID:        addrID,
-		ProjectID: string(suite.lb.ProjectID),
-		Name:      "tenant-named-ip",
-		Value:     "198.51.100.7",
-		Family:    vpcclient.AddressFamilyIPv4,
-		External:  true,
-	})
-
-	op, err := suite.uc.Run(context.Background(), &lbv1.CreateListenerRequest{
-		LoadBalancerId: string(suite.lb.ID),
-		Name:           "http-byo",
-		Protocol:       lbv1.Listener_TCP,
-		Port:           80,
-		TargetPort:     8080,
-		IpVersion:      lbv1.IpVersion_IPV4,
-		AddressSpec:    byoSpec(addrID),
-	})
-	require.NoError(t, err)
-	done := awaitOpDone(t, suite.ops, op.ID, time.Second)
-	require.Nil(t, done.Error)
-	require.Len(t, suite.internalAddrs.setRefCalls, 1)
-	require.Equal(t, addrID, suite.internalAddrs.setRefCalls[0].addressID)
-	require.Equal(t, addressOwnerKindNLBListener, suite.internalAddrs.setRefCalls[0].owner.Kind)
-	require.Len(t, suite.internalAddrs.allocExternalCalls, 0, "AllocateExternalIP must NOT be called for BYO")
-
-	listeners := suite.allListeners()
-	require.Len(t, listeners, 1)
-	require.Equal(t, "198.51.100.7", string(listeners[0].AllocatedAddress))
-}
-
-// TestCreateListener_GWT_LST_003_BYO_AddressAlreadyUsed_FailedPrecondition —
-// SetReference returns FailedPrecondition mapped from vpc.AlreadyExists.
-// Address.UsedBy points to another listener; our sync check rejects.
-func TestCreateListener_GWT_LST_003_BYO_AddressAlreadyUsed(t *testing.T) {
-	t.Parallel()
-	suite := newCreateSuite(t, domain.LBTypeExternal)
-	const addrID = "e9bUSEDBYO00000001"
-	suite.addresses.seed(&vpcclient.Address{
-		ID:        addrID,
-		ProjectID: string(suite.lb.ProjectID),
-		Name:      "occupied-ip",
-		Value:     "198.51.100.8",
-		Family:    vpcclient.AddressFamilyIPv4,
-		UsedBy: &vpcclient.AddressOwner{
-			Kind: addressOwnerKindNLBListener,
-			ID:   "lstOTHEROWN0000000",
-		},
-	})
-
-	op, err := suite.uc.Run(context.Background(), &lbv1.CreateListenerRequest{
-		LoadBalancerId: string(suite.lb.ID),
-		Name:           "http-conflict",
-		Protocol:       lbv1.Listener_TCP,
-		Port:           80,
-		TargetPort:     8080,
-		IpVersion:      lbv1.IpVersion_IPV4,
-		AddressSpec:    byoSpec(addrID),
-	})
-	require.NoError(t, err)
-	done := awaitOpDone(t, suite.ops, op.ID, time.Second)
-	require.NotNil(t, done.Error, "Operation must fail")
-	require.Equal(t, int32(codes.FailedPrecondition), done.Error.Code)
-	require.Contains(t, done.Error.Message, "already in use by")
-	require.Empty(t, suite.allListeners(), "no listener row must be inserted")
-}
-
-// TestCreateListener_GWT_LST_004_BYO_IPVersionMismatch — Address.Family != IpVersion
-// → InvalidArgument.
-func TestCreateListener_GWT_LST_004_BYO_IPVersionMismatch(t *testing.T) {
-	t.Parallel()
-	suite := newCreateSuite(t, domain.LBTypeExternal)
-	const addrID = "e9bIPV6BYO00000001"
-	suite.addresses.seed(&vpcclient.Address{
-		ID:        addrID,
-		ProjectID: string(suite.lb.ProjectID),
-		Name:      "v6-address",
-		Value:     "2001:db8::1",
-		Family:    vpcclient.AddressFamilyIPv6,
-	})
-
-	op, err := suite.uc.Run(context.Background(), &lbv1.CreateListenerRequest{
-		LoadBalancerId: string(suite.lb.ID),
-		Name:           "wrong-family",
-		Protocol:       lbv1.Listener_TCP,
-		Port:           80,
-		TargetPort:     8080,
-		IpVersion:      lbv1.IpVersion_IPV4, // mismatch: address is IPV6
-		AddressSpec:    byoSpec(addrID),
-	})
-	require.NoError(t, err)
-	done := awaitOpDone(t, suite.ops, op.ID, time.Second)
-	require.NotNil(t, done.Error)
-	require.Equal(t, int32(codes.InvalidArgument), done.Error.Code)
-	require.Contains(t, done.Error.Message, "does not match listener ip_version")
-}
-
-// TestCreateListener_GWT_LST_005_BYO_AddressNotFound — InvalidArgument с фиксированным текстом
-// "address <id> not found".
-func TestCreateListener_GWT_LST_005_BYO_AddressNotFound(t *testing.T) {
-	t.Parallel()
-	suite := newCreateSuite(t, domain.LBTypeExternal)
-	op, err := suite.uc.Run(context.Background(), &lbv1.CreateListenerRequest{
-		LoadBalancerId: string(suite.lb.ID),
-		Name:           "missing-addr",
-		Protocol:       lbv1.Listener_TCP,
-		Port:           80,
-		TargetPort:     8080,
-		IpVersion:      lbv1.IpVersion_IPV4,
-		AddressSpec:    byoSpec("e9bMISSINGADDR00001"),
-	})
-	require.NoError(t, err)
-	done := awaitOpDone(t, suite.ops, op.ID, time.Second)
-	require.NotNil(t, done.Error)
-	require.Equal(t, int32(codes.InvalidArgument), done.Error.Code)
-	require.Contains(t, done.Error.Message, "not found")
-}
-
-// TestCreateListener_GWT_LST_005b_BYO_CrossProject — Address.ProjectID != LB.ProjectID
-// → InvalidArgument фиксированный текст.
-func TestCreateListener_GWT_LST_005b_BYO_CrossProject(t *testing.T) {
-	t.Parallel()
-	suite := newCreateSuite(t, domain.LBTypeExternal)
-	const addrID = "e9bCROSSPROJ000001"
-	suite.addresses.seed(&vpcclient.Address{
-		ID:        addrID,
-		ProjectID: "prj01OTHEROWNERX0001",
-		Name:      "cross-project",
-		Value:     "198.51.100.9",
-		Family:    vpcclient.AddressFamilyIPv4,
-	})
-	op, err := suite.uc.Run(context.Background(), &lbv1.CreateListenerRequest{
-		LoadBalancerId: string(suite.lb.ID),
-		Name:           "crossprj",
-		Protocol:       lbv1.Listener_TCP,
-		Port:           80,
-		TargetPort:     8080,
-		IpVersion:      lbv1.IpVersion_IPV4,
-		AddressSpec:    byoSpec(addrID),
-	})
-	require.NoError(t, err)
-	done := awaitOpDone(t, suite.ops, op.ID, time.Second)
-	require.NotNil(t, done.Error)
-	require.Equal(t, int32(codes.InvalidArgument), done.Error.Code)
-	require.Contains(t, done.Error.Message, "project_id does not match")
-}
-
-// TestCreateListener_GWT_LST_006_Internal_SubnetRequired — INTERNAL LB without
-// subnet_id → InvalidArgument с фиксированным текстом "subnet_id is required for INTERNAL...".
-func TestCreateListener_GWT_LST_006_Internal_SubnetRequired(t *testing.T) {
-	t.Parallel()
-	suite := newCreateSuite(t, domain.LBTypeInternal)
-	_, err := suite.uc.Run(context.Background(), &lbv1.CreateListenerRequest{
-		LoadBalancerId: string(suite.lb.ID),
-		Name:           "internal-no-subnet",
-		Protocol:       lbv1.Listener_TCP,
-		Port:           80,
-		TargetPort:     8080,
-		IpVersion:      lbv1.IpVersion_IPV4,
-		AddressSpec:    autoSpec(""), // empty subnet_id
-	})
-	require.Error(t, err)
-	require.Equal(t, codes.InvalidArgument, status.Code(err))
-	require.Contains(t, err.Error(), "subnet_id is required for INTERNAL")
-}
-
-// TestCreateListener_GWT_LST_007_Internal_AutoAllocSubnet — INTERNAL with
-// subnet_id → AllocateInternalIP called with subnet_id.
-func TestCreateListener_GWT_LST_007_Internal_AutoAllocSubnet(t *testing.T) {
-	t.Parallel()
-	suite := newCreateSuite(t, domain.LBTypeInternal)
-	suite.internalAddrs.nextAllocID = "e9bINTERNALIP00001"
-	suite.internalAddrs.nextAllocValue = "10.0.0.5"
-
-	op, err := suite.uc.Run(context.Background(), &lbv1.CreateListenerRequest{
-		LoadBalancerId: string(suite.lb.ID),
-		Name:           "internal-ok",
-		Protocol:       lbv1.Listener_TCP,
-		Port:           80,
-		TargetPort:     8080,
-		IpVersion:      lbv1.IpVersion_IPV4,
-		AddressSpec:    autoSpec("e9bSUBNETOWNER0001"),
-	})
-	require.NoError(t, err)
-	done := awaitOpDone(t, suite.ops, op.ID, time.Second)
-	require.Nil(t, done.Error, "Operation must succeed")
-	require.Len(t, suite.internalAddrs.allocInternalCalls, 1)
-	require.Equal(t, "e9bSUBNETOWNER0001", suite.internalAddrs.allocInternalCalls[0].SubnetID)
-	require.Len(t, suite.internalAddrs.allocExternalCalls, 0)
-
-	listeners := suite.allListeners()
-	require.Len(t, listeners, 1)
-	require.Equal(t, "10.0.0.5", string(listeners[0].AllocatedAddress))
-}
-
-// TestCreateListener_GWT_LST_007_NameRegexInvalid — name regex invalid →
-// InvalidArgument synchronously (before Operation is even created).
-func TestCreateListener_GWT_LST_007_NameRegexInvalid(t *testing.T) {
-	t.Parallel()
-	suite := newCreateSuite(t, domain.LBTypeExternal)
-	_, err := suite.uc.Run(context.Background(), &lbv1.CreateListenerRequest{
-		LoadBalancerId: string(suite.lb.ID),
-		Name:           "BadName", // uppercase rejected by strict regex
-		Protocol:       lbv1.Listener_TCP,
-		Port:           80,
-		TargetPort:     8080,
-		IpVersion:      lbv1.IpVersion_IPV4,
-		AddressSpec:    autoSpec(""),
-	})
-	require.Error(t, err)
-	require.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-// TestCreateListener_GWT_LST_008_PortOutOfRange — port=0 → InvalidArgument sync.
-func TestCreateListener_GWT_LST_008_PortOutOfRange(t *testing.T) {
-	t.Parallel()
-	for _, port := range []int64{0, 65536, -1} {
-		t.Run(fmt.Sprintf("port=%d", port), func(t *testing.T) {
-			t.Parallel()
-			suite := newCreateSuite(t, domain.LBTypeExternal)
-			_, err := suite.uc.Run(context.Background(), &lbv1.CreateListenerRequest{
-				LoadBalancerId: string(suite.lb.ID),
-				Name:           "bad-port",
-				Protocol:       lbv1.Listener_TCP,
-				Port:           port,
-				TargetPort:     8080,
-				IpVersion:      lbv1.IpVersion_IPV4,
-				AddressSpec:    autoSpec(""),
-			})
-			require.Error(t, err)
-			require.Equal(t, codes.InvalidArgument, status.Code(err))
-		})
-	}
-}
-
-// TestCreateListener_GWT_LST_009_UnsupportedProtocol — TCP/UDP only.
-func TestCreateListener_GWT_LST_009_UnsupportedProtocol(t *testing.T) {
-	t.Parallel()
-	suite := newCreateSuite(t, domain.LBTypeExternal)
-	_, err := suite.uc.Run(context.Background(), &lbv1.CreateListenerRequest{
-		LoadBalancerId: string(suite.lb.ID),
-		Name:           "bad-proto",
-		Protocol:       lbv1.Listener_PROTOCOL_UNSPECIFIED, // not TCP/UDP
-		Port:           80,
-		TargetPort:     8080,
-		IpVersion:      lbv1.IpVersion_IPV4,
-		AddressSpec:    autoSpec(""),
-	})
-	require.Error(t, err)
-	require.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-// TestCreateListener_GWT_LST_010_DuplicatePortProto — fake repo enforces UNIQUE
-// (lb_id, port, protocol) → AlreadyExists at the TX-1 durable-handle INSERT,
-// BEFORE VIP-allocation. No VIP is wasted → no compensation FreeIP.
-func TestCreateListener_GWT_LST_010_DuplicatePortProto(t *testing.T) {
-	t.Parallel()
-	suite := newCreateSuite(t, domain.LBTypeExternal)
-	// First Create succeeds.
-	op1, err := suite.uc.Run(context.Background(), &lbv1.CreateListenerRequest{
-		LoadBalancerId: string(suite.lb.ID),
-		Name:           "primary",
-		Protocol:       lbv1.Listener_TCP,
-		Port:           80,
-		TargetPort:     8080,
-		IpVersion:      lbv1.IpVersion_IPV4,
-		AddressSpec:    autoSpec(""),
-	})
-	require.NoError(t, err)
-	awaitOpDone(t, suite.ops, op1.ID, time.Second)
-	require.Len(t, suite.allListeners(), 1)
-
-	// Second Create with same (LB, port, protocol) — fake AllocateExternalIP
-	// returns a DIFFERENT allocated address to avoid (region, vip, port, proto)
-	// UNIQUE; here we test only (lb_id, port, protocol).
-	suite.internalAddrs.nextAllocID = "e9bSECONDALLOC00002"
-	suite.internalAddrs.nextAllocValue = "203.0.113.99"
-	op2, err := suite.uc.Run(context.Background(), &lbv1.CreateListenerRequest{
-		LoadBalancerId: string(suite.lb.ID),
-		Name:           "duplicate",
-		Protocol:       lbv1.Listener_TCP,
-		Port:           80,
-		TargetPort:     8080,
-		IpVersion:      lbv1.IpVersion_IPV4,
-		AddressSpec:    autoSpec(""),
-	})
-	require.NoError(t, err)
-	done := awaitOpDone(t, suite.ops, op2.ID, time.Second)
-	require.NotNil(t, done.Error)
-	require.Equal(t, int32(codes.AlreadyExists), done.Error.Code)
-	require.Contains(t, done.Error.Message, "already exists")
-
-	// INSERT-before-alloc (durable handle, TX-1) catches the (lb,port,proto)
-	// duplicate BEFORE acquireVIP runs → no VIP allocated → no FreeIP. Only the
-	// first create reached VIP-alloc (allocExternalCalls is cumulative).
-	require.Empty(t, suite.internalAddrs.freeCalls, "duplicate caught at TX-1 INSERT — no VIP allocated")
-	require.Len(t, suite.internalAddrs.allocExternalCalls, 1, "only the first create reached VIP-alloc; second failed at TX-1")
-	require.Len(t, suite.allListeners(), 1, "only the first listener persists")
-}
-
-// TestCreateListener_GWT_LST_011_DuplicateRegionVIPPortProto — same (region,
-// vip, port, protocol) across LBs blocked by partial UNIQUE in fake.
-func TestCreateListener_GWT_LST_011_DuplicateRegionVIPPortProto(t *testing.T) {
-	t.Parallel()
-	suite := newCreateSuite(t, domain.LBTypeExternal)
-	// Second LB in same region with different name.
-	lb2 := newRecordLB(t, suite.lb.ProjectID, suite.lb.RegionID, domain.LBTypeExternal, "lb-2")
-	suite.repo.seedLB(lb2)
-
-	const sharedAddrID = "e9bSHAREDADDR00001"
-	suite.addresses.seed(&vpcclient.Address{
-		ID:        sharedAddrID,
-		ProjectID: string(suite.lb.ProjectID),
-		Name:      "tenant-shared",
-		Value:     "203.0.113.150",
-		Family:    vpcclient.AddressFamilyIPv4,
-	})
-
-	// LB-A create: BYO sharedAddr (succeeds).
-	op1, err := suite.uc.Run(context.Background(), &lbv1.CreateListenerRequest{
-		LoadBalancerId: string(suite.lb.ID),
-		Name:           "first",
-		Protocol:       lbv1.Listener_TCP,
-		Port:           80,
-		TargetPort:     8080,
-		IpVersion:      lbv1.IpVersion_IPV4,
-		AddressSpec:    byoSpec(sharedAddrID),
-	})
-	require.NoError(t, err)
-	awaitOpDone(t, suite.ops, op1.ID, time.Second)
-	require.Len(t, suite.allListeners(), 1)
-
-	// LB-B create: same BYO addr — already used by lst-* listener →
-	// branch fires (FailedPrecondition on used_by check), не доходим до
-	// region/vip UNIQUE. Тест проверяет, что в любом случае дубль blocked.
-	suite.addresses.seed(&vpcclient.Address{
-		ID:        sharedAddrID,
-		ProjectID: string(suite.lb.ProjectID),
-		Name:      "tenant-shared",
-		Value:     "203.0.113.150",
-		Family:    vpcclient.AddressFamilyIPv4,
-		UsedBy: &vpcclient.AddressOwner{
-			Kind: addressOwnerKindNLBListener,
-			ID:   string(suite.allListeners()[0].ID),
-		},
-	})
-
-	op2, err := suite.uc.Run(context.Background(), &lbv1.CreateListenerRequest{
-		LoadBalancerId: string(lb2.ID),
-		Name:           "second",
-		Protocol:       lbv1.Listener_TCP,
-		Port:           80,
-		TargetPort:     8080,
-		IpVersion:      lbv1.IpVersion_IPV4,
-		AddressSpec:    byoSpec(sharedAddrID),
-	})
-	require.NoError(t, err)
-	done := awaitOpDone(t, suite.ops, op2.ID, time.Second)
-	require.NotNil(t, done.Error)
-	require.Contains(t, []int32{int32(codes.FailedPrecondition), int32(codes.AlreadyExists)}, done.Error.Code)
-}
-
-// TestCreateListener_GWT_LST_014_VIPAllocFails_OperationError — peer alloc fails
-// → ops.MarkError, no listener row, no outbox.
-func TestCreateListener_GWT_LST_014_VIPAllocFails(t *testing.T) {
-	t.Parallel()
-	suite := newCreateSuite(t, domain.LBTypeExternal)
-	suite.internalAddrs.allocErr = fmt.Errorf("%w: pool exhausted", domain.ErrFailedPrecondition)
-
-	op, err := suite.uc.Run(context.Background(), &lbv1.CreateListenerRequest{
-		LoadBalancerId: string(suite.lb.ID),
-		Name:           "vip-fail",
-		Protocol:       lbv1.Listener_TCP,
-		Port:           80,
-		TargetPort:     8080,
-		IpVersion:      lbv1.IpVersion_IPV4,
-		AddressSpec:    autoSpec(""),
-	})
-	require.NoError(t, err)
-	done := awaitOpDone(t, suite.ops, op.ID, time.Second)
-	require.NotNil(t, done.Error)
-	require.Equal(t, int32(codes.FailedPrecondition), done.Error.Code)
-	require.Contains(t, done.Error.Message, "pool exhausted")
-	require.Empty(t, suite.allListeners())
-	require.Empty(t, suite.repo.pendingOutbox(), "no outbox events on failed alloc")
-}
-
-// TestCreateListener_GWT_LST_015_PersistVIPFails_Compensation — VIP allocated,
-// TX-2 persist (SetVIP) fails → compensation FreeIP + durable-handle deleted.
-func TestCreateListener_GWT_LST_015_PersistVIPFails_Compensation(t *testing.T) {
-	t.Parallel()
-	suite := newCreateSuite(t, domain.LBTypeExternal)
-	// Inject TX-2 persist error so VIP gets allocated but address_id never lands.
-	suite.repo.setVIPErr = fmt.Errorf("%w: simulated SetVIP failure", domain.ErrInternal)
-
-	op, err := suite.uc.Run(context.Background(), &lbv1.CreateListenerRequest{
-		LoadBalancerId: string(suite.lb.ID),
-		Name:           "compensate",
-		Protocol:       lbv1.Listener_TCP,
-		Port:           80,
-		TargetPort:     8080,
-		IpVersion:      lbv1.IpVersion_IPV4,
-		AddressSpec:    autoSpec(""),
-	})
-	require.NoError(t, err)
-	done := awaitOpDone(t, suite.ops, op.ID, time.Second)
-	require.NotNil(t, done.Error)
-	require.Len(t, suite.internalAddrs.freeCalls, 1, "FreeIP must be called as compensation")
-	require.Equal(t, "e9bALLOCSTUB000001", suite.internalAddrs.freeCalls[0])
-	require.Empty(t, suite.allListeners(), "durable handle must be deleted by compensation")
-	require.Empty(t, suite.repo.pendingOutbox())
-}
-
-// TestCreateListener_GWT_LST_015b_InsertHandleFails_NoAlloc — TX-1 durable-handle
-// INSERT fails BEFORE acquireVIP → no VIP allocated, no compensation FreeIP, no row.
-func TestCreateListener_GWT_LST_015b_InsertHandleFails_NoAlloc(t *testing.T) {
-	t.Parallel()
-	suite := newCreateSuite(t, domain.LBTypeExternal)
-	suite.repo.insertErr = fmt.Errorf("%w: simulated DB CHECK violation", domain.ErrInvalidArg)
-
-	op, err := suite.uc.Run(context.Background(), &lbv1.CreateListenerRequest{
-		LoadBalancerId: string(suite.lb.ID),
-		Name:           "handle-fail",
-		Protocol:       lbv1.Listener_TCP,
-		Port:           80,
-		TargetPort:     8080,
-		IpVersion:      lbv1.IpVersion_IPV4,
-		AddressSpec:    autoSpec(""),
-	})
-	require.NoError(t, err)
-	done := awaitOpDone(t, suite.ops, op.ID, time.Second)
-	require.NotNil(t, done.Error)
-	require.Equal(t, int32(codes.InvalidArgument), done.Error.Code)
-	require.Empty(t, suite.internalAddrs.allocExternalCalls, "acquireVIP must not run if TX-1 INSERT fails")
-	require.Empty(t, suite.internalAddrs.freeCalls, "no VIP allocated → no compensation")
-	require.Empty(t, suite.allListeners())
-}
-
-// TestCreateListener_GWT_LST_015c_FinalizeFails_Compensation — VIP allocated +
-// persisted (TX-2 ok), TX-3 finalize (CREATING→ACTIVE) fails → compensation
-// FreeIP + durable-handle deleted; no outbox (TX-3 rolled back).
-func TestCreateListener_GWT_LST_015c_FinalizeFails_Compensation(t *testing.T) {
-	t.Parallel()
-	suite := newCreateSuite(t, domain.LBTypeExternal)
-	suite.repo.casErr = fmt.Errorf("%w: simulated finalize failure", domain.ErrInternal)
-
-	op, err := suite.uc.Run(context.Background(), &lbv1.CreateListenerRequest{
-		LoadBalancerId: string(suite.lb.ID),
-		Name:           "finalize-fail",
-		Protocol:       lbv1.Listener_TCP,
-		Port:           80,
-		TargetPort:     8080,
-		IpVersion:      lbv1.IpVersion_IPV4,
-		AddressSpec:    autoSpec(""),
-	})
-	require.NoError(t, err)
-	done := awaitOpDone(t, suite.ops, op.ID, time.Second)
-	require.NotNil(t, done.Error)
-	require.Len(t, suite.internalAddrs.freeCalls, 1, "FreeIP compensation after finalize fail")
-	require.Equal(t, "e9bALLOCSTUB000001", suite.internalAddrs.freeCalls[0])
-	require.Empty(t, suite.allListeners(), "durable handle deleted by compensation")
-	require.Empty(t, suite.repo.pendingOutbox(), "no outbox events committed (TX-3 rolled back)")
-}
-
-// TestCreateListener_BYO_CompensationClearReference — BYO branch, TX-2 persist
-// fails after SetReference → ClearReference compensation (NOT FreeIP — tenant
-// Address must not be deleted) + durable-handle deleted.
-func TestCreateListener_BYO_Compensation_ClearReference(t *testing.T) {
-	t.Parallel()
-	suite := newCreateSuite(t, domain.LBTypeExternal)
-	const addrID = "e9bBYOCOMPENSATE01"
-	suite.addresses.seed(&vpcclient.Address{
-		ID:        addrID,
-		ProjectID: string(suite.lb.ProjectID),
-		Name:      "tenant-byo",
-		Value:     "198.51.100.20",
-		Family:    vpcclient.AddressFamilyIPv4,
-	})
-	suite.repo.setVIPErr = fmt.Errorf("%w: simulated SetVIP failure", domain.ErrInternal)
-
-	op, err := suite.uc.Run(context.Background(), &lbv1.CreateListenerRequest{
-		LoadBalancerId: string(suite.lb.ID),
-		Name:           "byo-comp",
-		Protocol:       lbv1.Listener_TCP,
-		Port:           80,
-		TargetPort:     8080,
-		IpVersion:      lbv1.IpVersion_IPV4,
-		AddressSpec:    byoSpec(addrID),
-	})
-	require.NoError(t, err)
-	done := awaitOpDone(t, suite.ops, op.ID, time.Second)
-	require.NotNil(t, done.Error)
-	require.Len(t, suite.internalAddrs.clearCalls, 1,
-		"ClearReference must be called (BYO Address must not be deleted)")
-	require.Equal(t, addrID, suite.internalAddrs.clearCalls[0])
-	require.Empty(t, suite.internalAddrs.freeCalls, "FreeIP must NOT be called for BYO compensation")
-}
-
-// TestCreateListener_LBNotFound — parent LB does not exist → NotFound sync.
-func TestCreateListener_LBNotFound(t *testing.T) {
-	t.Parallel()
-	suite := newCreateSuite(t, domain.LBTypeExternal)
-	_, err := suite.uc.Run(context.Background(), &lbv1.CreateListenerRequest{
-		LoadBalancerId: "nlbNOTREALLLLLLLL01",
-		Name:           "orphan",
-		Protocol:       lbv1.Listener_TCP,
-		Port:           80,
-		TargetPort:     8080,
-		IpVersion:      lbv1.IpVersion_IPV4,
-		AddressSpec:    autoSpec(""),
-	})
-	require.Error(t, err)
-	require.Equal(t, codes.NotFound, status.Code(err))
-}
-
-// TestCreateListener_EmptyAddressSpec — proto requires address_spec; nil →
-// InvalidArgument.
-func TestCreateListener_EmptyAddressSpec(t *testing.T) {
-	t.Parallel()
-	suite := newCreateSuite(t, domain.LBTypeExternal)
-	_, err := suite.uc.Run(context.Background(), &lbv1.CreateListenerRequest{
-		LoadBalancerId: string(suite.lb.ID),
-		Name:           "no-spec",
-		Protocol:       lbv1.Listener_TCP,
-		Port:           80,
-		TargetPort:     8080,
-		IpVersion:      lbv1.IpVersion_IPV4,
-		AddressSpec:    nil,
-	})
-	require.Error(t, err)
-	require.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-// TestCreateListener_LBDeleting — parent LB.status==DELETING → FailedPrecondition.
-func TestCreateListener_LBDeleting(t *testing.T) {
-	t.Parallel()
-	suite := newCreateSuite(t, domain.LBTypeExternal)
-	suite.lb.Status = domain.LBStatusDeleting
-	suite.repo.seedLB(suite.lb)
-	_, err := suite.uc.Run(context.Background(), &lbv1.CreateListenerRequest{
-		LoadBalancerId: string(suite.lb.ID),
-		Name:           "lb-deleting",
-		Protocol:       lbv1.Listener_TCP,
-		Port:           80,
-		TargetPort:     8080,
-		IpVersion:      lbv1.IpVersion_IPV4,
-		AddressSpec:    autoSpec(""),
-	})
-	require.Error(t, err)
-	require.Equal(t, codes.FailedPrecondition, status.Code(err))
-	require.Contains(t, err.Error(), "being deleted")
-}
-
-// ---- shared helpers ----
-
-type createSuite struct {
-	t             *testing.T
-	repo          *fakeRepo
-	ops           *fakeOpsRepo
-	addresses     *fakeAddressClient
-	internalAddrs *fakeInternalAddressClient
-	subnets       *fakeSubnetClient
-	lb            *kachorepo.LoadBalancerRecord
-	uc            *CreateUseCase
-}
-
-func newCreateSuite(t *testing.T, lbType domain.LBType) *createSuite {
+// seedParentLB — INACTIVE INTERNAL LB с anycast-VIP (родитель листенера).
+func seedParentLB(t *testing.T, repo *fakeRepo, families ...domain.IPVersion) *kachorepo.LoadBalancerRecord {
 	t.Helper()
-	repo := newFakeRepo()
-	lb := newRecordLB(t, "prj01TESTPROJ0000001", "ru-central1", lbType, "test-lb")
-	repo.seedLB(lb)
-	ops := newFakeOpsRepo()
-	addresses := newFakeAddressClient()
-	internalAddrs := newFakeInternalAddressClient()
-	subnets := newFakeSubnetClient()
-	uc := NewCreateUseCase(repo, ops, addresses, internalAddrs, subnets, slog.Default())
-	return &createSuite{
-		t:             t,
-		repo:          repo,
-		ops:           ops,
-		addresses:     addresses,
-		internalAddrs: internalAddrs,
-		subnets:       subnets,
-		lb:            lb,
-		uc:            uc,
+	lb := newRecordLB(t, "prj01TESTPROJ0000001", "ru-central1", domain.LBTypeInternal, "test-lb")
+	lb.Status = domain.LBStatusInactive
+	if len(families) == 0 {
+		families = []domain.IPVersion{domain.IPVersionV4}
 	}
+	lb.IPFamilies = families
+	lb.AddressV4 = "10.0.0.5"
+	repo.seedLB(lb)
+	return lb
 }
 
 func newRecordLB(t *testing.T, projectID domain.ProjectID, regionID domain.RegionID, lbType domain.LBType, name string) *kachorepo.LoadBalancerRecord {
@@ -704,227 +59,186 @@ func newRecordLB(t *testing.T, projectID domain.ProjectID, regionID domain.Regio
 	}
 }
 
-func (s *createSuite) allListeners() []*kachorepo.ListenerRecord {
-	s.repo.mu.Lock()
-	defer s.repo.mu.Unlock()
-	out := make([]*kachorepo.ListenerRecord, 0, len(s.repo.listeners))
-	for _, l := range s.repo.listeners {
-		c := *l
-		out = append(out, &c)
+func listenerByLB(repo *fakeRepo, lbID string) []*kachorepo.ListenerRecord {
+	repo.mu.Lock()
+	defer repo.mu.Unlock()
+	var out []*kachorepo.ListenerRecord
+	for _, l := range repo.listeners {
+		if string(l.LoadBalancerID) == lbID {
+			c := *l
+			out = append(out, &c)
+		}
 	}
 	return out
 }
 
-func (s *createSuite) ctxWithSubject() context.Context {
-	return contextWithSubject("user:test-actor")
-}
-
-func autoSpec(subnetID string) *lbv1.ListenerAddressSpec {
-	return &lbv1.ListenerAddressSpec{
-		Source: &lbv1.ListenerAddressSpec_Auto{
-			Auto: &lbv1.ListenerAddressSpec_AutoAllocate{SubnetId: subnetID},
-		},
-	}
-}
-
-func byoSpec(addrID string) *lbv1.ListenerAddressSpec {
-	return &lbv1.ListenerAddressSpec{
-		Source: &lbv1.ListenerAddressSpec_AddressId{AddressId: addrID},
-	}
-}
-
-// TestCreateListener_AutoOrigin_SetsVipOriginAuto — auto-alloc Create stamps
-// vip_origin='auto' on the inserted row (release-discriminator source of truth).
-func TestCreateListener_AutoOrigin_SetsVipOriginAuto(t *testing.T) {
+// TestCreateListener_HappyPath_NoVIP — Create на VIP-only LB: листенер ACTIVE,
+// без собственных address-полей (наследует VIP от LB), outbox CREATED + LB
+// UPDATED, FGA register-intent (creator + parent-link), без VIP-аллокации.
+func TestCreateListener_HappyPath_NoVIP(t *testing.T) {
 	t.Parallel()
-	suite := newCreateSuite(t, domain.LBTypeExternal)
+	repo := newFakeRepo()
+	ops := newFakeOpsRepo()
+	lb := seedParentLB(t, repo)
+	uc := newCreateUC(repo, ops)
 
-	op, err := suite.uc.Run(context.Background(), &lbv1.CreateListenerRequest{
-		LoadBalancerId: string(suite.lb.ID),
-		Name:           "auto-origin",
-		Protocol:       lbv1.Listener_TCP,
-		Port:           80,
-		TargetPort:     8080,
-		IpVersion:      lbv1.IpVersion_IPV4,
-		AddressSpec:    autoSpec(""),
-	})
-	require.NoError(t, err)
-	done := awaitOpDone(t, suite.ops, op.ID, time.Second)
-	require.Nil(t, done.Error)
-
-	listeners := suite.allListeners()
-	require.Len(t, listeners, 1)
-	require.Equal(t, domain.VipOriginAuto, listeners[0].VipOrigin)
-}
-
-// TestCreateListener_BYOOrigin_SetsVipOriginByo — BYO Create (tenant address_id)
-// stamps vip_origin='byo' so Delete releases via ClearReference, never FreeIP.
-func TestCreateListener_BYOOrigin_SetsVipOriginByo(t *testing.T) {
-	t.Parallel()
-	suite := newCreateSuite(t, domain.LBTypeExternal)
-	const addrID = "e9bBYOORIGIN000001"
-	suite.addresses.seed(&vpcclient.Address{
-		ID:        addrID,
-		ProjectID: string(suite.lb.ProjectID),
-		Name:      "tenant-static-ip",
-		Value:     "198.51.100.5",
-		Family:    vpcclient.AddressFamilyIPv4,
-		External:  true,
-	})
-
-	op, err := suite.uc.Run(context.Background(), &lbv1.CreateListenerRequest{
-		LoadBalancerId: string(suite.lb.ID),
-		Name:           "byo-origin",
-		Protocol:       lbv1.Listener_TCP,
-		Port:           80,
-		TargetPort:     8080,
-		IpVersion:      lbv1.IpVersion_IPV4,
-		AddressSpec:    byoSpec(addrID),
-	})
-	require.NoError(t, err)
-	done := awaitOpDone(t, suite.ops, op.ID, time.Second)
-	require.Nil(t, done.Error)
-
-	listeners := suite.allListeners()
-	require.Len(t, listeners, 1)
-	require.Equal(t, domain.VipOriginBYO, listeners[0].VipOrigin,
-		"BYO listener must persist vip_origin=byo")
-}
-
-// TestCreateListener_GWT_6_0_19a_AutoExternalIPv6_DispatchesV6RPC — IPV6 EXTERNAL
-// auto-alloc диспатчит на AllocateExternalIPv6 (реальный v6-VIP), НЕ на v4-RPC.
-// Устраняет прежний баг: auto-ветка молча выдавала v4-VIP при ip_version=IPV6.
-func TestCreateListener_GWT_6_0_19a_AutoExternalIPv6_DispatchesV6RPC(t *testing.T) {
-	t.Parallel()
-	suite := newCreateSuite(t, domain.LBTypeExternal)
-	suite.internalAddrs.nextAllocV6ID = "e9bV6EXTALLOC00001"
-	suite.internalAddrs.nextAllocV6Value = "2001:db8:1::10"
-
-	op, err := suite.uc.Run(context.Background(), &lbv1.CreateListenerRequest{
-		LoadBalancerId: string(suite.lb.ID),
-		Name:           "http-v6",
-		Protocol:       lbv1.Listener_TCP,
-		Port:           80,
-		TargetPort:     8080,
-		IpVersion:      lbv1.IpVersion_IPV6,
-		AddressSpec:    autoSpec(""),
-	})
-	require.NoError(t, err)
-	done := awaitOpDone(t, suite.ops, op.ID, time.Second)
-	require.Nil(t, done.Error, "Operation must succeed; got error=%v", done.Error)
-
-	require.Len(t, suite.internalAddrs.allocExternalV6Calls, 1, "IPV6 external auto must dispatch to AllocateExternalIPv6")
-	require.Empty(t, suite.internalAddrs.allocExternalCalls, "must NOT fall back to v4 AllocateExternalIP")
-
-	listeners := suite.allListeners()
-	require.Len(t, listeners, 1)
-	got := listeners[0]
-	require.Equal(t, "2001:db8:1::10", string(got.AllocatedAddress), "VIP must be the IPv6 value, not a v4 default")
-	require.Equal(t, domain.IPVersionV6, got.IPVersion)
-	require.Equal(t, domain.VipOriginAuto, got.VipOrigin)
-}
-
-// TestCreateListener_GWT_6_0_19b_AutoInternalIPv6_DispatchesV6RPC — IPV6 INTERNAL
-// auto-alloc диспатчит на AllocateInternalIPv6(subnet_id) (v6 ∈ subnet v6-CIDR).
-func TestCreateListener_GWT_6_0_19b_AutoInternalIPv6_DispatchesV6RPC(t *testing.T) {
-	t.Parallel()
-	suite := newCreateSuite(t, domain.LBTypeInternal)
-	suite.internalAddrs.nextAllocV6ID = "e9bV6INTALLOC00001"
-	suite.internalAddrs.nextAllocV6Value = "fd00::5"
-
-	op, err := suite.uc.Run(context.Background(), &lbv1.CreateListenerRequest{
-		LoadBalancerId: string(suite.lb.ID),
-		Name:           "internal-v6",
-		Protocol:       lbv1.Listener_TCP,
-		Port:           80,
-		TargetPort:     8080,
-		IpVersion:      lbv1.IpVersion_IPV6,
-		AddressSpec:    autoSpec("e9bSUBNET6OWNER001"),
-	})
-	require.NoError(t, err)
-	done := awaitOpDone(t, suite.ops, op.ID, time.Second)
-	require.Nil(t, done.Error, "Operation must succeed; got error=%v", done.Error)
-
-	require.Len(t, suite.internalAddrs.allocInternalV6Calls, 1, "IPV6 internal auto must dispatch to AllocateInternalIPv6")
-	require.Equal(t, "e9bSUBNET6OWNER001", suite.internalAddrs.allocInternalV6Calls[0].SubnetID)
-	require.Empty(t, suite.internalAddrs.allocInternalCalls, "must NOT fall back to v4 AllocateInternalIP")
-
-	listeners := suite.allListeners()
-	require.Len(t, listeners, 1)
-	require.Equal(t, "fd00::5", string(listeners[0].AllocatedAddress))
-	require.Equal(t, domain.IPVersionV6, listeners[0].IPVersion)
-}
-
-// TestCreateListener_GWT_6_0_18_AutoIPv4_StaysV4RPC — regression-anchor: IPV4
-// auto-alloc продолжает диспатчить на v4-RPC (external+internal), не на v6.
-func TestCreateListener_GWT_6_0_18_AutoIPv4_StaysV4RPC(t *testing.T) {
-	t.Parallel()
-	// EXTERNAL v4.
-	ext := newCreateSuite(t, domain.LBTypeExternal)
-	opE, err := ext.uc.Run(context.Background(), &lbv1.CreateListenerRequest{
-		LoadBalancerId: string(ext.lb.ID),
-		Name:           "v4-ext", Protocol: lbv1.Listener_TCP, Port: 80, TargetPort: 8080,
-		IpVersion:   lbv1.IpVersion_IPV4,
-		AddressSpec: autoSpec(""),
-	})
-	require.NoError(t, err)
-	require.Nil(t, awaitOpDone(t, ext.ops, opE.ID, time.Second).Error)
-	require.Len(t, ext.internalAddrs.allocExternalCalls, 1)
-	require.Empty(t, ext.internalAddrs.allocExternalV6Calls, "IPV4 must NOT call v6 RPC")
-
-	// INTERNAL v4.
-	in := newCreateSuite(t, domain.LBTypeInternal)
-	opI, err := in.uc.Run(context.Background(), &lbv1.CreateListenerRequest{
-		LoadBalancerId: string(in.lb.ID),
-		Name:           "v4-int", Protocol: lbv1.Listener_TCP, Port: 80, TargetPort: 8080,
-		IpVersion:   lbv1.IpVersion_IPV4,
-		AddressSpec: autoSpec("e9bSUBNETV4OWNER01"),
-	})
-	require.NoError(t, err)
-	require.Nil(t, awaitOpDone(t, in.ops, opI.ID, time.Second).Error)
-	require.Len(t, in.internalAddrs.allocInternalCalls, 1)
-	require.Empty(t, in.internalAddrs.allocInternalV6Calls, "IPV4 must NOT call v6 RPC")
-}
-
-// TestCreateListener_GWT_6_0_20_BYO_IPv6_HappyPath — BYO IPv6 Address: family
-// совпадает (IPV6), без alloc, SetReference CAS, vip_origin=byo, VIP = v6.
-func TestCreateListener_GWT_6_0_20_BYO_IPv6_HappyPath(t *testing.T) {
-	t.Parallel()
-	suite := newCreateSuite(t, domain.LBTypeExternal)
-	const addrID = "e9bV6BYOADDR000001"
-	suite.addresses.seed(&vpcclient.Address{
-		ID:        addrID,
-		ProjectID: string(suite.lb.ProjectID),
-		Name:      "tenant-v6-ip",
-		Value:     "2001:db8:bee::7",
-		Family:    vpcclient.AddressFamilyIPv6,
-		External:  true,
-	})
-
-	op, err := suite.uc.Run(context.Background(), &lbv1.CreateListenerRequest{
-		LoadBalancerId: string(suite.lb.ID),
-		Name:           "byo-v6",
+	op, err := uc.Run(contextWithSubject("user:test-actor"), &lbv1.CreateListenerRequest{
+		LoadBalancerId: string(lb.ID),
+		Name:           "https",
 		Protocol:       lbv1.Listener_TCP,
 		Port:           443,
-		TargetPort:     8443,
-		IpVersion:      lbv1.IpVersion_IPV6,
-		AddressSpec:    byoSpec(addrID),
+		TargetPort:     8080,
 	})
 	require.NoError(t, err)
-	done := awaitOpDone(t, suite.ops, op.ID, time.Second)
-	require.Nil(t, done.Error, "BYO IPv6 happy-path must succeed; got error=%v", done.Error)
+	final := awaitOpDone(t, ops, op.ID, testTimeout)
+	require.Nil(t, final.Error)
 
-	require.Len(t, suite.internalAddrs.setRefCalls, 1)
-	require.Equal(t, addrID, suite.internalAddrs.setRefCalls[0].addressID)
-	require.Empty(t, suite.internalAddrs.allocExternalCalls, "BYO must NOT auto-alloc")
-	require.Empty(t, suite.internalAddrs.allocExternalV6Calls, "BYO must NOT auto-alloc")
+	got := listenerByLB(repo, string(lb.ID))
+	require.Len(t, got, 1)
+	require.Equal(t, domain.ListenerStatusActive, got[0].Status)
+	require.Equal(t, domain.LbPort(443), got[0].Port)
+	require.Equal(t, domain.LbPort(8080), got[0].TargetPort)
+	// Листенер не аллоцировал собственный VIP.
+	_, hasAddr := got[0].AddressID.Maybe()
+	require.False(t, hasAddr, "listener carries no own address binding")
+	require.Empty(t, string(got[0].AllocatedAddress))
 
-	listeners := suite.allListeners()
-	require.Len(t, listeners, 1)
-	require.Equal(t, "2001:db8:bee::7", string(listeners[0].AllocatedAddress))
-	require.Equal(t, domain.IPVersionV6, listeners[0].IPVersion)
-	require.Equal(t, domain.VipOriginBYO, listeners[0].VipOrigin)
+	// Outbox: listener CREATED + lb UPDATED(listener_created).
+	evts := repo.pendingOutbox()
+	var sawListenerCreated, sawLBUpdated bool
+	for _, e := range evts {
+		if e.ResourceType == "nlb_listener" && e.Action == "CREATED" {
+			sawListenerCreated = true
+		}
+		if e.ResourceType == "nlb_load_balancer" && e.Action == "UPDATED" {
+			sawLBUpdated = true
+		}
+	}
+	require.True(t, sawListenerCreated, "listener CREATED emitted")
+	require.True(t, sawLBUpdated, "lb UPDATED emitted")
+
+	// FGA register-intent: creator + parent-link.
+	fga := repo.committedFGA()
+	require.Len(t, fga, 1)
+	require.Equal(t, domain.FGAEventRegister, fga[0].EventType)
+	require.Equal(t, "Listener", fga[0].Intent.Kind)
 }
 
-// _ used so errors package linked even if no test uses it directly.
-var _ = errors.New
+// TestCreateListener_InheritsVestigialIPVersion — vestigial ip_version листенера
+// берётся из первого семейства родительского LB (колонка снята с proto, остаётся
+// в DB до поздней миграции).
+func TestCreateListener_InheritsVestigialIPVersion(t *testing.T) {
+	t.Parallel()
+	repo := newFakeRepo()
+	ops := newFakeOpsRepo()
+	lb := seedParentLB(t, repo, domain.IPVersionV6)
+	uc := newCreateUC(repo, ops)
+
+	op, err := uc.Run(context.Background(), &lbv1.CreateListenerRequest{
+		LoadBalancerId: string(lb.ID),
+		Name:           "v6port",
+		Protocol:       lbv1.Listener_TCP,
+		Port:           80,
+		TargetPort:     8080,
+	})
+	require.NoError(t, err)
+	require.Nil(t, awaitOpDone(t, ops, op.ID, testTimeout).Error)
+	got := listenerByLB(repo, string(lb.ID))
+	require.Len(t, got, 1)
+	require.Equal(t, domain.IPVersionV6, got[0].IPVersion)
+}
+
+func TestCreateListener_LoadBalancerIDRequired(t *testing.T) {
+	t.Parallel()
+	uc := newCreateUC(newFakeRepo(), newFakeOpsRepo())
+	_, err := uc.Run(context.Background(), &lbv1.CreateListenerRequest{
+		Name: "x", Protocol: lbv1.Listener_TCP, Port: 80, TargetPort: 80,
+	})
+	require.Equal(t, codes.InvalidArgument, status.Code(err))
+}
+
+func TestCreateListener_NameRegexInvalid(t *testing.T) {
+	t.Parallel()
+	repo := newFakeRepo()
+	lb := seedParentLB(t, repo)
+	uc := newCreateUC(repo, newFakeOpsRepo())
+	_, err := uc.Run(context.Background(), &lbv1.CreateListenerRequest{
+		LoadBalancerId: string(lb.ID), Name: "Bad Name!",
+		Protocol: lbv1.Listener_TCP, Port: 443, TargetPort: 8080,
+	})
+	require.Equal(t, codes.InvalidArgument, status.Code(err))
+}
+
+func TestCreateListener_PortOutOfRange(t *testing.T) {
+	t.Parallel()
+	repo := newFakeRepo()
+	lb := seedParentLB(t, repo)
+	uc := newCreateUC(repo, newFakeOpsRepo())
+	_, err := uc.Run(context.Background(), &lbv1.CreateListenerRequest{
+		LoadBalancerId: string(lb.ID), Name: "p",
+		Protocol: lbv1.Listener_TCP, Port: 70000, TargetPort: 8080,
+	})
+	require.Equal(t, codes.InvalidArgument, status.Code(err))
+}
+
+func TestCreateListener_UnsupportedProtocol(t *testing.T) {
+	t.Parallel()
+	repo := newFakeRepo()
+	lb := seedParentLB(t, repo)
+	uc := newCreateUC(repo, newFakeOpsRepo())
+	_, err := uc.Run(context.Background(), &lbv1.CreateListenerRequest{
+		LoadBalancerId: string(lb.ID), Name: "p",
+		Protocol: lbv1.Listener_PROTOCOL_UNSPECIFIED, Port: 443, TargetPort: 8080,
+	})
+	require.Equal(t, codes.InvalidArgument, status.Code(err))
+}
+
+// TestCreateListener_DuplicatePortProto — конфликт (load_balancer_id, port,
+// protocol) → Operation done с error ALREADY_EXISTS.
+func TestCreateListener_DuplicatePortProto(t *testing.T) {
+	t.Parallel()
+	repo := newFakeRepo()
+	ops := newFakeOpsRepo()
+	lb := seedParentLB(t, repo)
+	repo.seedListener(&kachorepo.ListenerRecord{
+		Listener: domain.Listener{
+			ID: "lst01EXISTING0000001", LoadBalancerID: lb.ID, ProjectID: lb.ProjectID,
+			RegionID: lb.RegionID, Name: "existing", Protocol: domain.ProtoTCP,
+			Port: 443, TargetPort: 8080, IPVersion: domain.IPVersionV4,
+			Status: domain.ListenerStatusActive, VipOrigin: domain.VipOriginAuto,
+		},
+	})
+	uc := newCreateUC(repo, ops)
+	op, err := uc.Run(context.Background(), &lbv1.CreateListenerRequest{
+		LoadBalancerId: string(lb.ID), Name: "dup",
+		Protocol: lbv1.Listener_TCP, Port: 443, TargetPort: 9090,
+	})
+	require.NoError(t, err)
+	final := awaitOpDone(t, ops, op.ID, testTimeout)
+	require.NotNil(t, final.Error)
+	require.Equal(t, int32(codes.AlreadyExists), final.Error.GetCode())
+}
+
+func TestCreateListener_LBNotFound(t *testing.T) {
+	t.Parallel()
+	uc := newCreateUC(newFakeRepo(), newFakeOpsRepo())
+	_, err := uc.Run(context.Background(), &lbv1.CreateListenerRequest{
+		LoadBalancerId: "nlb00000000000000miss", Name: "x",
+		Protocol: lbv1.Listener_TCP, Port: 80, TargetPort: 80,
+	})
+	require.Equal(t, codes.NotFound, status.Code(err))
+}
+
+func TestCreateListener_LBDeleting(t *testing.T) {
+	t.Parallel()
+	repo := newFakeRepo()
+	lb := seedParentLB(t, repo)
+	lb.Status = domain.LBStatusDeleting
+	uc := newCreateUC(repo, newFakeOpsRepo())
+	_, err := uc.Run(context.Background(), &lbv1.CreateListenerRequest{
+		LoadBalancerId: string(lb.ID), Name: "x",
+		Protocol: lbv1.Listener_TCP, Port: 80, TargetPort: 80,
+	})
+	require.Equal(t, codes.FailedPrecondition, status.Code(err))
+	require.Contains(t, err.Error(), "being deleted")
+}

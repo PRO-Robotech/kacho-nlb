@@ -11,8 +11,9 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/PRO-Robotech/kacho-corelib/auth"
 	"github.com/PRO-Robotech/kacho-corelib/retry"
-	geopb "github.com/PRO-Robotech/kacho-geo/proto/gen/go/kacho/cloud/geo/v1"
+	geopb "github.com/PRO-Robotech/kacho-proto/gen/go/kacho/cloud/geo/v1"
 
 	"github.com/PRO-Robotech/kacho-nlb/internal/domain"
 )
@@ -72,7 +73,7 @@ func (c *regionClient) Get(ctx context.Context, regionID string) (*Region, error
 	var resp *geopb.Region
 	if err := retry.OnUnavailable(ctx, func(ctx context.Context) error {
 		var rerr error
-		resp, rerr = c.regions.Get(ctx, &geopb.GetRegionRequest{RegionId: regionID})
+		resp, rerr = c.regions.Get(auth.PropagateOutgoing(ctx), &geopb.GetRegionRequest{RegionId: regionID})
 		return rerr
 	}); err != nil {
 		return nil, mapRegionErr(regionID, err)

@@ -6,7 +6,7 @@ package type2pb
 import (
 	"fmt"
 
-	lbv1 "github.com/PRO-Robotech/kacho-nlb/proto/gen/go/kacho/cloud/loadbalancer/v1"
+	lbv1 "github.com/PRO-Robotech/kacho-proto/gen/go/kacho/cloud/loadbalancer/v1"
 
 	"github.com/PRO-Robotech/kacho-nlb/internal/domain"
 	"github.com/PRO-Robotech/kacho-nlb/internal/dto"
@@ -33,22 +33,43 @@ func (networkLoadBalancer) toPb(rec kachorepo.LoadBalancerRecord) (*lbv1.Network
 	if err != nil {
 		return nil, err
 	}
+	placementPb, err := lbPlacementToPb(rec.PlacementType)
+	if err != nil {
+		return nil, err
+	}
+	// Lean-проекция: связанный vpc Address (v4_address_id/v6_address_id) +
+	// placement + disabled_announce_zones. Сам VIP-IP, source, network,
+	// vip_origin, announce/route/VRF/per-zone — НЕ выходят (§3.6, security.md).
 	return &lbv1.NetworkLoadBalancer{
-		Id:                 string(rec.ID),
-		ProjectId:          string(rec.ProjectID),
-		CreatedAt:          ts,
-		Name:               string(rec.Name),
-		Description:        string(rec.Description),
-		Labels:             domain.LabelsToMap(rec.Labels),
-		RegionId:           string(rec.RegionID),
-		NetworkId:          string(rec.NetworkID),
-		SecurityGroupIds:   domain.SecurityGroupIDsToStrings(rec.SecurityGroupIDs),
-		Status:             statusPb,
-		Type:               typePb,
-		SessionAffinity:    affinityPb,
-		CrossZoneEnabled:   rec.CrossZoneEnabled,
-		DeletionProtection: rec.DeletionProtection,
+		Id:                    string(rec.ID),
+		ProjectId:             string(rec.ProjectID),
+		CreatedAt:             ts,
+		Name:                  string(rec.Name),
+		Description:           string(rec.Description),
+		Labels:                domain.LabelsToMap(rec.Labels),
+		RegionId:              string(rec.RegionID),
+		Status:                statusPb,
+		Type:                  typePb,
+		SessionAffinity:       affinityPb,
+		PlacementType:         placementPb,
+		DisabledAnnounceZones: append([]string(nil), rec.DisabledAnnounceZones...),
+		DeletionProtection:    rec.DeletionProtection,
+		V4AddressId:           string(rec.AddressIDV4),
+		V6AddressId:           string(rec.AddressIDV6),
 	}, nil
+}
+
+// lbPlacementToPb — domain PlacementType → proto enum. Пусто → UNSPECIFIED (EXTERNAL).
+func lbPlacementToPb(p domain.PlacementType) (lbv1.NetworkLoadBalancer_PlacementType, error) {
+	switch p {
+	case domain.PlacementUnspecified:
+		return lbv1.NetworkLoadBalancer_PLACEMENT_TYPE_UNSPECIFIED, nil
+	case domain.PlacementZonal:
+		return lbv1.NetworkLoadBalancer_ZONAL, nil
+	case domain.PlacementRegional:
+		return lbv1.NetworkLoadBalancer_REGIONAL, nil
+	}
+	return lbv1.NetworkLoadBalancer_PLACEMENT_TYPE_UNSPECIFIED, fmt.Errorf("unknown PlacementType: %q", p)
 }
 
 // lbStatusToPb — domain LBStatus → proto enum NetworkLoadBalancer_Status.

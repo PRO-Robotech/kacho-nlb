@@ -6,10 +6,12 @@ package loadbalancer_test
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"log/slog"
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -20,15 +22,15 @@ import (
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
-	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/fieldmaskpb"
 
 	coredb "github.com/PRO-Robotech/kacho-corelib/db"
 	"github.com/PRO-Robotech/kacho-corelib/ids"
 	"github.com/PRO-Robotech/kacho-corelib/operations"
-	lbv1 "github.com/PRO-Robotech/kacho-nlb/proto/gen/go/kacho/cloud/loadbalancer/v1"
+	lbv1 "github.com/PRO-Robotech/kacho-proto/gen/go/kacho/cloud/loadbalancer/v1"
 
 	"github.com/PRO-Robotech/kacho-nlb/internal/apps/kacho/api/loadbalancer"
+	vpcclient "github.com/PRO-Robotech/kacho-nlb/internal/clients/vpc"
 	"github.com/PRO-Robotech/kacho-nlb/internal/domain"
 	_ "github.com/PRO-Robotech/kacho-nlb/internal/dto/type2pb"
 	"github.com/PRO-Robotech/kacho-nlb/internal/migrations"
@@ -114,7 +116,62 @@ func pollOpDone(t *testing.T, opsRepo operations.Repo, opID string) *operations.
 func makeHandler(t *testing.T, repo *kachopg.Repository, opsRepo operations.Repo) *loadbalancer.Handler {
 	t.Helper()
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
-	return loadbalancer.NewHandler(repo, opsRepo, nil, nil, nil, nil, nil, logger)
+	// vpc/geo недоступны в testcontainers-стенде — VIP-аллокация заглушается stub'ом,
+	// возвращающим уникальный адрес на вызов (DB-сторона саги — реальная). Subnet-
+	// client / address-reader / zone-client — nil (placement / link / drain precheck
+	// пропускаются без vpc/geo; эти сьюты гоняют subnet-auto семейства).
+	return loadbalancer.NewHandler(repo, opsRepo, nil, nil, nil, nil, nil, &stubAddressClient{}, nil, logger)
+}
+
+// stubAddressClient — заглушка vpc InternalAddressClient для integration-стенда
+// (без реального vpc). AllocateInternalIP/IPv6 возвращают уникальный адрес/id на
+// вызов; AttachExisting эхо-адрес; release — no-op.
+type stubAddressClient struct{ seq int64 }
+
+func (s *stubAddressClient) AllocateInternalIP(_ context.Context, _ vpcclient.AllocateInternalIPRequest) (*vpcclient.AllocateResponse, error) {
+	n := atomic.AddInt64(&s.seq, 1)
+	return &vpcclient.AllocateResponse{
+		AddressID: fmt.Sprintf("adr%017d", n),
+		Value:     fmt.Sprintf("100.64.0.%d", n),
+	}, nil
+}
+
+func (s *stubAddressClient) AllocateInternalIPv6(_ context.Context, _ vpcclient.AllocateInternalIPRequest) (*vpcclient.AllocateResponse, error) {
+	n := atomic.AddInt64(&s.seq, 1)
+	return &vpcclient.AllocateResponse{
+		AddressID: fmt.Sprintf("adr%017d", n),
+		Value:     fmt.Sprintf("fd00::%d", n),
+	}, nil
+}
+
+func (s *stubAddressClient) AllocateExternalIP(_ context.Context, _ vpcclient.AllocateExternalIPRequest) (*vpcclient.AllocateResponse, error) {
+	n := atomic.AddInt64(&s.seq, 1)
+	return &vpcclient.AllocateResponse{AddressID: fmt.Sprintf("adr%017d", n), Value: fmt.Sprintf("203.0.113.%d", n)}, nil
+}
+
+func (s *stubAddressClient) AllocateExternalIPv6(_ context.Context, _ vpcclient.AllocateExternalIPRequest) (*vpcclient.AllocateResponse, error) {
+	n := atomic.AddInt64(&s.seq, 1)
+	return &vpcclient.AllocateResponse{AddressID: fmt.Sprintf("adr%017d", n), Value: fmt.Sprintf("2001:db8::%d", n)}, nil
+}
+
+func (s *stubAddressClient) AttachExisting(_ context.Context, req vpcclient.AttachExistingRequest) (*vpcclient.AllocateResponse, error) {
+	n := atomic.AddInt64(&s.seq, 1)
+	return &vpcclient.AllocateResponse{AddressID: req.AddressID, Value: fmt.Sprintf("100.64.9.%d", n)}, nil
+}
+
+func (s *stubAddressClient) FreeIP(context.Context, string, vpcclient.AddressOwner) error { return nil }
+func (s *stubAddressClient) ClearReference(context.Context, string, vpcclient.AddressOwner) error {
+	return nil
+}
+
+// internalAutoReq — INTERNAL REGIONAL Create-request (subnet-auto v4) для e2e.
+func internalAutoReq(projectID, name string) *lbv1.CreateNetworkLoadBalancerRequest {
+	return &lbv1.CreateNetworkLoadBalancerRequest{
+		ProjectId: projectID, RegionId: "ru-central1", Name: name,
+		Type:          lbv1.NetworkLoadBalancer_INTERNAL,
+		PlacementType: lbv1.NetworkLoadBalancer_REGIONAL,
+		V4Source:      &lbv1.VipSource{Source: &lbv1.VipSource_SubnetId{SubnetId: "sub-1"}},
+	}
 }
 
 // ---- Tests -----------------------------------------------------------------
@@ -125,13 +182,7 @@ func TestIntegration_CreateLoadBalancer_EndToEnd(t *testing.T) {
 	opsRepo := newOpsRepo(t, pool)
 	h := makeHandler(t, repo, opsRepo)
 
-	op, err := h.Create(context.Background(), &lbv1.CreateNetworkLoadBalancerRequest{
-		ProjectId: "prj-acme-test",
-		RegionId:  "ru-central1",
-		Name:      "edge-public",
-		Type:      lbv1.NetworkLoadBalancer_EXTERNAL,
-		Labels:    map[string]string{"env": "prod"},
-	})
+	op, err := h.Create(context.Background(), internalAutoReq("prj-acme-test", "edge-public"))
 	require.NoError(t, err)
 	require.False(t, op.GetDone())
 	require.NotEmpty(t, op.GetId())
@@ -430,10 +481,7 @@ func TestIntegration_ListOperations_FilterByResourceID(t *testing.T) {
 	opsRepo := newOpsRepo(t, pool)
 	h := makeHandler(t, repo, opsRepo)
 
-	op, err := h.Create(context.Background(), &lbv1.CreateNetworkLoadBalancerRequest{
-		ProjectId: "prj-ops", RegionId: "ru-central1",
-		Name: "edge", Type: lbv1.NetworkLoadBalancer_EXTERNAL,
-	})
+	op, err := h.Create(context.Background(), internalAutoReq("prj-ops", "edge"))
 	require.NoError(t, err)
 	final := pollOpDone(t, opsRepo, op.GetId())
 	require.Nilf(t, final.Error, "op err: %v", final.Error)
@@ -487,24 +535,19 @@ func TestIntegration_Update_PathUpdatesPersisted(t *testing.T) {
 	require.Equal(t, domain.LbName("edge-new"), got.Name)
 }
 
-// TestIntegration_SessionAffinityAndCrossZone_RoundTrip — Create persists an
-// explicit session_affinity (CLIENT_IP_ONLY, accepted by the DB CHECK) and an
-// explicit cross_zone_enabled=false; an omitted cross_zone_enabled keeps the DB
-// default (true); Update flips both via update_mask.
-func TestIntegration_SessionAffinityAndCrossZone_RoundTrip(t *testing.T) {
+// TestIntegration_SessionAffinity_RoundTrip — Create persists an explicit
+// session_affinity (CLIENT_IP_ONLY, accepted by the DB CHECK); Update flips it
+// back via update_mask.
+func TestIntegration_SessionAffinity_RoundTrip(t *testing.T) {
 	t.Parallel()
 	pool, repo := setupDB(t)
 	opsRepo := newOpsRepo(t, pool)
 	h := makeHandler(t, repo, opsRepo)
 	ctx := context.Background()
 
-	// Create with explicit non-default values.
-	op, err := h.Create(ctx, &lbv1.CreateNetworkLoadBalancerRequest{
-		ProjectId: "prj-sa", RegionId: "ru-central1", Name: "edge-sa",
-		Type:             lbv1.NetworkLoadBalancer_EXTERNAL,
-		SessionAffinity:  lbv1.NetworkLoadBalancer_CLIENT_IP_ONLY,
-		CrossZoneEnabled: proto.Bool(false),
-	})
+	saReq := internalAutoReq("prj-sa", "edge-sa")
+	saReq.SessionAffinity = lbv1.NetworkLoadBalancer_CLIENT_IP_ONLY
+	op, err := h.Create(ctx, saReq)
 	require.NoError(t, err)
 	final := pollOpDone(t, opsRepo, op.GetId())
 	require.Nilf(t, final.Error, "create error: %v", final.Error)
@@ -517,30 +560,12 @@ func TestIntegration_SessionAffinityAndCrossZone_RoundTrip(t *testing.T) {
 	require.Len(t, lbs, 1)
 	lbID := string(lbs[0].ID)
 	require.Equal(t, domain.SessionAffinityClientIPOnly, lbs[0].SessionAffinity)
-	require.False(t, lbs[0].CrossZoneEnabled)
 
-	// Create without cross_zone_enabled → DB default true.
-	op2, err := h.Create(ctx, &lbv1.CreateNetworkLoadBalancerRequest{
-		ProjectId: "prj-sa", RegionId: "ru-central1", Name: "edge-default",
-		Type: lbv1.NetworkLoadBalancer_EXTERNAL,
-	})
-	require.NoError(t, err)
-	require.Nil(t, pollOpDone(t, opsRepo, op2.GetId()).Error)
-	rd2, err := repo.Reader(ctx)
-	require.NoError(t, err)
-	defLBs, _, err := rd2.LoadBalancers().List(ctx, kachorepo.LoadBalancerFilter{ProjectID: "prj-sa", Name: "edge-default"}, kachorepo.Pagination{})
-	require.NoError(t, err)
-	_ = rd2.Close()
-	require.Len(t, defLBs, 1)
-	require.True(t, defLBs[0].CrossZoneEnabled, "omitted cross_zone_enabled keeps DB default true")
-	require.Equal(t, domain.SessionAffinity5Tuple, defLBs[0].SessionAffinity)
-
-	// Update flips both via mask.
+	// Update flips session_affinity back via mask.
 	opU, err := h.Update(ctx, &lbv1.UpdateNetworkLoadBalancerRequest{
 		NetworkLoadBalancerId: lbID,
 		SessionAffinity:       lbv1.NetworkLoadBalancer_FIVE_TUPLE,
-		CrossZoneEnabled:      true,
-		UpdateMask:            &fieldmaskpb.FieldMask{Paths: []string{"session_affinity", "cross_zone_enabled"}},
+		UpdateMask:            &fieldmaskpb.FieldMask{Paths: []string{"session_affinity"}},
 	})
 	require.NoError(t, err)
 	require.Nil(t, pollOpDone(t, opsRepo, opU.GetId()).Error)
@@ -550,7 +575,6 @@ func TestIntegration_SessionAffinityAndCrossZone_RoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	_ = rd3.Close()
 	require.Equal(t, domain.SessionAffinity5Tuple, got.SessionAffinity)
-	require.True(t, got.CrossZoneEnabled)
 }
 
 // ---- Compile guard ----

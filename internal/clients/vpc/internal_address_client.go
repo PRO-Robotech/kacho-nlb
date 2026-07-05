@@ -14,9 +14,10 @@ import (
 
 	"google.golang.org/protobuf/types/known/anypb"
 
-	operationpb "github.com/PRO-Robotech/kacho-corelib/proto/gen/go/kacho/cloud/operation"
+	"github.com/PRO-Robotech/kacho-corelib/auth"
+	operationpb "github.com/PRO-Robotech/kacho-proto/gen/go/kacho/cloud/operation"
 	"github.com/PRO-Robotech/kacho-corelib/retry"
-	vpcpb "github.com/PRO-Robotech/kacho-vpc/proto/gen/go/kacho/cloud/vpc/v1"
+	vpcpb "github.com/PRO-Robotech/kacho-proto/gen/go/kacho/cloud/vpc/v1"
 
 	"github.com/PRO-Robotech/kacho-nlb/internal/domain"
 )
@@ -51,6 +52,17 @@ type AllocateResponse struct {
 	PoolID    string // pool_id для external (пусто для internal)
 }
 
+// AttachExistingRequest — параметры link-привязки принесённого tenant'ом Address к
+// owner-ресурсу (LoadBalancer VIP). Server-side привязка идёт через
+// InternalAddressService.SetAddressReference (атомарный CAS в vpc); mismatch /
+// not-found мапится в generic InvalidArgument (анти-oracle). Owned=false —
+// tenant-owned адрес (link): release снимает только референс, адрес уцелевает.
+type AttachExistingRequest struct {
+	AddressID string
+	Owner     AddressOwner
+	Owned     bool
+}
+
 // InternalAddressClient — port-интерфейс для service-слоя.
 // Каждый метод выполняет атомарную операцию VPC IPAM и устанавливает
 // referrer на новосозданном/изменённом Address-ресурсе.
@@ -75,16 +87,27 @@ type InternalAddressClient interface {
 	// IPv6-VIP из subnet.v6_cidr_blocks. Контракт идентичен AllocateInternalIP.
 	AllocateInternalIPv6(ctx context.Context, req AllocateInternalIPRequest) (*AllocateResponse, error)
 
+	// AttachExisting привязывает принесённый tenant'ом Address к owner-ресурсу
+	// через InternalAddressService.SetAddressReference. Семантика ошибок
+	// (анти-oracle: не подтверждаем чужой ownership/семейство/существование):
+	//   - AlreadyExists (address занят другим referrer)  → domain.ErrFailedPrecondition
+	//   - NotFound / InvalidArgument / PermissionDenied  → generic domain.ErrInvalidArg
+	//                                                       "Illegal argument addressId"
+	//   - Unavailable/DeadlineExceeded                   → domain.ErrUnavailable
+	// Возвращает resolved-значение привязанного Address (Get после успеха).
+	AttachExisting(ctx context.Context, req AttachExistingRequest) (*AllocateResponse, error)
+
 	// FreeIP освобождает Address (idempotent через AddressService.Delete →
 	// NotFound трактуется как успех). ClearReference вызывается автоматически
 	// kacho-vpc при Delete.
 	FreeIP(ctx context.Context, addressID string, owner AddressOwner) error
 
-	// SetReference — атомарный CAS Set used_by=owner на существующем Address
-	// (BYO attach в Listener.Create). Семантика ошибок:
+	// SetReference — атомарный CAS Set used_by=owner на существующем Address.
+	// owned помечает референс как owned (auto-alloc, lifecycle связан) либо
+	// used_by (linked, tenant-owned). Семантика ошибок:
 	//   - AlreadyExists (address уже занят другим owner) → domain.ErrFailedPrecondition
 	//   - NotFound                                       → domain.ErrInvalidArg
-	SetReference(ctx context.Context, addressID string, owner AddressOwner) error
+	SetReference(ctx context.Context, addressID string, owner AddressOwner, owned bool) error
 
 	// ClearReference — снимает used_by с Address (Listener.Delete release BYO).
 	// Идемпотентно: NotFound → успех.
@@ -231,7 +254,8 @@ func (c *internalAddressClient) allocFromCreate(
 	if err != nil {
 		return nil, err
 	}
-	if err := c.SetReference(ctx, addr.GetId(), owner); err != nil {
+	// auto-alloc → owned=true (адрес заказан LB неявно, lifecycle связан).
+	if err := c.SetReference(ctx, addr.GetId(), owner, true); err != nil {
 		// Best-effort cleanup: tear down half-allocated address. Не маскируем
 		// исходную ошибку (она важнее для caller'а).
 		_ = c.FreeIP(ctx, addr.GetId(), owner)
@@ -276,7 +300,7 @@ func (c *internalAddressClient) FreeIP(ctx context.Context, addressID string, ow
 	var op *operationpb.Operation
 	if err := retry.OnUnavailable(ctx, func(ctx context.Context) error {
 		var rerr error
-		op, rerr = c.addrs.Delete(ctx, &vpcpb.DeleteAddressRequest{AddressId: addressID})
+		op, rerr = c.addrs.Delete(auth.PropagateOutgoing(ctx), &vpcpb.DeleteAddressRequest{AddressId: addressID})
 		if rerr != nil {
 			if st, ok := status.FromError(rerr); ok && st.Code() == codes.NotFound {
 				// Idempotent: уже удалён.
@@ -303,7 +327,7 @@ func (c *internalAddressClient) FreeIP(ctx context.Context, addressID string, ow
 
 // SetReference — см. контракт InternalAddressClient.SetReference.
 func (c *internalAddressClient) SetReference(
-	ctx context.Context, addressID string, owner AddressOwner,
+	ctx context.Context, addressID string, owner AddressOwner, owned bool,
 ) error {
 	switch {
 	case addressID == "":
@@ -315,10 +339,12 @@ func (c *internalAddressClient) SetReference(
 	}
 
 	return retry.OnUnavailable(ctx, func(ctx context.Context) error {
-		_, rerr := c.internal.SetAddressReference(ctx, &vpcpb.SetAddressReferenceRequest{
+		_, rerr := c.internal.SetAddressReference(auth.PropagateOutgoing(ctx), &vpcpb.SetAddressReferenceRequest{
 			AddressId:    addressID,
 			ReferrerType: owner.Kind,
 			ReferrerId:   owner.ID,
+			ReferrerName: owner.Name,
+			Owned:        owned,
 		})
 		if rerr == nil {
 			return nil
@@ -351,7 +377,7 @@ func (c *internalAddressClient) ClearReference(
 	// добавим verify когда kacho-vpc дополнит CAS-семантику.
 
 	return retry.OnUnavailable(ctx, func(ctx context.Context) error {
-		_, rerr := c.internal.ClearAddressReference(ctx, &vpcpb.ClearAddressReferenceRequest{
+		_, rerr := c.internal.ClearAddressReference(auth.PropagateOutgoing(ctx), &vpcpb.ClearAddressReferenceRequest{
 			AddressId: addressID,
 		})
 		if rerr == nil {
@@ -373,6 +399,78 @@ func (c *internalAddressClient) ClearReference(
 	})
 }
 
+// AttachExisting — см. контракт InternalAddressClient.AttachExisting.
+func (c *internalAddressClient) AttachExisting(
+	ctx context.Context, req AttachExistingRequest,
+) (*AllocateResponse, error) {
+	switch {
+	case req.AddressID == "":
+		return nil, fmt.Errorf("%w: address_id is empty", domain.ErrInvalidArg)
+	case req.Owner.Kind == "" || req.Owner.ID == "":
+		return nil, fmt.Errorf("%w: owner is empty", domain.ErrInvalidArg)
+	}
+
+	// Атомарный CAS-referrer в vpc (та же tx, что и запись used_by). Mismatch /
+	// not-found → generic InvalidArgument (анти-oracle: не раскрываем чужой
+	// ownership/семейство/несуществование адреса).
+	if err := retry.OnUnavailable(ctx, func(ctx context.Context) error {
+		_, rerr := c.internal.SetAddressReference(auth.PropagateOutgoing(ctx), &vpcpb.SetAddressReferenceRequest{
+			AddressId:    req.AddressID,
+			ReferrerType: req.Owner.Kind,
+			ReferrerId:   req.Owner.ID,
+			Owned:        req.Owned,
+		})
+		if rerr == nil {
+			return nil
+		}
+		st, ok := status.FromError(rerr)
+		if !ok {
+			return fmt.Errorf("vpc set address reference %q: %w", req.AddressID, rerr)
+		}
+		switch st.Code() {
+		case codes.AlreadyExists:
+			return fmt.Errorf("%w: address %s already used by another resource", domain.ErrFailedPrecondition, req.AddressID)
+		case codes.NotFound, codes.InvalidArgument, codes.PermissionDenied:
+			return fmt.Errorf("%w: Illegal argument addressId", domain.ErrInvalidArg)
+		default:
+			return fmt.Errorf("vpc set address reference %q: %w", req.AddressID, rerr)
+		}
+	}); err != nil {
+		return nil, err
+	}
+
+	// Привязка прошла → адрес наш; читаем resolved-значение.
+	addr, err := c.resolveAddressValue(ctx, req.AddressID)
+	if err != nil {
+		return nil, err
+	}
+	return &AllocateResponse{AddressID: req.AddressID, Value: addr}, nil
+}
+
+// resolveAddressValue — Get Address + извлечение resolved IP-строки (любое
+// семейство). Используется после успешной BYO-привязки.
+func (c *internalAddressClient) resolveAddressValue(ctx context.Context, addressID string) (string, error) {
+	var resp *vpcpb.Address
+	if err := retry.OnUnavailable(ctx, func(ctx context.Context) error {
+		var rerr error
+		resp, rerr = c.addrs.Get(auth.PropagateOutgoing(ctx), &vpcpb.GetAddressRequest{AddressId: addressID})
+		return rerr
+	}); err != nil {
+		return "", mapAllocErr(addressID, err)
+	}
+	switch {
+	case resp.GetInternalIpv4Address() != nil:
+		return resp.GetInternalIpv4Address().GetAddress(), nil
+	case resp.GetInternalIpv6Address() != nil:
+		return resp.GetInternalIpv6Address().GetAddress(), nil
+	case resp.GetExternalIpv4Address() != nil:
+		return resp.GetExternalIpv4Address().GetAddress(), nil
+	case resp.GetExternalIpv6Address() != nil:
+		return resp.GetExternalIpv6Address().GetAddress(), nil
+	}
+	return "", nil
+}
+
 // createAddressAndWait вызывает AddressService.Create + poll Operation до
 // done=true. Возвращает созданный Address. Маппит ошибки в sentinel'ы.
 func (c *internalAddressClient) createAddressAndWait(
@@ -381,7 +479,7 @@ func (c *internalAddressClient) createAddressAndWait(
 	var op *operationpb.Operation
 	if err := retry.OnUnavailable(ctx, func(ctx context.Context) error {
 		var rerr error
-		op, rerr = c.addrs.Create(ctx, req)
+		op, rerr = c.addrs.Create(auth.PropagateOutgoing(ctx), req)
 		return rerr
 	}); err != nil {
 		return nil, mapAllocErr("", err)
@@ -421,7 +519,7 @@ func (c *internalAddressClient) waitOperation(
 		var got *operationpb.Operation
 		if err := retry.OnUnavailable(ctx, func(ctx context.Context) error {
 			var rerr error
-			got, rerr = c.ops.Get(ctx, &operationpb.GetOperationRequest{OperationId: id})
+			got, rerr = c.ops.Get(auth.PropagateOutgoing(ctx), &operationpb.GetOperationRequest{OperationId: id})
 			return rerr
 		}); err != nil {
 			return nil, err

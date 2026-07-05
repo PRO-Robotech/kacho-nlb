@@ -13,7 +13,7 @@ import (
 
 	"github.com/PRO-Robotech/kacho-corelib/auth"
 	"github.com/PRO-Robotech/kacho-corelib/retry"
-	vpcpb "github.com/PRO-Robotech/kacho-vpc/proto/gen/go/kacho/cloud/vpc/v1"
+	vpcpb "github.com/PRO-Robotech/kacho-proto/gen/go/kacho/cloud/vpc/v1"
 
 	"github.com/PRO-Robotech/kacho-nlb/internal/domain"
 )
@@ -39,13 +39,18 @@ type Address struct {
 	Value     string // IP в строковой форме (resolved)
 	Family    string // AddressFamilyIPv4 | AddressFamilyIPv6
 	External  bool
-	UsedBy    *AddressOwner // nil если адрес свободен (Used=false)
+	// SubnetID — подсеть internal-адреса (пусто для external). Нужна consumer'у
+	// для placement-guard link'а (подсеть адреса == placement LB).
+	SubnetID string
+	UsedBy   *AddressOwner // nil если адрес свободен (Used=false)
 }
 
 // AddressOwner — текущий referrer Address-ресурса.
 type AddressOwner struct {
 	Kind string // "nlb_listener" | "compute_instance" |...
 	ID   string
+	Name string // display-имя потребителя для used_by-зеркала (vpc не резолвит
+	//            имя сам — это создало бы cycle vpc→nlb; передаётся на SetReference).
 }
 
 // AddressClient — port-интерфейс для service-слоя.
@@ -112,10 +117,12 @@ func (c *addressClient) Get(ctx context.Context, addressID string) (*Address, er
 		addr.Value = resp.GetInternalIpv4Address().GetAddress()
 		addr.Family = AddressFamilyIPv4
 		addr.External = false
+		addr.SubnetID = resp.GetInternalIpv4Address().GetSubnetId()
 	case resp.GetInternalIpv6Address() != nil:
 		addr.Value = resp.GetInternalIpv6Address().GetAddress()
 		addr.Family = AddressFamilyIPv6
 		addr.External = false
+		addr.SubnetID = resp.GetInternalIpv6Address().GetSubnetId()
 	case resp.GetExternalIpv6Address() != nil:
 		addr.Value = resp.GetExternalIpv6Address().GetAddress()
 		addr.Family = AddressFamilyIPv6

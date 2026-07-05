@@ -16,6 +16,19 @@ noted in `docs/architecture/07-known-divergences.md` of kacho-nlb.
 
 ---
 
+> **Sub-phase 8.1 supersession (VIP model).** The VIP-handling requirements below
+> (notably REQ-NLB-CR-01/CR-02 and the listener-level VIP REQ-LST-CR-AUTO-VIP /
+> REQ-LST-CR-BYO / REQ-LST-CR-INTERNAL) are **superseded** by
+> `docs/specs/sub-phase-8.1-nlb-loadbalancer-placement-link-model-acceptance.md`.
+> Under 8.1 the VIP moved from the Listener to the LoadBalancer: every LB carries a
+> per-family VIP *source* on Create (`v4Source`/`v6Source` = `{subnetId}`|`{addressId}`|
+> `{public}`), plus `placementType` (INTERNAL only) and `disabledAnnounceZones`
+> (REGIONAL only); output resolves to `v4AddressId`/`v6AddressId`. `securityGroupIds`,
+> `crossZoneEnabled` and `networkId` inputs are removed. The authoritative Given-When-Then
+> for the LoadBalancer VIP contract is the 8.1 acceptance (8.1-01..8.1-36), verified by
+> the `NLB-CR-*`/`NLB-UPD-STATE-IMMUTABLE-*`/`NLB-DEL-CRUD-RELEASE-*`/`NLB-GET-STATE-LEAN-*`
+> cases. Lifecycle / immutability / pagination / authz REQs below remain valid.
+
 ## REQ-NLB-* — NetworkLoadBalancer resource
 
 | Req | Statement | GWT source | Tests |
@@ -23,7 +36,7 @@ noted in `docs/architecture/07-known-divergences.md` of kacho-nlb.
 | **REQ-NLB-CR-01** | Create with valid (project_id, region_id, name, type) MUST succeed and return Operation envelope; resource MUST be persisted with `status='INACTIVE'` when no listeners + no attached TG exist at creation time. | NLB-001 | `NLB-CR-CRUD-OK` |
 | **REQ-NLB-CR-02** | Create with `type=INTERNAL` MUST be accepted at the LB level without requiring any subnet/network fields; subnet binding happens at the Listener level. | NLB-002 | `NLB-CR-CRUD-INTERNAL` |
 | **REQ-NLB-CR-VAL-NAME** | `name` MUST match the `LbName` domain regex; invalid characters (`_`, `!`, uppercase) MUST be rejected with `INVALID_ARGUMENT` and `BadRequest.field_violations[0].field='name'`. | NLB-003 / NLB-004 | `NLB-CR-VAL-NAME-REGEX`, `NLB-CR-VAL-NAME-UNDERSCORE`, `NLB-CR-VAL-NAME-UPPERCASE` |
-| **REQ-NLB-CR-NEG-REGION** | Create with unknown `region_id` MUST return `NOT_FOUND` from cross-service validation against `kacho-compute.RegionService.Get`. | NLB-006 | `NLB-CR-NEG-REGION-UNKNOWN` |
+| **REQ-NLB-CR-NEG-REGION** | Create with unknown `region_id` MUST fail cross-domain validation against `kacho-geo.RegionService.Get`. Per the data-integrity cross-domain convention a non-existent peer ref is bad input, so the failure is `INVALID_ARGUMENT` ("Region \<id\> not found"), not `NOT_FOUND`. Region validation runs in the async Create worker, so it surfaces on the polled Operation's `error` (code 3), not synchronously. | NLB-006 | `NLB-CR-NEG-REGION-UNKNOWN` |
 | **REQ-NLB-GET-01** | `Get` for an existing LB MUST return the full LB message with `created_at`/`updated_at` timestamps truncated to seconds. | NLB-010 | `NLB-GET-CRUD-OK` |
 | **REQ-NLB-GET-NEG** | `Get` with unknown id MUST return `NOT_FOUND` with `ResourceInfo{resource_type:"NetworkLoadBalancer"}`. | NLB-011 | `NLB-GET-NEG-NF-UNKNOWN` |
 | **REQ-NLB-LST-01** | `List` filtered by `project_id` MUST return paginated array; `pageSize=0` MUST apply server default; `pageSize > 1000` MUST return `INVALID_ARGUMENT`. | NLB-012, NLB-013 | `NLB-LST-*` patterns |

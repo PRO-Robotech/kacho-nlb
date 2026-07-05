@@ -5,8 +5,6 @@ package domain
 
 import (
 	"go.uber.org/multierr"
-
-	coreerrors "github.com/PRO-Robotech/kacho-corelib/errors"
 )
 
 // LoadBalancer — domain entity NetworkLoadBalancer.
@@ -18,29 +16,45 @@ type LoadBalancer struct {
 	ID        ResourceID
 	ProjectID ProjectID
 	RegionID  RegionID
-	// NetworkID — VPC-сеть приватного VIP. Обязателен для INTERNAL, запрещён для
-	// EXTERNAL (cross-field инвариант, validateNetworkBinding). Immutable после
-	// Create. Cross-service ref на kacho-vpc Network (без FK).
-	NetworkID NetworkID
-	// SecurityGroupIDs — набор vpc.SecurityGroup, описывающий допустимый inbound
-	// к VIP (control-plane intent). Валиден только для INTERNAL (SG живут в сети).
-	// Mutable: Update заменяет набор целиком (full-replace через update_mask).
-	// Cross-service refs на kacho-vpc SecurityGroup (без FK); существование +
-	// same-network валидируются peer-API на request-path.
-	SecurityGroupIDs   []SecurityGroupID
+	// PlacementType — размещение INTERNAL-LB (ZONAL|REGIONAL); пусто для EXTERNAL.
+	// Immutable после Create. Coupling placement↔type и матрица источника
+	// валидируются в use-case'е (точные тексты) + DB CHECK (defense-in-depth).
+	PlacementType PlacementType
+	// DisabledAnnounceZones — deny-list зон anycast-drain (REGIONAL only), mutable.
+	// Каждая зона ∈ регион LB; набор не покрывает все зоны (валидация geo в use-case).
+	DisabledAnnounceZones []string
+	// IPFamilies — заявленные при Create семейства VIP (IPV4/IPV6 или оба для
+	// dualstack). Источник истины для family-guard DB-CHECK: непустой address_v4/v6
+	// допустим только если соответствующее семейство объявлено здесь. Immutable.
+	IPFamilies []IPVersion
+	// AddressV4/AddressV6 — output-only VIP-IP на семейство (пуст пока
+	// status=CREATING; заполняется worker'ом после bind — резолвится из
+	// связанного vpc Address). В публичную proto-проекцию НЕ выходит (единый
+	// источник истины IP — связанный Address; §3.6).
+	AddressV4 IPAddress
+	AddressV6 IPAddress
+	// AddressIDV4/AddressIDV6 — связанный vpc Address (auto-allocated либо linked),
+	// per-family. Output-only; immutable после Create; release-ключ compensation/runner.
+	AddressIDV4 AddressID
+	AddressIDV6 AddressID
+	// VipOriginV4/VipOriginV6 — DB-only дискриминатор источника VIP (auto/linked),
+	// per-family. Управляет release-веткой: auto → owned two-step (ClearReference→
+	// FreeIP), linked → ClearReference. В публичную proto-проекцию не выходит.
+	VipOriginV4        VipOrigin
+	VipOriginV6        VipOrigin
 	Name               LbName
 	Description        LbDescription
 	Labels             LbLabels
 	Type               LBType
 	Status             LBStatus
 	SessionAffinity    SessionAffinity
-	CrossZoneEnabled   bool
 	DeletionProtection bool
 }
 
-// Validate проверяет все семантически-нагруженные поля LoadBalancer
-// . multierr.Combine агрегирует ошибки;
-// nil — если всё валидно.
+// Validate проверяет семантически-нагруженные поля LoadBalancer. multierr.Combine
+// агрегирует ошибки; nil — если всё валидно. Coupling placement↔type / drain↔
+// placement и матрица источника VIP валидируются в use-case'е (точные тексты
+// сообщений) + DB CHECK; здесь — только per-field инварианты.
 func (lb LoadBalancer) Validate() error {
 	return multierr.Combine(
 		lb.Name.Validate(),
@@ -49,61 +63,8 @@ func (lb LoadBalancer) Validate() error {
 		lb.Type.Validate(),
 		lb.Status.Validate(),
 		lb.SessionAffinity.Validate(),
-		lb.validateNetworkBinding(),
-		lb.validateSecurityGroupBinding(),
+		lb.PlacementType.Validate(),
 	)
-}
-
-// validateNetworkBinding — cross-field инвариант network_id ↔ type. INTERNAL-LB
-// несёт приватный VIP внутри VPC-сети → network_id обязателен. EXTERNAL-LB несёт
-// публичный VIP (не из сети) → network_id запрещён. Defense-in-depth дублируется
-// DB CHECK (load_balancers_network_id_scheme_check).
-func (lb LoadBalancer) validateNetworkBinding() error {
-	switch lb.Type {
-	case LBTypeInternal:
-		if lb.NetworkID == "" {
-			return coreerrors.InvalidArgument().
-				AddFieldViolation("network_id", "network_id is required for INTERNAL load balancer").
-				Err()
-		}
-	case LBTypeExternal:
-		if lb.NetworkID != "" {
-			return coreerrors.InvalidArgument().
-				AddFieldViolation("network_id", "network_id is only valid for INTERNAL load balancer").
-				Err()
-		}
-	}
-	return nil
-}
-
-// validateSecurityGroupBinding — cross-field инвариант security_group_ids ↔ type
-// + per-id и cardinality. SG живут внутри VPC-сети → непустой набор валиден
-// только для INTERNAL (у EXTERNAL сети нет). Пустые id запрещены; размер набора
-// ограничен MaxSecurityGroupsPerLB. Defense-in-depth дублируется DB CHECK
-// (load_balancers_sg_internal_check).
-func (lb LoadBalancer) validateSecurityGroupBinding() error {
-	if len(lb.SecurityGroupIDs) == 0 {
-		return nil
-	}
-	if lb.Type != LBTypeInternal {
-		return coreerrors.InvalidArgument().
-			AddFieldViolation("security_group_ids",
-				"security_group_ids is only valid for INTERNAL load balancer").
-			Err()
-	}
-	if len(lb.SecurityGroupIDs) > MaxSecurityGroupsPerLB {
-		return coreerrors.InvalidArgument().
-			AddFieldViolation("security_group_ids", "too many security groups (max 5)").
-			Err()
-	}
-	for _, sg := range lb.SecurityGroupIDs {
-		if sg == "" {
-			return coreerrors.InvalidArgument().
-				AddFieldViolation("security_group_ids", "security group id must not be empty").
-				Err()
-		}
-	}
-	return nil
 }
 
 // Equal — deep equality по domain-полям (для noop-detection в Update-flow).
@@ -112,14 +73,41 @@ func (lb LoadBalancer) Equal(other LoadBalancer) bool {
 	return lb.ID == other.ID &&
 		lb.ProjectID == other.ProjectID &&
 		lb.RegionID == other.RegionID &&
-		lb.NetworkID == other.NetworkID &&
-		SecurityGroupIDsEqual(lb.SecurityGroupIDs, other.SecurityGroupIDs) &&
+		lb.PlacementType == other.PlacementType &&
+		stringsEqualOrdered(lb.DisabledAnnounceZones, other.DisabledAnnounceZones) &&
+		ipVersionsEqual(lb.IPFamilies, other.IPFamilies) &&
+		lb.AddressV4 == other.AddressV4 &&
+		lb.AddressV6 == other.AddressV6 &&
+		lb.AddressIDV4 == other.AddressIDV4 &&
+		lb.AddressIDV6 == other.AddressIDV6 &&
+		lb.VipOriginV4 == other.VipOriginV4 &&
+		lb.VipOriginV6 == other.VipOriginV6 &&
 		lb.Name == other.Name &&
 		lb.Description == other.Description &&
 		LabelsEqual(lb.Labels, other.Labels) &&
 		lb.Type == other.Type &&
 		lb.Status == other.Status &&
 		lb.SessionAffinity == other.SessionAffinity &&
-		lb.CrossZoneEnabled == other.CrossZoneEnabled &&
 		lb.DeletionProtection == other.DeletionProtection
+}
+
+// ipVersionsEqual — order-insensitive equality двух наборов IPVersion (семейства
+// VIP). Наборы маленькие (≤2), поэтому простое сравнение по членству.
+func ipVersionsEqual(a, b []IPVersion) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for _, x := range a {
+		found := false
+		for _, y := range b {
+			if x == y {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
 }

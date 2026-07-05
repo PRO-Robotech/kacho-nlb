@@ -13,7 +13,7 @@ import (
 
 	"github.com/PRO-Robotech/kacho-corelib/auth"
 	"github.com/PRO-Robotech/kacho-corelib/retry"
-	vpcpb "github.com/PRO-Robotech/kacho-vpc/proto/gen/go/kacho/cloud/vpc/v1"
+	vpcpb "github.com/PRO-Robotech/kacho-proto/gen/go/kacho/cloud/vpc/v1"
 
 	"github.com/PRO-Robotech/kacho-nlb/internal/domain"
 )
@@ -25,14 +25,20 @@ import (
 // дополнительным geo.ZoneService.Get у NLB); поле оставлено в
 // projection как denormalised mirror (заполняется consumer'ом, не adapter'ом).
 type Subnet struct {
-	ID           string
-	ProjectID    string
-	NetworkID    string
-	ZoneID       string
-	RegionID     string // denormalised mirror; adapter оставляет пустым
-	V4CIDRBlocks []string
-	V6CIDRBlocks []string
+	ID            string
+	ProjectID     string
+	NetworkID     string
+	ZoneID        string
+	RegionID      string // denormalised mirror; adapter оставляет пустым
+	PlacementType string // "REGIONAL" | "ZONAL" | "" (см. SubnetPlacementRegional)
+	V4CIDRBlocks  []string
+	V6CIDRBlocks  []string
 }
+
+// SubnetPlacementRegional — значение Subnet.PlacementType для region-scoped
+// подсети (anycast-префикс, анонсируется active-active из здоровых зон региона).
+// VIP LoadBalancer'а аллоцируется ТОЛЬКО из такой подсети.
+const SubnetPlacementRegional = "REGIONAL"
 
 // SubnetClient — port-интерфейс для service-слоя.
 type SubnetClient interface {
@@ -84,12 +90,13 @@ func (c *subnetClient) Get(ctx context.Context, subnetID string) (*Subnet, error
 	}
 
 	return &Subnet{
-		ID:           resp.GetId(),
-		ProjectID:    resp.GetProjectId(),
-		NetworkID:    resp.GetNetworkId(),
-		ZoneID:       resp.GetZoneId(),
-		V4CIDRBlocks: append([]string(nil), resp.GetV4CidrBlocks()...),
-		V6CIDRBlocks: append([]string(nil), resp.GetV6CidrBlocks()...),
+		ID:            resp.GetId(),
+		ProjectID:     resp.GetProjectId(),
+		NetworkID:     resp.GetNetworkId(),
+		ZoneID:        resp.GetZoneId(),
+		PlacementType: resp.GetPlacementType().String(),
+		V4CIDRBlocks:  append([]string(nil), resp.GetV4CidrBlocks()...),
+		V6CIDRBlocks:  append([]string(nil), resp.GetV6CidrBlocks()...),
 	}, nil
 }
 

@@ -492,7 +492,7 @@ CASES.append(Case(
         # Setup LB and attach
         Step(name="setup-lb", method="POST", path="/nlb/v1/networkLoadBalancers",
              body={"projectId": "{{_suiteProjectId}}", "regionId": "{{_suiteRegionId}}",
-                   "name": "tgr-del-lb-{{runId}}", "type": "EXTERNAL"},
+                   "name": "tgr-del-lb-{{runId}}", "type": "EXTERNAL", "v4Source": {"public": {}}},
              test_script=[*assert_status(200), *save_from_response("j.id", "opId"),
                           *save_from_response("j.metadata && j.metadata.networkLoadBalancerId", "nlbId")]),
         poll_operation_until_done(),
@@ -583,7 +583,7 @@ CASES.append(Case(
         *_setup_tg("mv-attached"),
         Step(name="setup-lb", method="POST", path="/nlb/v1/networkLoadBalancers",
              body={"projectId": "{{_suiteProjectId}}", "regionId": "{{_suiteRegionId}}",
-                   "name": "tgr-mv-lb-{{runId}}", "type": "EXTERNAL"},
+                   "name": "tgr-mv-lb-{{runId}}", "type": "EXTERNAL", "v4Source": {"public": {}}},
              test_script=[*assert_status(200), *save_from_response("j.id", "opId"),
                           *save_from_response("j.metadata && j.metadata.networkLoadBalancerId", "nlbId")]),
         poll_operation_until_done(),

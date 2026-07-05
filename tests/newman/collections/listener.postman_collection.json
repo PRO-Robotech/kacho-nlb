@@ -1,6 +1,6 @@
 {
   "info": {
-    "_postman_id": "62e2c96a-71e1-4295-af84-e553b444af6f",
+    "_postman_id": "06e67159-aaf5-432d-bc67-e1345126f4fd",
     "name": "kacho-nlb / newman / listener",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
@@ -57,7 +57,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\"projectId\": \"{{_suiteProjectId}}\", \"regionId\": \"{{_suiteRegionId}}\", \"name\": \"lst-auto-vip-{{runId}}\", \"type\": \"EXTERNAL\"}",
+              "raw": "{\"projectId\": \"{{_suiteProjectId}}\", \"regionId\": \"{{_suiteRegionId}}\", \"name\": \"lst-auto-vip-{{runId}}\", \"type\": \"EXTERNAL\", \"v4Source\": {\"public\": {}}}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -88,7 +88,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-1",
           "request": {
             "method": "GET",
             "header": [
@@ -190,7 +190,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-2",
           "request": {
             "method": "GET",
             "header": [
@@ -316,7 +316,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-3",
           "request": {
             "method": "GET",
             "header": [
@@ -404,7 +404,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-4",
           "request": {
             "method": "GET",
             "header": [
@@ -481,7 +481,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\"projectId\": \"{{_suiteProjectId}}\", \"regionId\": \"{{_suiteRegionId}}\", \"name\": \"lst-byo-{{runId}}\", \"type\": \"EXTERNAL\"}",
+              "raw": "{\"projectId\": \"{{_suiteProjectId}}\", \"regionId\": \"{{_suiteRegionId}}\", \"name\": \"lst-byo-{{runId}}\", \"type\": \"EXTERNAL\", \"v4Source\": {\"public\": {}}}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -512,7 +512,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-5",
           "request": {
             "method": "GET",
             "header": [
@@ -614,7 +614,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-6",
           "request": {
             "method": "GET",
             "header": [
@@ -740,7 +740,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-7",
           "request": {
             "method": "GET",
             "header": [
@@ -828,7 +828,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-8",
           "request": {
             "method": "GET",
             "header": [
@@ -883,6 +883,116 @@
       "description": "class:CRUD | priority:P1",
       "item": [
         {
+          "name": "setup-subnet",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/vpc/v1/subnets",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "vpc",
+                "v1",
+                "subnets"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"projectId\": \"{{_suiteProjectId}}\", \"networkId\": \"{{existingNetworkId}}\", \"name\": \"lst-sub-int-{{runId}}\", \"v4CidrBlocks\": [\"{{_subnetCidr}}\"], \"placementType\": \"ZONAL\", \"zoneId\": \"{{existingZoneId}}\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "var __seq = parseInt(pm.environment.get('_cidrSeq') || '0', 10) + 1;",
+                  "pm.environment.set('_cidrSeq', String(__seq));",
+                  "var __run = (pm.environment.get('runId') || 'x0');",
+                  "var __h = 0; for (var i = 0; i < __run.length; i++) { __h = (__h * 31 + __run.charCodeAt(i)) & 0xffff; }",
+                  "pm.environment.set('_subnetCidr', '10.' + (200 + (__h % 40)) + '.' + (__seq % 250) + '.0/24');"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.environment.unset('lstSubnetId');",
+                  "if (pm.response.code === 200) {",
+                  "  const j = pm.response.json();",
+                  "  if (j.id) pm.environment.set('opId', j.id);",
+                  "  if (j.metadata && j.metadata.subnetId) pm.environment.set('lstSubnetId', j.metadata.subnetId);",
+                  "} else { pm.environment.unset('opId'); }"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "poll-op-9",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/operations/{{opId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "operations",
+                "{{opId}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.environment.get('opId') || pm.response.code !== 200) {",
+                  "  pm.environment.unset('_pollCount');",
+                  "  return;",
+                  "}",
+                  "pm.test('poll status 200', () => pm.expect(pm.response.code).to.eql(200));",
+                  "const j = pm.response.json();",
+                  "const pc = parseInt(pm.environment.get('_pollCount') || '0', 10);",
+                  "if (!j.done && pc < 6) {",
+                  "  pm.environment.set('_pollCount', String(pc + 1));",
+                  "  postman.setNextRequest(pm.info.requestName);",
+                  "  return;",
+                  "}",
+                  "pm.environment.unset('_pollCount');",
+                  "pm.test('operation done', () => pm.expect(j.done, JSON.stringify(j)).to.eql(true));",
+                  "if (j.error) pm.environment.set('lastOpError', JSON.stringify(j.error));",
+                  "else pm.environment.unset('lastOpError');",
+                  "if (j.response) pm.environment.set('lastOpResponse', JSON.stringify(j.response));"
+                ]
+              }
+            }
+          ]
+        },
+        {
           "name": "setup-lb",
           "request": {
             "method": "POST",
@@ -905,7 +1015,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\"projectId\": \"{{_suiteProjectId}}\", \"regionId\": \"{{_suiteRegionId}}\", \"name\": \"lst-int-{{runId}}\", \"type\": \"INTERNAL\"}",
+              "raw": "{\"projectId\": \"{{_suiteProjectId}}\", \"regionId\": \"{{_suiteRegionId}}\", \"name\": \"lst-int-{{runId}}\", \"type\": \"INTERNAL\", \"placementType\": \"ZONAL\", \"v4Source\": {\"subnetId\": \"{{lstSubnetId}}\"}}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -919,24 +1029,20 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('status 200', () => pm.expect(pm.response.code).to.eql(200));",
-                  "try {",
+                  "pm.environment.unset('nlbId');",
+                  "if (pm.environment.get('lstSubnetId')) {",
+                  "  pm.test('parent INTERNAL LB created', () => pm.expect(pm.response.code).to.eql(200));",
                   "  const j = pm.response.json();",
-                  "  const v = (j.id);",
-                  "  if (v !== undefined && v !== null) pm.environment.set('opId', String(v));",
-                  "} catch (e) {}",
-                  "try {",
-                  "  const j = pm.response.json();",
-                  "  const v = (j.metadata && j.metadata.networkLoadBalancerId);",
-                  "  if (v !== undefined && v !== null) pm.environment.set('nlbId', String(v));",
-                  "} catch (e) {}"
+                  "  if (j.id) pm.environment.set('opId', j.id);",
+                  "  if (j.metadata && j.metadata.networkLoadBalancerId) pm.environment.set('nlbId', j.metadata.networkLoadBalancerId);",
+                  "} else { pm.environment.unset('opId'); }"
                 ]
               }
             }
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-10",
           "request": {
             "method": "GET",
             "header": [
@@ -1038,7 +1144,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-11",
           "request": {
             "method": "GET",
             "header": [
@@ -1126,7 +1232,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-12",
           "request": {
             "method": "GET",
             "header": [
@@ -1214,7 +1320,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-13",
           "request": {
             "method": "GET",
             "header": [
@@ -1291,7 +1397,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\"projectId\": \"{{_suiteProjectId}}\", \"regionId\": \"{{_suiteRegionId}}\", \"name\": \"lst-get-ok-{{runId}}\", \"type\": \"EXTERNAL\"}",
+              "raw": "{\"projectId\": \"{{_suiteProjectId}}\", \"regionId\": \"{{_suiteRegionId}}\", \"name\": \"lst-get-ok-{{runId}}\", \"type\": \"EXTERNAL\", \"v4Source\": {\"public\": {}}}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -1322,7 +1428,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-14",
           "request": {
             "method": "GET",
             "header": [
@@ -1424,7 +1530,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-15",
           "request": {
             "method": "GET",
             "header": [
@@ -1550,7 +1656,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-16",
           "request": {
             "method": "GET",
             "header": [
@@ -1638,7 +1744,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-17",
           "request": {
             "method": "GET",
             "header": [
@@ -1715,7 +1821,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\"projectId\": \"{{_suiteProjectId}}\", \"regionId\": \"{{_suiteRegionId}}\", \"name\": \"lst-list-{{runId}}\", \"type\": \"EXTERNAL\"}",
+              "raw": "{\"projectId\": \"{{_suiteProjectId}}\", \"regionId\": \"{{_suiteRegionId}}\", \"name\": \"lst-list-{{runId}}\", \"type\": \"EXTERNAL\", \"v4Source\": {\"public\": {}}}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -1746,7 +1852,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-18",
           "request": {
             "method": "GET",
             "header": [
@@ -1869,7 +1975,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-19",
           "request": {
             "method": "GET",
             "header": [
@@ -1946,7 +2052,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\"projectId\": \"{{_suiteProjectId}}\", \"regionId\": \"{{_suiteRegionId}}\", \"name\": \"lst-upd-ok-{{runId}}\", \"type\": \"EXTERNAL\"}",
+              "raw": "{\"projectId\": \"{{_suiteProjectId}}\", \"regionId\": \"{{_suiteRegionId}}\", \"name\": \"lst-upd-ok-{{runId}}\", \"type\": \"EXTERNAL\", \"v4Source\": {\"public\": {}}}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -1977,7 +2083,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-20",
           "request": {
             "method": "GET",
             "header": [
@@ -2079,7 +2185,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-21",
           "request": {
             "method": "GET",
             "header": [
@@ -2177,7 +2283,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-22",
           "request": {
             "method": "GET",
             "header": [
@@ -2265,7 +2371,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-23",
           "request": {
             "method": "GET",
             "header": [
@@ -2353,7 +2459,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-24",
           "request": {
             "method": "GET",
             "header": [
@@ -2430,7 +2536,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\"projectId\": \"{{_suiteProjectId}}\", \"regionId\": \"{{_suiteRegionId}}\", \"name\": \"lst-del-auto-{{runId}}\", \"type\": \"EXTERNAL\"}",
+              "raw": "{\"projectId\": \"{{_suiteProjectId}}\", \"regionId\": \"{{_suiteRegionId}}\", \"name\": \"lst-del-auto-{{runId}}\", \"type\": \"EXTERNAL\", \"v4Source\": {\"public\": {}}}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -2461,7 +2567,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-25",
           "request": {
             "method": "GET",
             "header": [
@@ -2563,7 +2669,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-26",
           "request": {
             "method": "GET",
             "header": [
@@ -2652,7 +2758,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-27",
           "request": {
             "method": "GET",
             "header": [
@@ -2740,7 +2846,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-28",
           "request": {
             "method": "GET",
             "header": [
@@ -2817,7 +2923,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\"projectId\": \"{{_suiteProjectId}}\", \"regionId\": \"{{_suiteRegionId}}\", \"name\": \"lst-del-byo-{{runId}}\", \"type\": \"EXTERNAL\"}",
+              "raw": "{\"projectId\": \"{{_suiteProjectId}}\", \"regionId\": \"{{_suiteRegionId}}\", \"name\": \"lst-del-byo-{{runId}}\", \"type\": \"EXTERNAL\", \"v4Source\": {\"public\": {}}}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -2848,7 +2954,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-29",
           "request": {
             "method": "GET",
             "header": [
@@ -2950,7 +3056,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-30",
           "request": {
             "method": "GET",
             "header": [
@@ -3038,7 +3144,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-31",
           "request": {
             "method": "GET",
             "header": [
@@ -3126,7 +3232,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-32",
           "request": {
             "method": "GET",
             "header": [
@@ -3203,7 +3309,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\"projectId\": \"{{_suiteProjectId}}\", \"regionId\": \"{{_suiteRegionId}}\", \"name\": \"lst-lops-{{runId}}\", \"type\": \"EXTERNAL\"}",
+              "raw": "{\"projectId\": \"{{_suiteProjectId}}\", \"regionId\": \"{{_suiteRegionId}}\", \"name\": \"lst-lops-{{runId}}\", \"type\": \"EXTERNAL\", \"v4Source\": {\"public\": {}}}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -3234,7 +3340,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-33",
           "request": {
             "method": "GET",
             "header": [
@@ -3336,7 +3442,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-34",
           "request": {
             "method": "GET",
             "header": [
@@ -3462,7 +3568,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-35",
           "request": {
             "method": "GET",
             "header": [
@@ -3550,7 +3656,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-36",
           "request": {
             "method": "GET",
             "header": [
@@ -3627,7 +3733,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\"projectId\": \"{{_suiteProjectId}}\", \"regionId\": \"{{_suiteRegionId}}\", \"name\": \"lst-port-0-{{runId}}\", \"type\": \"EXTERNAL\"}",
+              "raw": "{\"projectId\": \"{{_suiteProjectId}}\", \"regionId\": \"{{_suiteRegionId}}\", \"name\": \"lst-port-0-{{runId}}\", \"type\": \"EXTERNAL\", \"v4Source\": {\"public\": {}}}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -3658,7 +3764,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-37",
           "request": {
             "method": "GET",
             "header": [
@@ -3793,7 +3899,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-38",
           "request": {
             "method": "GET",
             "header": [
@@ -3870,7 +3976,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\"projectId\": \"{{_suiteProjectId}}\", \"regionId\": \"{{_suiteRegionId}}\", \"name\": \"lst-port-over-{{runId}}\", \"type\": \"EXTERNAL\"}",
+              "raw": "{\"projectId\": \"{{_suiteProjectId}}\", \"regionId\": \"{{_suiteRegionId}}\", \"name\": \"lst-port-over-{{runId}}\", \"type\": \"EXTERNAL\", \"v4Source\": {\"public\": {}}}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -3901,7 +4007,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-39",
           "request": {
             "method": "GET",
             "header": [
@@ -4036,7 +4142,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-40",
           "request": {
             "method": "GET",
             "header": [
@@ -4113,7 +4219,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\"projectId\": \"{{_suiteProjectId}}\", \"regionId\": \"{{_suiteRegionId}}\", \"name\": \"lst-port-neg-{{runId}}\", \"type\": \"EXTERNAL\"}",
+              "raw": "{\"projectId\": \"{{_suiteProjectId}}\", \"regionId\": \"{{_suiteRegionId}}\", \"name\": \"lst-port-neg-{{runId}}\", \"type\": \"EXTERNAL\", \"v4Source\": {\"public\": {}}}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -4144,7 +4250,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-41",
           "request": {
             "method": "GET",
             "header": [
@@ -4275,7 +4381,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-42",
           "request": {
             "method": "GET",
             "header": [
@@ -4352,7 +4458,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\"projectId\": \"{{_suiteProjectId}}\", \"regionId\": \"{{_suiteRegionId}}\", \"name\": \"lst-bad-proto-{{runId}}\", \"type\": \"EXTERNAL\"}",
+              "raw": "{\"projectId\": \"{{_suiteProjectId}}\", \"regionId\": \"{{_suiteRegionId}}\", \"name\": \"lst-bad-proto-{{runId}}\", \"type\": \"EXTERNAL\", \"v4Source\": {\"public\": {}}}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -4383,7 +4489,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-43",
           "request": {
             "method": "GET",
             "header": [
@@ -4514,7 +4620,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-44",
           "request": {
             "method": "GET",
             "header": [
@@ -4569,6 +4675,116 @@
       "description": "class:VAL | priority:P0",
       "item": [
         {
+          "name": "setup-subnet",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/vpc/v1/subnets",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "vpc",
+                "v1",
+                "subnets"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"projectId\": \"{{_suiteProjectId}}\", \"networkId\": \"{{existingNetworkId}}\", \"name\": \"lst-sub-int-no-subnet-{{runId}}\", \"v4CidrBlocks\": [\"{{_subnetCidr}}\"], \"placementType\": \"ZONAL\", \"zoneId\": \"{{existingZoneId}}\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "var __seq = parseInt(pm.environment.get('_cidrSeq') || '0', 10) + 1;",
+                  "pm.environment.set('_cidrSeq', String(__seq));",
+                  "var __run = (pm.environment.get('runId') || 'x0');",
+                  "var __h = 0; for (var i = 0; i < __run.length; i++) { __h = (__h * 31 + __run.charCodeAt(i)) & 0xffff; }",
+                  "pm.environment.set('_subnetCidr', '10.' + (200 + (__h % 40)) + '.' + (__seq % 250) + '.0/24');"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.environment.unset('lstSubnetId');",
+                  "if (pm.response.code === 200) {",
+                  "  const j = pm.response.json();",
+                  "  if (j.id) pm.environment.set('opId', j.id);",
+                  "  if (j.metadata && j.metadata.subnetId) pm.environment.set('lstSubnetId', j.metadata.subnetId);",
+                  "} else { pm.environment.unset('opId'); }"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "poll-op-45",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/operations/{{opId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "operations",
+                "{{opId}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.environment.get('opId') || pm.response.code !== 200) {",
+                  "  pm.environment.unset('_pollCount');",
+                  "  return;",
+                  "}",
+                  "pm.test('poll status 200', () => pm.expect(pm.response.code).to.eql(200));",
+                  "const j = pm.response.json();",
+                  "const pc = parseInt(pm.environment.get('_pollCount') || '0', 10);",
+                  "if (!j.done && pc < 6) {",
+                  "  pm.environment.set('_pollCount', String(pc + 1));",
+                  "  postman.setNextRequest(pm.info.requestName);",
+                  "  return;",
+                  "}",
+                  "pm.environment.unset('_pollCount');",
+                  "pm.test('operation done', () => pm.expect(j.done, JSON.stringify(j)).to.eql(true));",
+                  "if (j.error) pm.environment.set('lastOpError', JSON.stringify(j.error));",
+                  "else pm.environment.unset('lastOpError');",
+                  "if (j.response) pm.environment.set('lastOpResponse', JSON.stringify(j.response));"
+                ]
+              }
+            }
+          ]
+        },
+        {
           "name": "setup-lb",
           "request": {
             "method": "POST",
@@ -4591,7 +4807,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\"projectId\": \"{{_suiteProjectId}}\", \"regionId\": \"{{_suiteRegionId}}\", \"name\": \"lst-int-no-subnet-{{runId}}\", \"type\": \"INTERNAL\"}",
+              "raw": "{\"projectId\": \"{{_suiteProjectId}}\", \"regionId\": \"{{_suiteRegionId}}\", \"name\": \"lst-int-no-subnet-{{runId}}\", \"type\": \"INTERNAL\", \"placementType\": \"ZONAL\", \"v4Source\": {\"subnetId\": \"{{lstSubnetId}}\"}}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -4605,24 +4821,20 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('status 200', () => pm.expect(pm.response.code).to.eql(200));",
-                  "try {",
+                  "pm.environment.unset('nlbId');",
+                  "if (pm.environment.get('lstSubnetId')) {",
+                  "  pm.test('parent INTERNAL LB created', () => pm.expect(pm.response.code).to.eql(200));",
                   "  const j = pm.response.json();",
-                  "  const v = (j.id);",
-                  "  if (v !== undefined && v !== null) pm.environment.set('opId', String(v));",
-                  "} catch (e) {}",
-                  "try {",
-                  "  const j = pm.response.json();",
-                  "  const v = (j.metadata && j.metadata.networkLoadBalancerId);",
-                  "  if (v !== undefined && v !== null) pm.environment.set('nlbId', String(v));",
-                  "} catch (e) {}"
+                  "  if (j.id) pm.environment.set('opId', j.id);",
+                  "  if (j.metadata && j.metadata.networkLoadBalancerId) pm.environment.set('nlbId', j.metadata.networkLoadBalancerId);",
+                  "} else { pm.environment.unset('opId'); }"
                 ]
               }
             }
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-46",
           "request": {
             "method": "GET",
             "header": [
@@ -4719,7 +4931,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-47",
           "request": {
             "method": "GET",
             "header": [
@@ -4841,7 +5053,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-48",
           "request": {
             "method": "GET",
             "header": [
@@ -4918,7 +5130,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\"projectId\": \"{{_suiteProjectId}}\", \"regionId\": \"{{_suiteRegionId}}\", \"name\": \"lst-bad-name-{{runId}}\", \"type\": \"EXTERNAL\"}",
+              "raw": "{\"projectId\": \"{{_suiteProjectId}}\", \"regionId\": \"{{_suiteRegionId}}\", \"name\": \"lst-bad-name-{{runId}}\", \"type\": \"EXTERNAL\", \"v4Source\": {\"public\": {}}}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -4949,7 +5161,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-49",
           "request": {
             "method": "GET",
             "header": [
@@ -5084,7 +5296,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-50",
           "request": {
             "method": "GET",
             "header": [
@@ -5161,7 +5373,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\"projectId\": \"{{_suiteProjectId}}\", \"regionId\": \"{{_suiteRegionId}}\", \"name\": \"lst-port-1-{{runId}}\", \"type\": \"EXTERNAL\"}",
+              "raw": "{\"projectId\": \"{{_suiteProjectId}}\", \"regionId\": \"{{_suiteRegionId}}\", \"name\": \"lst-port-1-{{runId}}\", \"type\": \"EXTERNAL\", \"v4Source\": {\"public\": {}}}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -5192,7 +5404,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-51",
           "request": {
             "method": "GET",
             "header": [
@@ -5294,7 +5506,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-52",
           "request": {
             "method": "GET",
             "header": [
@@ -5382,7 +5594,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-53",
           "request": {
             "method": "GET",
             "header": [
@@ -5470,7 +5682,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-54",
           "request": {
             "method": "GET",
             "header": [
@@ -5547,7 +5759,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\"projectId\": \"{{_suiteProjectId}}\", \"regionId\": \"{{_suiteRegionId}}\", \"name\": \"lst-port-max-{{runId}}\", \"type\": \"EXTERNAL\"}",
+              "raw": "{\"projectId\": \"{{_suiteProjectId}}\", \"regionId\": \"{{_suiteRegionId}}\", \"name\": \"lst-port-max-{{runId}}\", \"type\": \"EXTERNAL\", \"v4Source\": {\"public\": {}}}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -5578,7 +5790,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-55",
           "request": {
             "method": "GET",
             "header": [
@@ -5680,7 +5892,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-56",
           "request": {
             "method": "GET",
             "header": [
@@ -5768,7 +5980,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-57",
           "request": {
             "method": "GET",
             "header": [
@@ -5856,7 +6068,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-58",
           "request": {
             "method": "GET",
             "header": [
@@ -5933,7 +6145,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\"projectId\": \"{{_suiteProjectId}}\", \"regionId\": \"{{_suiteRegionId}}\", \"name\": \"lst-byo-used-{{runId}}\", \"type\": \"EXTERNAL\"}",
+              "raw": "{\"projectId\": \"{{_suiteProjectId}}\", \"regionId\": \"{{_suiteRegionId}}\", \"name\": \"lst-byo-used-{{runId}}\", \"type\": \"EXTERNAL\", \"v4Source\": {\"public\": {}}}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -5964,7 +6176,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-59",
           "request": {
             "method": "GET",
             "header": [
@@ -6061,7 +6273,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-60",
           "request": {
             "method": "GET",
             "header": [
@@ -6183,7 +6395,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-61",
           "request": {
             "method": "GET",
             "header": [
@@ -6260,7 +6472,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\"projectId\": \"{{_suiteProjectId}}\", \"regionId\": \"{{_suiteRegionId}}\", \"name\": \"lst-byo-ipv-{{runId}}\", \"type\": \"EXTERNAL\"}",
+              "raw": "{\"projectId\": \"{{_suiteProjectId}}\", \"regionId\": \"{{_suiteRegionId}}\", \"name\": \"lst-byo-ipv-{{runId}}\", \"type\": \"EXTERNAL\", \"v4Source\": {\"public\": {}}}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -6291,7 +6503,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-62",
           "request": {
             "method": "GET",
             "header": [
@@ -6388,7 +6600,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-63",
           "request": {
             "method": "GET",
             "header": [
@@ -6476,7 +6688,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-64",
           "request": {
             "method": "GET",
             "header": [
@@ -6553,7 +6765,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\"projectId\": \"{{_suiteProjectId}}\", \"regionId\": \"{{_suiteRegionId}}\", \"name\": \"lst-byo-xprj-{{runId}}\", \"type\": \"EXTERNAL\"}",
+              "raw": "{\"projectId\": \"{{_suiteProjectId}}\", \"regionId\": \"{{_suiteRegionId}}\", \"name\": \"lst-byo-xprj-{{runId}}\", \"type\": \"EXTERNAL\", \"v4Source\": {\"public\": {}}}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -6584,7 +6796,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-65",
           "request": {
             "method": "GET",
             "header": [
@@ -6681,7 +6893,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-66",
           "request": {
             "method": "GET",
             "header": [
@@ -6769,7 +6981,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-67",
           "request": {
             "method": "GET",
             "header": [
@@ -6895,7 +7107,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\"projectId\": \"{{_suiteProjectId}}\", \"regionId\": \"{{_suiteRegionId}}\", \"name\": \"lst-dup-pp-{{runId}}\", \"type\": \"EXTERNAL\"}",
+              "raw": "{\"projectId\": \"{{_suiteProjectId}}\", \"regionId\": \"{{_suiteRegionId}}\", \"name\": \"lst-dup-pp-{{runId}}\", \"type\": \"EXTERNAL\", \"v4Source\": {\"public\": {}}}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -6926,7 +7138,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-68",
           "request": {
             "method": "GET",
             "header": [
@@ -7028,7 +7240,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-69",
           "request": {
             "method": "GET",
             "header": [
@@ -7125,7 +7337,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-70",
           "request": {
             "method": "GET",
             "header": [
@@ -7213,7 +7425,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-71",
           "request": {
             "method": "GET",
             "header": [
@@ -7301,7 +7513,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-72",
           "request": {
             "method": "GET",
             "header": [
@@ -7378,7 +7590,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\"projectId\": \"{{_suiteProjectId}}\", \"regionId\": \"{{_suiteRegionId}}\", \"name\": \"lst-vip-comp-{{runId}}\", \"type\": \"EXTERNAL\"}",
+              "raw": "{\"projectId\": \"{{_suiteProjectId}}\", \"regionId\": \"{{_suiteRegionId}}\", \"name\": \"lst-vip-comp-{{runId}}\", \"type\": \"EXTERNAL\", \"v4Source\": {\"public\": {}}}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -7409,7 +7621,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-73",
           "request": {
             "method": "GET",
             "header": [
@@ -7506,7 +7718,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-74",
           "request": {
             "method": "GET",
             "header": [
@@ -7594,7 +7806,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-75",
           "request": {
             "method": "GET",
             "header": [
@@ -7921,7 +8133,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\"projectId\": \"{{_suiteProjectId}}\", \"regionId\": \"{{_suiteRegionId}}\", \"name\": \"lst-def-tg-region-{{runId}}\", \"type\": \"EXTERNAL\"}",
+              "raw": "{\"projectId\": \"{{_suiteProjectId}}\", \"regionId\": \"{{_suiteRegionId}}\", \"name\": \"lst-def-tg-region-{{runId}}\", \"type\": \"EXTERNAL\", \"v4Source\": {\"public\": {}}}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -7952,7 +8164,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-76",
           "request": {
             "method": "GET",
             "header": [
@@ -8054,7 +8266,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-77",
           "request": {
             "method": "GET",
             "header": [
@@ -8156,7 +8368,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-78",
           "request": {
             "method": "GET",
             "header": [
@@ -8254,7 +8466,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-79",
           "request": {
             "method": "GET",
             "header": [
@@ -8342,7 +8554,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-80",
           "request": {
             "method": "GET",
             "header": [
@@ -8430,7 +8642,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-81",
           "request": {
             "method": "GET",
             "header": [
@@ -8518,7 +8730,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-82",
           "request": {
             "method": "GET",
             "header": [
@@ -8854,7 +9066,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\"projectId\": \"{{_suiteProjectId}}\", \"regionId\": \"{{_suiteRegionId}}\", \"name\": \"lst-name-digit-{{runId}}\", \"type\": \"EXTERNAL\"}",
+              "raw": "{\"projectId\": \"{{_suiteProjectId}}\", \"regionId\": \"{{_suiteRegionId}}\", \"name\": \"lst-name-digit-{{runId}}\", \"type\": \"EXTERNAL\", \"v4Source\": {\"public\": {}}}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -8885,7 +9097,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-83",
           "request": {
             "method": "GET",
             "header": [
@@ -9020,7 +9232,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-84",
           "request": {
             "method": "GET",
             "header": [
@@ -9097,7 +9309,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\"projectId\": \"{{_suiteProjectId}}\", \"regionId\": \"{{_suiteRegionId}}\", \"name\": \"lst-name-hyp-{{runId}}\", \"type\": \"EXTERNAL\"}",
+              "raw": "{\"projectId\": \"{{_suiteProjectId}}\", \"regionId\": \"{{_suiteRegionId}}\", \"name\": \"lst-name-hyp-{{runId}}\", \"type\": \"EXTERNAL\", \"v4Source\": {\"public\": {}}}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -9128,7 +9340,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-85",
           "request": {
             "method": "GET",
             "header": [
@@ -9263,7 +9475,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-86",
           "request": {
             "method": "GET",
             "header": [
@@ -9340,7 +9552,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\"projectId\": \"{{_suiteProjectId}}\", \"regionId\": \"{{_suiteRegionId}}\", \"name\": \"lst-tp-0-{{runId}}\", \"type\": \"EXTERNAL\"}",
+              "raw": "{\"projectId\": \"{{_suiteProjectId}}\", \"regionId\": \"{{_suiteRegionId}}\", \"name\": \"lst-tp-0-{{runId}}\", \"type\": \"EXTERNAL\", \"v4Source\": {\"public\": {}}}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -9371,7 +9583,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-87",
           "request": {
             "method": "GET",
             "header": [
@@ -9502,7 +9714,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-88",
           "request": {
             "method": "GET",
             "header": [
@@ -9579,7 +9791,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\"projectId\": \"{{_suiteProjectId}}\", \"regionId\": \"{{_suiteRegionId}}\", \"name\": \"lst-tp-over-{{runId}}\", \"type\": \"EXTERNAL\"}",
+              "raw": "{\"projectId\": \"{{_suiteProjectId}}\", \"regionId\": \"{{_suiteRegionId}}\", \"name\": \"lst-tp-over-{{runId}}\", \"type\": \"EXTERNAL\", \"v4Source\": {\"public\": {}}}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -9610,7 +9822,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-89",
           "request": {
             "method": "GET",
             "header": [
@@ -9741,7 +9953,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-90",
           "request": {
             "method": "GET",
             "header": [
@@ -9818,7 +10030,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\"projectId\": \"{{_suiteProjectId}}\", \"regionId\": \"{{_suiteRegionId}}\", \"name\": \"lst-ipv-unk-{{runId}}\", \"type\": \"EXTERNAL\"}",
+              "raw": "{\"projectId\": \"{{_suiteProjectId}}\", \"regionId\": \"{{_suiteRegionId}}\", \"name\": \"lst-ipv-unk-{{runId}}\", \"type\": \"EXTERNAL\", \"v4Source\": {\"public\": {}}}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -9849,7 +10061,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-91",
           "request": {
             "method": "GET",
             "header": [
@@ -9980,7 +10192,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-92",
           "request": {
             "method": "GET",
             "header": [
@@ -10057,7 +10269,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\"projectId\": \"{{_suiteProjectId}}\", \"regionId\": \"{{_suiteRegionId}}\", \"name\": \"lst-ipv6-{{runId}}\", \"type\": \"EXTERNAL\"}",
+              "raw": "{\"projectId\": \"{{_suiteProjectId}}\", \"regionId\": \"{{_suiteRegionId}}\", \"name\": \"lst-ipv6-{{runId}}\", \"type\": \"EXTERNAL\", \"v4Source\": {\"public\": {}}}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -10088,7 +10300,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-93",
           "request": {
             "method": "GET",
             "header": [
@@ -10190,7 +10402,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-94",
           "request": {
             "method": "GET",
             "header": [
@@ -10278,7 +10490,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-95",
           "request": {
             "method": "GET",
             "header": [
@@ -10366,7 +10578,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-96",
           "request": {
             "method": "GET",
             "header": [
@@ -10443,7 +10655,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\"projectId\": \"{{_suiteProjectId}}\", \"regionId\": \"{{_suiteRegionId}}\", \"name\": \"lst-pp2-{{runId}}\", \"type\": \"EXTERNAL\"}",
+              "raw": "{\"projectId\": \"{{_suiteProjectId}}\", \"regionId\": \"{{_suiteRegionId}}\", \"name\": \"lst-pp2-{{runId}}\", \"type\": \"EXTERNAL\", \"v4Source\": {\"public\": {}}}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -10474,7 +10686,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-97",
           "request": {
             "method": "GET",
             "header": [
@@ -10576,7 +10788,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-98",
           "request": {
             "method": "GET",
             "header": [
@@ -10700,7 +10912,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-99",
           "request": {
             "method": "GET",
             "header": [
@@ -10788,7 +11000,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-100",
           "request": {
             "method": "GET",
             "header": [
@@ -10865,7 +11077,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\"projectId\": \"{{_suiteProjectId}}\", \"regionId\": \"{{_suiteRegionId}}\", \"name\": \"lst-def-tg-clear-{{runId}}\", \"type\": \"EXTERNAL\"}",
+              "raw": "{\"projectId\": \"{{_suiteProjectId}}\", \"regionId\": \"{{_suiteRegionId}}\", \"name\": \"lst-def-tg-clear-{{runId}}\", \"type\": \"EXTERNAL\", \"v4Source\": {\"public\": {}}}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -10896,7 +11108,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-101",
           "request": {
             "method": "GET",
             "header": [
@@ -10998,7 +11210,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-102",
           "request": {
             "method": "GET",
             "header": [
@@ -11096,7 +11308,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-103",
           "request": {
             "method": "GET",
             "header": [
@@ -11184,7 +11396,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-104",
           "request": {
             "method": "GET",
             "header": [
@@ -11272,7 +11484,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-105",
           "request": {
             "method": "GET",
             "header": [
@@ -11430,7 +11642,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\"projectId\": \"{{_suiteProjectId}}\", \"regionId\": \"{{_suiteRegionId}}\", \"name\": \"lst-page-rt-{{runId}}\", \"type\": \"EXTERNAL\"}",
+              "raw": "{\"projectId\": \"{{_suiteProjectId}}\", \"regionId\": \"{{_suiteRegionId}}\", \"name\": \"lst-page-rt-{{runId}}\", \"type\": \"EXTERNAL\", \"v4Source\": {\"public\": {}}}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -11461,7 +11673,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-106",
           "request": {
             "method": "GET",
             "header": [
@@ -11618,7 +11830,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-107",
           "request": {
             "method": "GET",
             "header": [
@@ -11793,7 +12005,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\"projectId\": \"{{_suiteProjectId}}\", \"regionId\": \"{{_suiteRegionId}}\", \"name\": \"lst-udp-{{runId}}\", \"type\": \"EXTERNAL\"}",
+              "raw": "{\"projectId\": \"{{_suiteProjectId}}\", \"regionId\": \"{{_suiteRegionId}}\", \"name\": \"lst-udp-{{runId}}\", \"type\": \"EXTERNAL\", \"v4Source\": {\"public\": {}}}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -11824,7 +12036,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-108",
           "request": {
             "method": "GET",
             "header": [
@@ -11926,7 +12138,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-109",
           "request": {
             "method": "GET",
             "header": [
@@ -12014,7 +12226,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-110",
           "request": {
             "method": "GET",
             "header": [
@@ -12102,7 +12314,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-111",
           "request": {
             "method": "GET",
             "header": [

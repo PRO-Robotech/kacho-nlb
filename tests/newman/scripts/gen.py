@@ -32,6 +32,18 @@ SCRIPTS_DIR = Path(__file__).resolve().parent
 CASES_DIR = ROOT / "cases"
 OUT_DIR = ROOT / "collections"
 
+# Monotonic sequence for poll-step names within a single collection build.
+# poll_operation_until_done() self-retries via postman.setNextRequest(
+# pm.info.requestName); newman resolves setNextRequest by request NAME and jumps
+# to the FIRST match in the flattened collection. Identically-named "poll-op"
+# steps (one per mutation, hundreds per collection) therefore made a mid-suite
+# retry jump back to an early folder and skip the folders in between — a plain
+# `newman run <collection>` traversed only a fraction of the cases. A per-step
+# unique name keeps the self-retry unambiguous so full linear traversal is
+# preserved. Reset to 0 at the start of every module load (load_cases_module) so
+# names are deterministic per collection.
+_poll_seq = 0
+
 
 # ---------------------------------------------------------------------------
 # Declarative structures
@@ -139,9 +151,14 @@ def assert_operation_envelope(prefix_regex: str = "^(nlb|tgr|lst)[a-z0-9]+$") ->
 def poll_operation_until_done() -> Step:
     """Reusable poll step with up-to-6 setNextRequest retries; guards on empty opId.
 
-    Identical contract to kacho-vpc helper of the same name."""
+    Each emitted step carries a unique name (`poll-op-<n>`) so the
+    setNextRequest self-retry is unambiguous under `newman run <collection>`
+    (see `_poll_seq` note): a duplicate "poll-op" name would make newman resolve
+    the retry jump to the first such step and skip intervening folders."""
+    global _poll_seq
+    _poll_seq += 1
     return Step(
-        name="poll-op",
+        name=f"poll-op-{_poll_seq}",
         method="GET",
         path="/operations/{{opId}}",
         test_script=[
@@ -308,6 +325,11 @@ def build_collection(service: str, cases: List[Case]) -> Dict:
 # ---------------------------------------------------------------------------
 
 def load_cases_module(path: Path):
+    # Reset the poll-step counter so each collection's poll-op-<n> names are
+    # deterministic (stable across regenerations) rather than depending on how
+    # many modules were loaded before this one.
+    global _poll_seq
+    _poll_seq = 0
     spec = importlib.util.spec_from_file_location(path.stem, path)
     mod = importlib.util.module_from_spec(spec)
     # Inject helpers into the module's namespace so case files don't import gen.

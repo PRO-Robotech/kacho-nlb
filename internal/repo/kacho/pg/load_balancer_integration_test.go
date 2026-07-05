@@ -401,3 +401,112 @@ func TestLB_ConcurrentInsertSameName(t *testing.T) {
 	assert.Equal(t, 1, successes, "exactly one Insert succeeds")
 	assert.Equal(t, 1, conflicts, "the other gets ErrAlreadyExists")
 }
+
+// newInternalHandle — INTERNAL LB durable-handle (status=CREATING) с заданными
+// семействами VIP. placement_type=REGIONAL (cross-field инвариант INTERNAL).
+func newInternalHandle(projectID, name string, families ...domain.IPVersion) *domain.LoadBalancer {
+	lb := newLB(projectID, name)
+	lb.Type = domain.LBTypeInternal
+	lb.PlacementType = domain.PlacementRegional
+	lb.Status = domain.LBStatusCreating
+	lb.IPFamilies = families
+	return lb
+}
+
+// TestLB_AttachVIP_SequencingNeedsIPFamilies — фиксирует sequencing-инвариант:
+// persist-VIP CAS на handle БЕЗ предзаполненного ip_families нарушает status-aware
+// CHECK (23514 → InvalidArgument). С предзаполненным ip_families — проходит.
+func TestLB_AttachVIP_SequencingNeedsIPFamilies(t *testing.T) {
+	repo, cleanup := newRepo(t, setupTestDB(t))
+	defer cleanup()
+	ctx := context.Background()
+
+	// Handle БЕЗ ip_families — INSERT с пустым address проходит (однонаправленный CHECK).
+	bad := newInternalHandle("prj01SEQTEST0000001", "seq-bad")
+	commitWriter(t, repo, func(w kacho.RepositoryWriter) {
+		_, err := w.LoadBalancers().Insert(ctx, bad)
+		require.NoError(t, err)
+	})
+	// persist-VIP CAS без семейства в ip_families → 23514 → InvalidArgument.
+	w, err := repo.Writer(ctx)
+	require.NoError(t, err)
+	_, attachErr := w.LoadBalancers().AttachVIP(ctx, string(bad.ID), domain.IPVersionV4, "100.64.0.10", "adr00000000000000001", domain.VipOriginAuto)
+	w.Abort()
+	require.Error(t, attachErr)
+	require.ErrorIs(t, attachErr, kacho.ErrInvalidArg,
+		"persist-VIP without pre-filled ip_families must violate status-aware CHECK (23514)")
+
+	// Handle С ip_families=[IPV4] — persist-VIP проходит.
+	good := newInternalHandle("prj01SEQTEST0000001", "seq-good", domain.IPVersionV4)
+	commitWriter(t, repo, func(w kacho.RepositoryWriter) {
+		_, err := w.LoadBalancers().Insert(ctx, good)
+		require.NoError(t, err)
+	})
+	commitWriter(t, repo, func(w kacho.RepositoryWriter) {
+		rec, err := w.LoadBalancers().AttachVIP(ctx, string(good.ID), domain.IPVersionV4, "100.64.0.11", "adr00000000000000002", domain.VipOriginAuto)
+		require.NoError(t, err)
+		require.Equal(t, domain.IPAddress("100.64.0.11"), rec.AddressV4)
+		require.Equal(t, domain.AddressID("adr00000000000000002"), rec.AddressIDV4)
+		require.Equal(t, domain.VipOriginAuto, rec.VipOriginV4)
+	})
+}
+
+// TestLB_AttachVIP_CASIdempotentAndConflict — CAS-attach: повтор того же адреса
+// идемпотентен (1 row), другой адрес на занятое семейство → FailedPrecondition
+// (single-VIP-per-LB).
+func TestLB_AttachVIP_CASIdempotentAndConflict(t *testing.T) {
+	repo, cleanup := newRepo(t, setupTestDB(t))
+	defer cleanup()
+	ctx := context.Background()
+
+	lb := newInternalHandle("prj01CASTEST0000001", "cas-lb", domain.IPVersionV4)
+	commitWriter(t, repo, func(w kacho.RepositoryWriter) {
+		_, err := w.LoadBalancers().Insert(ctx, lb)
+		require.NoError(t, err)
+	})
+	// Первый attach.
+	commitWriter(t, repo, func(w kacho.RepositoryWriter) {
+		_, err := w.LoadBalancers().AttachVIP(ctx, string(lb.ID), domain.IPVersionV4, "100.64.1.5", "adr00000000000000010", domain.VipOriginAuto)
+		require.NoError(t, err)
+	})
+	// Идемпотентный повтор того же адреса — ok (matches already-ours).
+	commitWriter(t, repo, func(w kacho.RepositoryWriter) {
+		_, err := w.LoadBalancers().AttachVIP(ctx, string(lb.ID), domain.IPVersionV4, "100.64.1.5", "adr00000000000000010", domain.VipOriginAuto)
+		require.NoError(t, err)
+	})
+	// Другой адрес на уже занятое семейство → FailedPrecondition.
+	w, err := repo.Writer(ctx)
+	require.NoError(t, err)
+	_, conflictErr := w.LoadBalancers().AttachVIP(ctx, string(lb.ID), domain.IPVersionV4, "100.64.1.6", "adr00000000000000011", domain.VipOriginAuto)
+	w.Abort()
+	require.ErrorIs(t, conflictErr, kacho.ErrFailedPrecondition)
+}
+
+// TestLB_AttachVIP_PerRegionUnique — один и тот же anycast-IP не привязывается к
+// двум LB в регионе: второй persist ловит per-region UNIQUE (23505) → generic
+// FailedPrecondition (анти-oracle).
+func TestLB_AttachVIP_PerRegionUnique(t *testing.T) {
+	repo, cleanup := newRepo(t, setupTestDB(t))
+	defer cleanup()
+	ctx := context.Background()
+
+	a := newInternalHandle("prj01REGTEST0000001", "reg-a", domain.IPVersionV4)
+	b := newInternalHandle("prj01REGTEST0000001", "reg-b", domain.IPVersionV4)
+	commitWriter(t, repo, func(w kacho.RepositoryWriter) {
+		_, err := w.LoadBalancers().Insert(ctx, a)
+		require.NoError(t, err)
+		_, err = w.LoadBalancers().Insert(ctx, b)
+		require.NoError(t, err)
+	})
+	const shared = "100.64.2.42"
+	commitWriter(t, repo, func(w kacho.RepositoryWriter) {
+		_, err := w.LoadBalancers().AttachVIP(ctx, string(a.ID), domain.IPVersionV4, shared, "adr00000000000000020", domain.VipOriginAuto)
+		require.NoError(t, err)
+	})
+	w, err := repo.Writer(ctx)
+	require.NoError(t, err)
+	_, dupErr := w.LoadBalancers().AttachVIP(ctx, string(b.ID), domain.IPVersionV4, shared, "adr00000000000000021", domain.VipOriginAuto)
+	w.Abort()
+	require.ErrorIs(t, dupErr, kacho.ErrFailedPrecondition,
+		"double-claim of one IP in a region must be rejected (per-region UNIQUE 23505)")
+}

@@ -45,7 +45,7 @@ CASES.append(Case(
     steps=[
         Step(name="create-own", method="POST", path=_NLB, auth="jwtProjectEditorA",
              body={"projectId": "{{_suiteProjectId}}", "regionId": "{{_suiteRegionId}}",
-                   "name": "lf-nlb-own-{{runId}}", "type": "EXTERNAL"},
+                   "name": "lf-nlb-own-{{runId}}", "type": "EXTERNAL", "v4Source": {"public": {}}},
              test_script=[*assert_status(200), *save_from_response("j.id", "opId"),
                           *save_from_response("j.metadata && j.metadata.networkLoadBalancerId", "lfNlbId")]),
         poll_operation_until_done(),
@@ -122,7 +122,7 @@ CASES.append(Case(
     steps=[
         Step(name="create-a", method="POST", path=_NLB, auth="jwtProjectEditorA",
              body={"projectId": "{{_suiteProjectId}}", "regionId": "{{_suiteRegionId}}",
-                   "name": "lf-nlb-xleak-{{runId}}", "type": "EXTERNAL"},
+                   "name": "lf-nlb-xleak-{{runId}}", "type": "EXTERNAL", "v4Source": {"public": {}}},
              test_script=[*assert_status(200), *save_from_response("j.id", "opId"),
                           *save_from_response("j.metadata && j.metadata.networkLoadBalancerId", "lfXleakNlbId")]),
         poll_operation_until_done(),

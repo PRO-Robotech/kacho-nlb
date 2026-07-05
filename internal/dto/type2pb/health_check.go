@@ -6,7 +6,7 @@ package type2pb
 import (
 	"time"
 
-	lbv1 "github.com/PRO-Robotech/kacho-nlb/proto/gen/go/kacho/cloud/loadbalancer/v1"
+	lbv1 "github.com/PRO-Robotech/kacho-proto/gen/go/kacho/cloud/loadbalancer/v1"
 	"google.golang.org/protobuf/types/known/durationpb"
 
 	"github.com/PRO-Robotech/kacho-nlb/internal/domain"

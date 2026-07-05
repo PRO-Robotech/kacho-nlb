@@ -36,7 +36,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	kachorepo "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho"
-	lbv1 "github.com/PRO-Robotech/kacho-nlb/proto/gen/go/kacho/cloud/loadbalancer/v1"
+	lbv1 "github.com/PRO-Robotech/kacho-proto/gen/go/kacho/cloud/loadbalancer/v1"
 )
 
 // catchupBatchSize — сколько событий читаем за один EventsSince при catchup.

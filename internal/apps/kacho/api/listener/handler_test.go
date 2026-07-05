@@ -15,7 +15,7 @@ import (
 	"google.golang.org/protobuf/types/known/fieldmaskpb"
 
 	"github.com/PRO-Robotech/kacho-corelib/ids"
-	lbv1 "github.com/PRO-Robotech/kacho-nlb/proto/gen/go/kacho/cloud/loadbalancer/v1"
+	lbv1 "github.com/PRO-Robotech/kacho-proto/gen/go/kacho/cloud/loadbalancer/v1"
 
 	"github.com/PRO-Robotech/kacho-nlb/internal/domain"
 	kachorepo "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho"
@@ -69,7 +69,7 @@ func TestHandler_RoutesEachRPC(t *testing.T) {
 
 	ops := newFakeOpsRepo()
 	internalAddrs := newFakeInternalAddressClient()
-	h := NewHandler(repo, ops, newFakeAddressClient(), internalAddrs, newFakeSubnetClient(), nil, slog.Default())
+	h := NewHandler(repo, ops, internalAddrs, nil, slog.Default())
 
 	t.Run("Get", func(t *testing.T) {
 		t.Parallel()
@@ -97,8 +97,6 @@ func TestHandler_RoutesEachRPC(t *testing.T) {
 			Protocol:       lbv1.Listener_TCP,
 			Port:           81,
 			TargetPort:     8081,
-			IpVersion:      lbv1.IpVersion_IPV4,
-			AddressSpec:    autoSpec(""),
 		})
 		require.NoError(t, err)
 		require.NotEmpty(t, op.Id)

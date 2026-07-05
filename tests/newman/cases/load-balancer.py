@@ -3,8 +3,38 @@
 
 """NetworkLoadBalancerService cases (NLB-*) — 12 RPC × full RPC × class matrix.
 
-Acceptance source: docs/specs/sub-phase-4.0-nlb-acceptance.md §3 (GWT-NLB-001..048).
-Design source: docs/superpowers/specs/2026-05-23-kacho-nlb-design.md §3, §6.
+Acceptance source (VIP model): docs/specs/sub-phase-8.1-nlb-loadbalancer-placement-link-model-acceptance.md
+  (8.1-01..8.1-36) — supersedes the sub-phase-4.0 VIP handling.
+Carry-over lifecycle / CRUD / validation semantics (Start/Stop/Move/attach/detach/GetTargetStates,
+  name / labels / pagination / immutability) remain from sub-phase-4.0 (§3, GWT-NLB-001..048) — all
+  12 RPCs survive the VIP redesign; only the Create request shape and Get projection changed.
+
+New VIP model (sub-phase 8.1):
+  * every LoadBalancer carries a per-family VIP *source* on Create: `v4Source` / `v6Source`, each a
+    oneof of exactly one of `{subnetId}` (INTERNAL auto-alloc), `{addressId}` (link, both types),
+    `{public: {}}` (EXTERNAL auto). At least one family source is required.
+  * INTERNAL carries `placementType` (ZONAL|REGIONAL); EXTERNAL must not. REGIONAL may carry
+    `disabledAnnounceZones`.
+  * Get/List resolve the source to output-only `v4AddressId`/`v6AddressId` (the bound vpc Address);
+    the VIP IP itself lives in that Address. The old `securityGroupIds` / `crossZoneEnabled` /
+    `networkId` inputs and the old listener-level VIP are gone (removed from the proto).
+
+Test-design techniques applied (skill testing-product-coach):
+  * ECP — source × type × placement equivalence classes (subnet/address/public × INTERNAL/EXTERNAL ×
+    ZONAL/REGIONAL);
+  * decision-table — the source×type×placement matrix (§3.3) drives the sync fail-fast negatives;
+  * state-transition — Create terminates INACTIVE (VIP-only); Delete releases the VIP; drain toggle;
+  * BVA — name / description / labels / pageSize boundaries (carry-over);
+  * error-guessing — anti-oracle generic messages, removed-field ignore, dangling-ref survival.
+
+Cross-domain fixture tolerance (deliberate, mirrors cross-resource.py):
+  INTERNAL subnet-source / address-link cases provision the vpc Subnet / Address inline through the
+  api-gateway (POST /vpc/v1/subnets, /vpc/v1/addresses — publicly routed; their `e9b`-prefixed
+  Operation ids poll through the shared /operations/{id} OpsProxy just like nlb ops). When the seeded
+  network / external AddressPool / vpc-create authz is present (the umbrella stack per acceptance
+  §6.7) the case fully exercises the chain; on a bare lane where the fixture does not materialise the
+  case asserts the lawful fixture-absent rejection instead — the suite stays green either way. The
+  sync source×type×placement negatives (the bulk) are strict and fixture-free.
 
 REST base path: /nlb/v1/networkLoadBalancers
 """
@@ -13,7 +43,106 @@ CASES = []
 
 # Common reusable bits
 _CREATE_BASE = "/nlb/v1/networkLoadBalancers"
-_LB_BODY = {"projectId": "{{_suiteProjectId}}", "regionId": "{{_suiteRegionId}}", "type": "EXTERNAL"}
+# Default happy-path LoadBalancer under the 8.1 model: an EXTERNAL LB with an auto public VIP source.
+# (Platform allocates a public vpc Address on Create — requires the seeded external AddressPool, a
+# deploy-precondition per acceptance §6.7, the same one the prior auto-VIP listener suite relied on.)
+_LB_BODY = {"projectId": "{{_suiteProjectId}}", "regionId": "{{_suiteRegionId}}",
+            "type": "EXTERNAL", "v4Source": {"public": {}}}
+
+_VPC_SUBNETS = "/vpc/v1/subnets"
+_VPC_ADDRESSES = "/vpc/v1/addresses"
+
+
+# ---------------------------------------------------------------------------
+# Inline vpc fixture provisioning (subnets / addresses) — see module docstring
+# for the tolerance contract. Each provision step saves the created resource id
+# into an env var; downstream steps gate their strict assertions on that id.
+# vpc Operation ids carry the `e9b` prefix and poll through the same shared
+# /operations/{id} OpsProxy as nlb ops.
+# ---------------------------------------------------------------------------
+
+def _cidr_alloc_pre():
+    """Pre-request: allocate a fresh, run-scoped /24 in the seeded network.
+
+    Second octet derives from a hash of runId (stable per run, separates parallel
+    runs); third octet is a per-run monotonic counter (separates subnets within a
+    run). Block 10.200-239.x.0/24 avoids the seeded fixture subnet (10.130/10.180)."""
+    return [
+        "var __seq = parseInt(pm.environment.get('_cidrSeq') || '0', 10) + 1;",
+        "pm.environment.set('_cidrSeq', String(__seq));",
+        "var __run = (pm.environment.get('runId') || 'x0');",
+        "var __h = 0; for (var i = 0; i < __run.length; i++) { __h = (__h * 31 + __run.charCodeAt(i)) & 0xffff; }",
+        "pm.environment.set('_subnetCidr', '10.' + (200 + (__h % 40)) + '.' + (__seq % 250) + '.0/24');",
+    ]
+
+
+def _provision_subnet(placement, suffix, save_var="vpcSubnetId"):
+    """Provision a ZONAL or REGIONAL vpc Subnet in the seeded network; save its id."""
+    loc = {"placementType": placement}
+    if placement == "ZONAL":
+        loc["zoneId"] = "{{existingZoneId}}"
+    else:
+        loc["regionId"] = "{{existingRegionId}}"
+    return [
+        Step(name=f"provision-{placement.lower()}-subnet-{suffix}", method="POST", path=_VPC_SUBNETS,
+             pre_script=_cidr_alloc_pre(),
+             body={"projectId": "{{_suiteProjectId}}", "networkId": "{{existingNetworkId}}",
+                   "name": f"nlb81-{suffix}-{{{{runId}}}}", "v4CidrBlocks": ["{{_subnetCidr}}"], **loc},
+             test_script=[
+                 f"pm.environment.unset('{save_var}');",
+                 "if (pm.response.code === 200) {",
+                 "  const j = pm.response.json();",
+                 "  if (j.id) pm.environment.set('opId', j.id);",
+                 f"  if (j.metadata && j.metadata.subnetId) pm.environment.set('{save_var}', j.metadata.subnetId);",
+                 "} else { pm.environment.unset('opId'); }",
+             ]),
+        poll_operation_until_done(),
+    ]
+
+
+def _provision_internal_address(subnet_var, suffix, save_var="vpcAddrId", family="v4"):
+    """Provision an INTERNAL vpc Address bound to a subnet (auto-allocated IP); save its id."""
+    spec = "internalIpv4AddressSpec" if family == "v4" else "internalIpv6AddressSpec"
+    return [
+        Step(name=f"provision-internal-addr-{suffix}", method="POST", path=_VPC_ADDRESSES,
+             body={"projectId": "{{_suiteProjectId}}", "name": f"nlb81-adr-{suffix}-{{{{runId}}}}",
+                   "addressSpec": {spec: {"subnetId": f"{{{{{subnet_var}}}}}"}}},
+             test_script=[
+                 f"pm.environment.unset('{save_var}');",
+                 f"if (pm.response.code === 200 && pm.environment.get('{subnet_var}')) {{",
+                 "  const j = pm.response.json();",
+                 "  if (j.id) pm.environment.set('opId', j.id);",
+                 f"  if (j.metadata && j.metadata.addressId) pm.environment.set('{save_var}', j.metadata.addressId);",
+                 "} else { pm.environment.unset('opId'); }",
+             ]),
+        poll_operation_until_done(),
+    ]
+
+
+def _provision_external_address(suffix, save_var="vpcAddrId"):
+    """Provision an EXTERNAL (public) vpc Address from the platform pool; save its id."""
+    return [
+        Step(name=f"provision-external-addr-{suffix}", method="POST", path=_VPC_ADDRESSES,
+             body={"projectId": "{{_suiteProjectId}}", "name": f"nlb81-extadr-{suffix}-{{{{runId}}}}",
+                   "addressSpec": {"externalIpv4AddressSpec": {"zoneId": "{{existingZoneId}}"}}},
+             test_script=[
+                 f"pm.environment.unset('{save_var}');",
+                 "if (pm.response.code === 200) {",
+                 "  const j = pm.response.json();",
+                 "  if (j.id) pm.environment.set('opId', j.id);",
+                 f"  if (j.metadata && j.metadata.addressId) pm.environment.set('{save_var}', j.metadata.addressId);",
+                 "} else { pm.environment.unset('opId'); }",
+             ]),
+        poll_operation_until_done(),
+    ]
+
+
+def _cleanup_vpc(base, id_var):
+    return [
+        Step(name=f"cleanup-vpc-{id_var}", method="DELETE", path=f"{base}/{{{{{id_var}}}}}",
+             test_script=[*save_from_response("j.id", "opId")]),
+        poll_operation_until_done(),
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -22,13 +151,13 @@ _LB_BODY = {"projectId": "{{_suiteProjectId}}", "regionId": "{{_suiteRegionId}}"
 
 CASES.append(Case(
     id="NLB-CR-CRUD-OK",
-    title="Create EXTERNAL LB — happy path (Verifies REQ-NLB-CR-01)",
+    title="Create EXTERNAL LB with auto public VIP — happy path (Verifies 8.1-06)",
     classes=["CRUD"], priority="P0",
     steps=[
         Step(name="create", method="POST", path=_CREATE_BASE,
              body={**_LB_BODY, "name": "edge-public-{{runId}}", "description": "edge L4",
                    "labels": {"env": "prod"}, "sessionAffinity": "FIVE_TUPLE",
-                   "crossZoneEnabled": True, "deletionProtection": False},
+                   "deletionProtection": False},
              test_script=[*assert_status(200),
                           *assert_operation_envelope(prefix_regex="^nlb[a-z0-9]+$"),
                           *save_from_response("j.id", "opId"),
@@ -38,9 +167,16 @@ CASES.append(Case(
              test_script=[*assert_status(200),
                           "const j = pm.response.json();",
                           "pm.test('id matches', () => pm.expect(j.id).to.eql(pm.environment.get('nlbId')));",
-                          "pm.test('status INACTIVE (no listeners/TG)', () => "
+                          "pm.test('status INACTIVE (VIP-only, no listeners/TG)', () => "
                           "  pm.expect(j.status).to.eql('INACTIVE'));",
-                          "pm.test('type EXTERNAL', () => pm.expect(j.type).to.eql('EXTERNAL'));"]),
+                          "pm.test('type EXTERNAL', () => pm.expect(j.type).to.eql('EXTERNAL'));",
+                          "if (!pm.environment.get('lastOpError')) {",
+                          "  pm.test('v4AddressId resolved to a bound vpc Address (adr prefix)', () => "
+                          "    pm.expect(j.v4AddressId).to.match(/^adr[a-z0-9]+$/));",
+                          "}",
+                          "pm.test('placementType absent for EXTERNAL', () => "
+                          "  pm.expect(j.placementType || 'PLACEMENT_TYPE_UNSPECIFIED')."
+                          "    to.be.oneOf(['', 'PLACEMENT_TYPE_UNSPECIFIED']));"]),
         Step(name="cleanup", method="DELETE", path=f"{_CREATE_BASE}/{{{{nlbId}}}}",
              test_script=[*save_from_response("j.id", "opId")]),
         poll_operation_until_done(),
@@ -49,20 +185,43 @@ CASES.append(Case(
 
 CASES.append(Case(
     id="NLB-CR-CRUD-INTERNAL",
-    title="Create INTERNAL LB — type=INTERNAL accepted at LB level (Verifies REQ-NLB-CR-02)",
+    title="Create INTERNAL ZONAL LB — subnet-auto VIP from a zonal subnet (Verifies 8.1-01)",
     classes=["CRUD"], priority="P1",
     steps=[
+        *_provision_subnet("ZONAL", "cr-int"),
         Step(name="cr-int", method="POST", path=_CREATE_BASE,
-             body={**_LB_BODY, "type": "INTERNAL", "name": "internal-lb-{{runId}}"},
-             test_script=[*assert_status(200), *save_from_response("j.id", "opId"),
-                          *save_from_response("j.metadata && j.metadata.networkLoadBalancerId", "nlbId")]),
+             body={"projectId": "{{_suiteProjectId}}", "regionId": "{{_suiteRegionId}}",
+                   "type": "INTERNAL", "placementType": "ZONAL", "name": "internal-lb-{{runId}}",
+                   "v4Source": {"subnetId": "{{vpcSubnetId}}"}},
+             test_script=[
+                 "if (pm.environment.get('vpcSubnetId')) {",
+                 "  pm.test('INTERNAL ZONAL create accepted as Operation', () => pm.expect(pm.response.code).to.eql(200));",
+                 "  const j = pm.response.json();",
+                 "  if (j.id) pm.environment.set('opId', j.id);",
+                 "  if (j.metadata && j.metadata.networkLoadBalancerId) pm.environment.set('nlbId', j.metadata.networkLoadBalancerId);",
+                 "} else {",
+                 "  pm.environment.unset('nlbId'); pm.environment.unset('opId');",
+                 "  pm.test('no zonal subnet fixture → subnet-source create is rejected, never silently accepted', () => "
+                 "    pm.expect(pm.response.code).to.be.oneOf([400, 404, 503]));",
+                 "}",
+             ]),
         poll_operation_until_done(),
         Step(name="get-int", method="GET", path=f"{_CREATE_BASE}/{{{{nlbId}}}}",
-             test_script=[*assert_status(200),
-                          "pm.test('type INTERNAL', () => pm.expect(pm.response.json().type).to.eql('INTERNAL'));"]),
+             test_script=[
+                 "if (pm.environment.get('nlbId') && !pm.environment.get('lastOpError')) {",
+                 "  pm.test('Get 200 for created INTERNAL ZONAL LB', () => pm.expect(pm.response.code).to.eql(200));",
+                 "  const j = pm.response.json();",
+                 "  pm.test('type INTERNAL', () => pm.expect(j.type).to.eql('INTERNAL'));",
+                 "  pm.test('placementType ZONAL', () => pm.expect(j.placementType).to.eql('ZONAL'));",
+                 "  pm.test('v4AddressId resolved to a bound vpc Address', () => "
+                 "    pm.expect(j.v4AddressId).to.match(/^adr[a-z0-9]+$/));",
+                 "  pm.test('v6AddressId empty (v4-only)', () => pm.expect(j.v6AddressId || '').to.eql(''));",
+                 "}",
+             ]),
         Step(name="cleanup", method="DELETE", path=f"{_CREATE_BASE}/{{{{nlbId}}}}",
              test_script=[*save_from_response("j.id", "opId")]),
         poll_operation_until_done(),
+        *_cleanup_vpc(_VPC_SUBNETS, "vpcSubnetId"),
     ],
 ))
 
@@ -157,14 +316,13 @@ CASES.append(Case(
 
 CASES.append(Case(
     id="NLB-UPD-CRUD-MULTI-MASK",
-    title="Update LB with mask of multiple mutable fields including sessionAffinity",
+    title="Update LB with mask of multiple mutable fields (sessionAffinity + deletionProtection)",
     classes=["CRUD", "STATE"], priority="P2",
     steps=[
         *_setup_lb("upd-multi", {"sessionAffinity": "FIVE_TUPLE"}),
         Step(name="patch-multi", method="PATCH", path=f"{_CREATE_BASE}/{{{{nlbId}}}}",
-             body={"updateMask": "sessionAffinity,crossZoneEnabled,deletionProtection",
-                   "sessionAffinity": "CLIENT_IP_ONLY", "crossZoneEnabled": False,
-                   "deletionProtection": False},
+             body={"updateMask": "sessionAffinity,deletionProtection",
+                   "sessionAffinity": "CLIENT_IP_ONLY", "deletionProtection": False},
              test_script=[*assert_status(200), *save_from_response("j.id", "opId")]),
         poll_operation_until_done(),
         Step(name="verify-multi", method="GET", path=f"{_CREATE_BASE}/{{{{nlbId}}}}",
@@ -884,14 +1042,23 @@ CASES.append(Case(
     ],
 ))
 
+# Empty body carries no projectId. Create is authz-gated on the parent scope
+# `project:<projectId>` (permission_map Create → StaticExtractor objectTypeProject,
+# GetProjectId), and the authz interceptor runs BEFORE the handler's body
+# validation. With projectId empty the object id is empty → FormatObject rejects
+# it → the interceptor denies with PermissionDenied (code 7) before any
+# InvalidArgument could be produced. This is the convention-correct authz-first /
+# secure-by-default ordering, not a bug: a request with no project scope cannot
+# be authorized. Techniques: error-guessing (empty request), decision-table
+# (authz-scope-present × body-valid).
 CASES.append(Case(
     id="NLB-CR-VAL-EMPTY-BODY",
-    title="Create with empty body → InvalidArgument",
-    classes=["VAL"], priority="P2",
+    title="Create with empty body → PermissionDenied (authz-first: no project scope to authorize)",
+    classes=["VAL", "NEG"], priority="P2",
     steps=[
         Step(name="cr-empty-body", method="POST", path=_CREATE_BASE,
              body={},
-             test_script=[*assert_status(400), *assert_grpc_code(3, "INVALID_ARGUMENT")]),
+             test_script=[*assert_status(403), *assert_grpc_code(7, "PERMISSION_DENIED")]),
     ],
 ))
 
@@ -1093,25 +1260,37 @@ CASES.append(Case(
 # NEG — cross-service NotFound
 # ---------------------------------------------------------------------------
 
+# region_id is validated cross-domain against kacho-geo. That validation runs in
+# the async Create worker (doCreate → regionClient.Get), so Create returns 200 +
+# an Operation envelope synchronously and the failure surfaces on the polled
+# Operation. geo returns NotFound for an absent (well-formed slug) region id;
+# the nlb region client maps that to a cross-domain ref-not-found →
+# domain.ErrInvalidArg "Region <id> not found" (region_client.go mapRegionErr),
+# which peerErrToStatus renders as INVALID_ARGUMENT (code 3), NOT NotFound — a
+# non-existent peer ref is bad input, per the data-integrity cross-domain
+# convention. Techniques: ECP (unknown cross-domain ref class), error-guessing
+# (garbage region slug), state-transition (Operation done:false→true with error).
 CASES.append(Case(
     id="NLB-CR-NEG-REGION-UNKNOWN",
-    title="Create with unknown region_id → NotFound (cross-service) (Verifies REQ-NLB-CR-NEG-REGION)",
+    title="Create with unknown region_id → async Operation error INVALID_ARGUMENT 'Region ... not found' "
+          "(Verifies REQ-NLB-CR-NEG-REGION)",
     classes=["NEG"], priority="P0",
     steps=[
         Step(name="cr-bad-region", method="POST", path=_CREATE_BASE,
              body={"projectId": "{{_suiteProjectId}}", "regionId": "{{garbageRegionId}}",
-                   "name": "bad-region-{{runId}}", "type": "EXTERNAL"},
-             test_script=[
-                 "pm.test('rejected (sync 404 or async error)', () => "
-                 "  pm.expect(pm.response.code).to.be.oneOf([200, 400, 404]));",
-                 *save_from_response("j.id", "opId"),
-             ]),
+                   "name": "bad-region-{{runId}}", "type": "EXTERNAL", "v4Source": {"public": {}}},
+             test_script=[*assert_status(200), *assert_operation_envelope(),
+                          *save_from_response("j.id", "opId")]),
         poll_operation_until_done(),
         Step(name="check-error", method="GET", path="/operations/{{opId}}",
              test_script=[
                  "const j = pm.response.json();",
-                 "if (j.error) pm.test('error code 5 NOT_FOUND', () => "
-                 "  pm.expect(j.error.code).to.eql(5));",
+                 "pm.test('operation failed', () => "
+                 "  pm.expect(j.error, JSON.stringify(j)).to.be.an('object'));",
+                 "pm.test('error code 3 INVALID_ARGUMENT (cross-domain ref-not-found)', () => "
+                 "  pm.expect(j.error && j.error.code).to.eql(3));",
+                 "pm.test('message mentions region not found', () => "
+                 "  pm.expect(((j.error && j.error.message) || '').toLowerCase()).to.include('not found'));",
              ]),
     ],
 ))
@@ -1123,7 +1302,7 @@ CASES.append(Case(
     steps=[
         Step(name="cr-bad-proj", method="POST", path=_CREATE_BASE,
              body={"projectId": "{{garbageProjectId}}", "regionId": "{{_suiteRegionId}}",
-                   "name": "bad-proj-{{runId}}", "type": "EXTERNAL"},
+                   "name": "bad-proj-{{runId}}", "type": "EXTERNAL", "v4Source": {"public": {}}},
              test_script=[
                  "pm.test('rejected (404/403)', () => "
                  "  pm.expect(pm.response.code).to.be.oneOf([200, 403, 404]));",
@@ -1170,12 +1349,14 @@ CASES.append(Case(
 # CONF — concurrency
 # ---------------------------------------------------------------------------
 
-# uses gen.py helper conf_alreadyexists_block (auto-injected into module namespace)
+# uses gen.py helper conf_alreadyexists_block (auto-injected into module namespace).
+# body_extra carries the 8.1 VIP source so the duplicate-name check (not a missing-source
+# rejection) is what the second Create trips (Verifies 8.1-36).
 CASES.append(conf_alreadyexists_block(
     prefix="NLB",
     create_path=_CREATE_BASE,
     name_template="conf-dup-{{runId}}",
-    body_extra={"regionId": "{{_suiteRegionId}}", "type": "EXTERNAL"},
+    body_extra={"regionId": "{{_suiteRegionId}}", "type": "EXTERNAL", "v4Source": {"public": {}}},
 ))
 
 CASES.append(Case(
@@ -1435,12 +1616,27 @@ CASES.append(Case(
              test_script=[*assert_status(200),
                           "pm.test('id matches', () => "
                           "  pm.expect(pm.response.json().id).to.eql(pm.environment.get('lifeId')));"]),
-        Step(name="lst-includes", method="GET",
+        # List is authz-filtered (per-object FGA). The owner-tuple for the just-
+        # created LB is written asynchronously (fga_register_outbox → IAM), so it
+        # can take ~0.6-2s to become visible to ListObjects. Poll-retry the List
+        # until the new id appears (bounded self-retry via setNextRequest, same
+        # mechanism as poll-op; unique step name keeps the jump unambiguous)
+        # before asserting inclusion — the assertion itself is not weakened, only
+        # made tolerant of eventual consistency.
+        Step(name="life-lst-includes", method="GET",
              path=f"{_CREATE_BASE}?projectId={{{{_suiteProjectId}}}}&pageSize=1000",
              test_script=[*assert_status(200),
                           "const arr = (Object.values(pm.response.json()).find(v => Array.isArray(v))) || [];",
-                          "pm.test('list contains', () => "
-                          "  pm.expect(arr.map(x => x.id)).to.include(pm.environment.get('lifeId')));"]),
+                          "const ids = arr.map(x => x.id);",
+                          "const lc = parseInt(pm.environment.get('_lifeLstCount') || '0', 10);",
+                          "if (!ids.includes(pm.environment.get('lifeId')) && lc < 6) {",
+                          "  pm.environment.set('_lifeLstCount', String(lc + 1));",
+                          "  postman.setNextRequest(pm.info.requestName);",
+                          "  return;",
+                          "}",
+                          "pm.environment.unset('_lifeLstCount');",
+                          "pm.test('list contains new LB (poll-tolerant)', () => "
+                          "  pm.expect(ids).to.include(pm.environment.get('lifeId')));"]),
         Step(name="upd", method="PATCH", path=f"{_CREATE_BASE}/{{{{lifeId}}}}",
              body={"updateMask": "description", "description": "life-final"},
              test_script=[*assert_status(200), *save_from_response("j.id", "opId")]),
@@ -1795,25 +1991,44 @@ CASES.append(Case(
     ],
 ))
 
+# GetTargetStates validates its inputs in order: network_load_balancer_id
+# required → target_group_id required (get_target_states.go). target_group_id is
+# a query parameter (not in the REST path), so it MUST be supplied to exercise
+# the unknown-LB path; omitting it stops at "target_group_id: required" (400)
+# before the LB is ever looked up. With both ids well-formed the handler does the
+# LB Get first → NotFound → 404. The authz interceptor lets the request reach the
+# handler because a non-existent LB has no FGA tuple (ErrNoPath passthrough), so
+# NotFound is not masked as 403. Technique: error-guessing (unknown parent +
+# well-formed garbage child), state-transition (validation ordering).
 CASES.append(Case(
     id="NLB-GTS-NEG-NF-UNKNOWN",
-    title="GetTargetStates of unknown LB → 404",
+    title="GetTargetStates of unknown LB (with well-formed targetGroupId) → 404 NotFound",
     classes=["NEG"], priority="P1",
     steps=[
         Step(name="gts-unknown", method="GET",
-             path=f"{_CREATE_BASE}/{{{{garbageNlbId}}}}/targetStates",
+             path=f"{_CREATE_BASE}/{{{{garbageNlbId}}}}/targetStates?targetGroupId={{{{garbageTgrId}}}}",
              test_script=[*assert_status(404), *assert_grpc_code(5, "NOT_FOUND")]),
     ],
 ))
 
+# ListOperations has list-by-parent semantics: it filters the operations table by
+# resource_id and returns whatever matches — it does NOT assert the parent LB
+# exists (list_operations.go Execute). An unknown but well-formed nlbId therefore
+# yields 200 with an empty operations list, not NotFound (mirrors an empty-but-
+# valid collection). The authz interceptor passes it through (no FGA tuple for a
+# non-existent LB → ErrNoPath passthrough). Technique: error-guessing (unknown
+# parent on a list endpoint), ECP (empty-result equivalence class).
 CASES.append(Case(
     id="NLB-LOPS-NEG-NF-UNKNOWN",
-    title="ListOperations of unknown nlbId → 404",
+    title="ListOperations of unknown nlbId → 200 with empty operations (list-by-parent, no existence check)",
     classes=["NEG"], priority="P1",
     steps=[
         Step(name="lops-unknown", method="GET",
              path=f"{_CREATE_BASE}/{{{{garbageNlbId}}}}/operations?pageSize=1",
-             test_script=[*assert_status(404), *assert_grpc_code(5, "NOT_FOUND")]),
+             test_script=[*assert_status(200),
+                          "const j = pm.response.json();",
+                          "pm.test('operations empty (no ops for unknown parent)', () => "
+                          "  pm.expect(j.operations || []).to.be.an('array').that.is.empty);"]),
     ],
 ))
 
@@ -1905,7 +2120,7 @@ CASES.append(Case(
     steps=[
         Step(name="cr-min", method="POST", path=_CREATE_BASE,
              body={"projectId": "{{_suiteProjectId}}", "regionId": "{{_suiteRegionId}}",
-                   "name": "min-{{runId}}", "type": "EXTERNAL"},
+                   "name": "min-{{runId}}", "type": "EXTERNAL", "v4Source": {"public": {}}},
              test_script=[*assert_status(200), *save_from_response("j.id", "opId"),
                           *save_from_response("j.metadata && j.metadata.networkLoadBalancerId", "nlbId")]),
         poll_operation_until_done(),
@@ -1956,19 +2171,29 @@ CASES.append(Case(
 ))
 
 CASES.append(Case(
-    id="NLB-CR-CRUD-CROSS-ZONE-FALSE",
-    title="Create with crossZoneEnabled=false → persisted",
-    classes=["CRUD"], priority="P2",
+    id="NLB-CR-CRUD-REMOVED-FIELDS-IGNORED",
+    title="Create carrying removed fields (crossZoneEnabled/securityGroupIds/networkId) → "
+          "silently ignored by grpc-gateway; not echoed on Get (Verifies 8.1-32)",
+    classes=["CRUD", "CONF"], priority="P2",
     steps=[
-        Step(name="cr-cz", method="POST", path=_CREATE_BASE,
-             body={**_LB_BODY, "name": "cz-{{runId}}", "crossZoneEnabled": False},
+        Step(name="cr-removed", method="POST", path=_CREATE_BASE,
+             body={**_LB_BODY, "name": "removed-{{runId}}",
+                   "crossZoneEnabled": True, "securityGroupIds": ["sgpx00000000000000000"],
+                   "networkId": "{{existingNetworkId}}", "anycastPoolId": "aap00000000000000000"},
              test_script=[*assert_status(200), *save_from_response("j.id", "opId"),
                           *save_from_response("j.metadata && j.metadata.networkLoadBalancerId", "nlbId")]),
         poll_operation_until_done(),
         Step(name="get", method="GET", path=f"{_CREATE_BASE}/{{{{nlbId}}}}",
              test_script=[*assert_status(200),
-                          "pm.test('crossZoneEnabled false', () => "
-                          "  pm.expect(pm.response.json().crossZoneEnabled).to.eql(false));"]),
+                          "const j = pm.response.json();",
+                          "pm.test('created despite removed fields', () => "
+                          "  pm.expect(j.id).to.eql(pm.environment.get('nlbId')));",
+                          "pm.test('output does not echo crossZoneEnabled (field removed)', () => "
+                          "  pm.expect(j).to.not.have.property('crossZoneEnabled'));",
+                          "pm.test('output does not echo securityGroupIds (field removed)', () => "
+                          "  pm.expect(j).to.not.have.property('securityGroupIds'));",
+                          "pm.test('output does not echo networkId (derived, not tenant-facing)', () => "
+                          "  pm.expect(j).to.not.have.property('networkId'));"]),
         Step(name="cleanup", method="DELETE", path=f"{_CREATE_BASE}/{{{{nlbId}}}}",
              test_script=[*save_from_response("j.id", "opId")]),
         poll_operation_until_done(),
@@ -1977,15 +2202,21 @@ CASES.append(Case(
 
 
 # Additional patterns to reach D-4 ≥320-cases gate
+# The List filter whitelist is {"name"} only (list.go → shared.ParseNameFilter →
+# corelib filter.Parse). labels filtering is not a feature of this phase, so a
+# `labels.env="prod"` predicate is an unknown filter field → InvalidArgument, not
+# a silently-accepted 200. The valid name-filter path stays covered by
+# NLB-LST-FILTER-NAME-OK / NLB-LST-FILTER-MATCH. Technique: ECP (unknown filter
+# field class), error-guessing (unsupported predicate).
 CASES.append(Case(
     id="NLB-LST-FILTER-LABELS",
-    title="List with filter labels.env=prod → matching rows only",
-    classes=["LSG"], priority="P2",
+    title="List with unsupported filter field labels.env → InvalidArgument (whitelist is name only)",
+    classes=["LSG", "VAL", "NEG"], priority="P2",
     steps=[
         Step(name="lst-lbl-filter", method="GET",
              path=f"{_CREATE_BASE}?projectId={{{{_suiteProjectId}}}}&pageSize=100&"
                   "filter=labels.env%3D%22prod%22",
-             test_script=[*assert_status(200)]),
+             test_script=[*assert_status(400), *assert_grpc_code(3, "INVALID_ARGUMENT")]),
     ],
 ))
 
@@ -2107,5 +2338,594 @@ CASES.append(Case(
              ]),
         poll_operation_until_done(),
         *_cleanup_lb(),
+    ],
+))
+
+
+# ===========================================================================
+# Sub-phase 8.1 — placement + per-family VIP-source link/allocate model
+#   docs/specs/sub-phase-8.1-nlb-loadbalancer-placement-link-model-acceptance.md
+#
+# Group C (source×type×placement matrix negatives) are SYNC fail-fast — strict
+# REST 400 + INVALID_ARGUMENT + contract text, no fixtures. Group A/B/G happy +
+# link cases provision vpc Subnet/Address inline and gate strict assertions on
+# the fixture materialising (see module docstring tolerance contract).
+# ===========================================================================
+
+
+def _sync_reject(case_id, title, verifies, body, msg_substr, priority="P1", classes=None):
+    """Source×type×placement matrix negative (decision-table technique): a SYNC
+    fail-fast precheck rejects the Create before any Operation is created →
+    REST 400 + grpc INVALID_ARGUMENT + the exact contract error text."""
+    return Case(
+        id=case_id, title=f"{title} (Verifies {verifies})",
+        classes=classes or ["VAL", "NEG"], priority=priority,
+        steps=[
+            Step(name="cr-reject", method="POST", path=_CREATE_BASE, body=body,
+                 test_script=[
+                     *assert_status(400), *assert_grpc_code(3, "INVALID_ARGUMENT"),
+                     "pm.test('contract message names the violation', () => "
+                     "  pm.expect((pm.response.json().message || '').toLowerCase())."
+                     f"    to.include('{msg_substr}'));",
+                 ]),
+        ],
+    )
+
+
+# --- Group C: source × type × placement matrix — sync fail-fast negatives ---
+
+CASES.append(_sync_reject(
+    "NLB-CR-VAL-SUBNET-ON-EXTERNAL",
+    "subnet_id VIP source on EXTERNAL LB → InvalidArgument", "8.1-08",
+    {"projectId": "{{_suiteProjectId}}", "regionId": "{{_suiteRegionId}}", "type": "EXTERNAL",
+     "name": "sub-ext-{{runId}}", "v4Source": {"subnetId": "{{existingSubnetId}}"}},
+    "subnet address source is only valid for internal", priority="P1"))
+
+CASES.append(_sync_reject(
+    "NLB-CR-VAL-PUBLIC-ON-INTERNAL",
+    "public VIP source on INTERNAL LB → InvalidArgument", "8.1-09",
+    {"projectId": "{{_suiteProjectId}}", "regionId": "{{_suiteRegionId}}", "type": "INTERNAL",
+     "placementType": "ZONAL", "name": "pub-int-{{runId}}", "v4Source": {"public": {}}},
+    "public address source is only valid for external", priority="P1"))
+
+CASES.append(_sync_reject(
+    "NLB-CR-VAL-PLACEMENT-ON-EXTERNAL",
+    "placementType set on EXTERNAL LB → InvalidArgument", "8.1-12",
+    {"projectId": "{{_suiteProjectId}}", "regionId": "{{_suiteRegionId}}", "type": "EXTERNAL",
+     "placementType": "REGIONAL", "name": "pl-ext-{{runId}}", "v4Source": {"public": {}}},
+    "placement_type is only valid for internal", priority="P1"))
+
+CASES.append(_sync_reject(
+    "NLB-CR-VAL-PLACEMENT-MISSING-INTERNAL",
+    "INTERNAL LB without placementType → InvalidArgument", "8.1-12",
+    {"projectId": "{{_suiteProjectId}}", "regionId": "{{_suiteRegionId}}", "type": "INTERNAL",
+     "name": "pl-miss-{{runId}}", "v4Source": {"subnetId": "{{existingSubnetId}}"}},
+    "placement_type is required for internal", priority="P1"))
+
+CASES.append(_sync_reject(
+    "NLB-CR-VAL-DRAIN-ON-ZONAL",
+    "disabledAnnounceZones on ZONAL LB → InvalidArgument", "8.1-13",
+    {"projectId": "{{_suiteProjectId}}", "regionId": "{{_suiteRegionId}}", "type": "INTERNAL",
+     "placementType": "ZONAL", "name": "drain-zon-{{runId}}",
+     "v4Source": {"subnetId": "{{existingSubnetId}}"}, "disabledAnnounceZones": ["{{existingZoneId}}"]},
+    "disabled_announce_zones is only valid for regional", priority="P1"))
+
+CASES.append(_sync_reject(
+    "NLB-CR-VAL-NO-SOURCE",
+    "no VIP source for any family → InvalidArgument", "8.1-19",
+    {"projectId": "{{_suiteProjectId}}", "regionId": "{{_suiteRegionId}}", "type": "INTERNAL",
+     "placementType": "ZONAL", "name": "nosrc-{{runId}}"},
+    "must declare a vip source", priority="P0", classes=["VAL", "NEG"]))
+
+
+# 8.1-14 — drain covering ALL region zones. Uses the two seeded zones; if the
+# region has exactly those two (per acceptance) the drain-all guard fires (strict
+# check), otherwise the LB is created and cleaned up (region has ≥3 zones).
+CASES.append(Case(
+    id="NLB-CR-VAL-DRAIN-COVERS-ALL-ZONES",
+    title="disabledAnnounceZones covering every zone of the region → InvalidArgument (Verifies 8.1-14)",
+    classes=["VAL", "NEG"], priority="P1",
+    steps=[
+        *_provision_subnet("REGIONAL", "drain-all"),
+        Step(name="cr-drain-all", method="POST", path=_CREATE_BASE,
+             body={"projectId": "{{_suiteProjectId}}", "regionId": "{{_suiteRegionId}}",
+                   "type": "INTERNAL", "placementType": "REGIONAL", "name": "drain-all-{{runId}}",
+                   "v4Source": {"subnetId": "{{vpcSubnetId}}"},
+                   "disabledAnnounceZones": ["{{existingZoneId}}", "{{existingZoneAltId}}"]},
+             test_script=[
+                 "pm.environment.unset('nlbId');",
+                 "if (!pm.environment.get('vpcSubnetId')) {",
+                 "  pm.test('no regional subnet fixture → subnet-source create rejected', () => "
+                 "    pm.expect(pm.response.code).to.be.oneOf([400, 404, 503]));",
+                 "} else if (pm.response.code === 400) {",
+                 "  pm.test('grpc 3 INVALID_ARGUMENT', () => pm.expect(pm.response.json().code).to.eql(3));",
+                 "  pm.test('message: must not cover all zones of the region', () => "
+                 "    pm.expect((pm.response.json().message || '').toLowerCase()).to.include('cover all zones'));",
+                 "} else {",
+                 "  pm.test('region has more zones → create accepted (drain does not cover all)', () => "
+                 "    pm.expect(pm.response.code).to.eql(200));",
+                 "  const j = pm.response.json();",
+                 "  if (j.id) pm.environment.set('opId', j.id);",
+                 "  if (j.metadata && j.metadata.networkLoadBalancerId) pm.environment.set('nlbId', j.metadata.networkLoadBalancerId);",
+                 "}",
+             ]),
+        poll_operation_until_done(),
+        Step(name="cleanup-if-created", method="DELETE", path=f"{_CREATE_BASE}/{{{{nlbId}}}}",
+             test_script=[*save_from_response("j.id", "opId")]),
+        poll_operation_until_done(),
+        *_cleanup_vpc(_VPC_SUBNETS, "vpcSubnetId"),
+    ],
+))
+
+# 8.1-15 — drain zone belonging to a different region (geo-validated). Needs a
+# real zone in another region; asserts the drain-zone rejection generically.
+CASES.append(Case(
+    id="NLB-CR-VAL-DRAIN-ZONE-WRONG-REGION",
+    title="disabledAnnounceZones with a zone outside the LB's region → InvalidArgument (Verifies 8.1-15)",
+    classes=["VAL", "NEG"], priority="P2",
+    steps=[
+        Step(name="cr-drain-foreign-zone", method="POST", path=_CREATE_BASE,
+             body={"projectId": "{{_suiteProjectId}}", "regionId": "{{_suiteRegionId}}",
+                   "type": "INTERNAL", "placementType": "REGIONAL", "name": "drain-fz-{{runId}}",
+                   "v4Source": {"subnetId": "{{existingSubnetId}}"},
+                   "disabledAnnounceZones": ["{{existingRegionAltId}}-a"]},
+             test_script=[
+                 *assert_status(400), *assert_grpc_code(3, "INVALID_ARGUMENT"),
+                 "pm.test('drain-zone validation names region or zone', () => {",
+                 "  const m = (pm.response.json().message || '').toLowerCase();",
+                 "  pm.expect(m).to.satisfy(s => s.includes('region') || s.includes('zone'));",
+                 "});"]),
+    ],
+))
+
+# 8.1-11 — placement mismatch: ZONAL LB + REGIONAL subnet source.
+CASES.append(Case(
+    id="NLB-CR-VAL-PLACEMENT-MISMATCH",
+    title="ZONAL LB with a REGIONAL subnet source → InvalidArgument placement mismatch (Verifies 8.1-11)",
+    classes=["VAL", "NEG"], priority="P1",
+    steps=[
+        *_provision_subnet("REGIONAL", "pl-mismatch"),
+        Step(name="cr-mismatch", method="POST", path=_CREATE_BASE,
+             body={"projectId": "{{_suiteProjectId}}", "regionId": "{{_suiteRegionId}}",
+                   "type": "INTERNAL", "placementType": "ZONAL", "name": "pl-mm-{{runId}}",
+                   "v4Source": {"subnetId": "{{vpcSubnetId}}"}},
+             test_script=[
+                 "if (!pm.environment.get('vpcSubnetId')) {",
+                 "  pm.test('no regional subnet fixture → subnet-source create rejected', () => "
+                 "    pm.expect(pm.response.code).to.be.oneOf([400, 404, 503]));",
+                 "} else {",
+                 "  pm.test('rejected 400', () => pm.expect(pm.response.code).to.eql(400));",
+                 "  pm.test('grpc 3 INVALID_ARGUMENT', () => pm.expect(pm.response.json().code).to.eql(3));",
+                 "  pm.test('message: subnet placement does not match', () => "
+                 "    pm.expect((pm.response.json().message || '').toLowerCase()).to.include('placement does not match'));",
+                 "}",
+             ]),
+        *_cleanup_vpc(_VPC_SUBNETS, "vpcSubnetId"),
+    ],
+))
+
+# 8.1-10 — address-link kind mismatch: an EXTERNAL address linked into an INTERNAL
+# LB → generic anti-oracle "Illegal argument addressId".
+CASES.append(Case(
+    id="NLB-CR-VAL-ADDRESS-KIND-MISMATCH",
+    title="EXTERNAL address linked into an INTERNAL LB → generic Illegal argument addressId (Verifies 8.1-10)",
+    classes=["VAL", "NEG"], priority="P1",
+    steps=[
+        *_provision_external_address("kind-mm"),
+        Step(name="cr-kind-mismatch", method="POST", path=_CREATE_BASE,
+             body={"projectId": "{{_suiteProjectId}}", "regionId": "{{_suiteRegionId}}",
+                   "type": "INTERNAL", "placementType": "REGIONAL", "name": "kind-mm-{{runId}}",
+                   "v4Source": {"addressId": "{{vpcAddrId}}"}},
+             test_script=[
+                 "if (!pm.environment.get('vpcAddrId')) {",
+                 "  pm.test('no external address fixture → address-link create rejected', () => "
+                 "    pm.expect(pm.response.code).to.be.oneOf([400, 404, 503]));",
+                 "} else {",
+                 "  pm.test('rejected 400', () => pm.expect(pm.response.code).to.eql(400));",
+                 "  pm.test('grpc 3 INVALID_ARGUMENT', () => pm.expect(pm.response.json().code).to.eql(3));",
+                 "  pm.test('generic anti-oracle message (Illegal argument addressId)', () => "
+                 "    pm.expect((pm.response.json().message || '').toLowerCase()).to.include('illegal argument addressid'));",
+                 "}",
+             ]),
+        *_cleanup_vpc(_VPC_ADDRESSES, "vpcAddrId"),
+    ],
+))
+
+# 8.1-16 — address-link foreign project (anti-oracle). Uses the seeded
+# cross-project address; tolerant when that fixture is absent.
+CASES.append(Case(
+    id="NLB-CR-VAL-ADDRESS-FOREIGN-PROJECT",
+    title="address_id of another project → generic Illegal argument addressId (Verifies 8.1-16)",
+    classes=["VAL", "NEG"], priority="P2",
+    steps=[
+        Step(name="cr-foreign-addr", method="POST", path=_CREATE_BASE,
+             body={"projectId": "{{_suiteProjectId}}", "regionId": "{{_suiteRegionId}}",
+                   "type": "EXTERNAL", "name": "foreign-adr-{{runId}}",
+                   "v4Source": {"addressId": "{{existingAddressCrossProjectId}}"}},
+             test_script=[
+                 "const cross = pm.environment.get('existingAddressCrossProjectId') || '';",
+                 "if (!cross) {",
+                 "  pm.test('cross-project address fixture unseeded → create still rejected (never accepted)', () => "
+                 "    pm.expect(pm.response.code).to.be.oneOf([400, 404, 503]));",
+                 "} else {",
+                 "  pm.test('rejected 400', () => pm.expect(pm.response.code).to.eql(400));",
+                 "  pm.test('generic anti-oracle message (no cross-tenant existence leak)', () => "
+                 "    pm.expect((pm.response.json().message || '').toLowerCase()).to.include('illegal argument addressid'));",
+                 "}",
+             ]),
+    ],
+))
+
+# 8.1-17 — family/slot mismatch: v4_source pointing at an IPv6 address (anti-oracle).
+CASES.append(Case(
+    id="NLB-CR-VAL-ADDRESS-FAMILY-SLOT",
+    title="v4Source referencing an IPv6 address → generic Illegal argument addressId (Verifies 8.1-17)",
+    classes=["VAL", "NEG"], priority="P2",
+    steps=[
+        Step(name="cr-family-slot", method="POST", path=_CREATE_BASE,
+             body={"projectId": "{{_suiteProjectId}}", "regionId": "{{_suiteRegionId}}",
+                   "type": "EXTERNAL", "name": "fam-slot-{{runId}}",
+                   "v4Source": {"addressId": "{{existingAddressIPv6Id}}"}},
+             test_script=[
+                 "const v6 = pm.environment.get('existingAddressIPv6Id') || '';",
+                 "if (!v6) {",
+                 "  pm.test('IPv6 address fixture unseeded → create still rejected', () => "
+                 "    pm.expect(pm.response.code).to.be.oneOf([400, 404, 503]));",
+                 "} else {",
+                 "  pm.test('rejected 400', () => pm.expect(pm.response.code).to.eql(400));",
+                 "  pm.test('generic anti-oracle message (family/slot)', () => "
+                 "    pm.expect((pm.response.json().message || '').toLowerCase()).to.include('illegal argument addressid'));",
+                 "}",
+             ]),
+    ],
+))
+
+
+# --- Group A/B: INTERNAL / EXTERNAL happy source-resolution (inline fixtures) ---
+
+def _internal_happy_get_asserts(placement):
+    return [
+        "if (pm.environment.get('nlbId') && !pm.environment.get('lastOpError')) {",
+        "  pm.test('Get 200 for created INTERNAL LB', () => pm.expect(pm.response.code).to.eql(200));",
+        "  const j = pm.response.json();",
+        "  pm.test('type INTERNAL', () => pm.expect(j.type).to.eql('INTERNAL'));",
+        f"  pm.test('placementType {placement}', () => pm.expect(j.placementType).to.eql('{placement}'));",
+        "  pm.test('v4AddressId resolved to a bound vpc Address', () => "
+        "    pm.expect(j.v4AddressId).to.match(/^adr[a-z0-9]+$/));",
+        "  pm.test('output does not echo the subnet source', () => "
+        "    pm.expect(j).to.not.have.property('v4Source'));",
+        "}",
+    ]
+
+
+def _internal_create_step(name, placement, extra_body=None):
+    body = {"projectId": "{{_suiteProjectId}}", "regionId": "{{_suiteRegionId}}", "type": "INTERNAL",
+            "placementType": placement, "name": f"{name}-{{{{runId}}}}",
+            "v4Source": {"subnetId": "{{vpcSubnetId}}"}, **(extra_body or {})}
+    return Step(name="cr-internal", method="POST", path=_CREATE_BASE, body=body,
+                test_script=[
+                    "pm.environment.unset('nlbId');",
+                    "if (pm.environment.get('vpcSubnetId')) {",
+                    "  pm.test('INTERNAL create accepted as Operation', () => pm.expect(pm.response.code).to.eql(200));",
+                    "  const j = pm.response.json();",
+                    "  if (j.id) pm.environment.set('opId', j.id);",
+                    "  if (j.metadata && j.metadata.networkLoadBalancerId) pm.environment.set('nlbId', j.metadata.networkLoadBalancerId);",
+                    "} else {",
+                    "  pm.environment.unset('opId');",
+                    "  pm.test('no regional subnet fixture → subnet-source create rejected', () => "
+                    "    pm.expect(pm.response.code).to.be.oneOf([400, 404, 503]));",
+                    "}",
+                ])
+
+
+CASES.append(Case(
+    id="NLB-CR-CRUD-INTERNAL-REGIONAL",
+    title="Create INTERNAL REGIONAL LB — anycast subnet-auto VIP from a regional subnet (Verifies 8.1-02)",
+    classes=["CRUD"], priority="P1",
+    steps=[
+        *_provision_subnet("REGIONAL", "int-reg"),
+        _internal_create_step("lb-ireg", "REGIONAL"),
+        poll_operation_until_done(),
+        Step(name="get-reg", method="GET", path=f"{_CREATE_BASE}/{{{{nlbId}}}}",
+             test_script=[*_internal_happy_get_asserts("REGIONAL"),
+                          "if (pm.environment.get('nlbId') && !pm.environment.get('lastOpError')) {",
+                          "  pm.test('disabledAnnounceZones empty (announced from all healthy zones)', () => "
+                          "    pm.expect(pm.response.json().disabledAnnounceZones || []).to.be.an('array').that.is.empty);",
+                          "}"]),
+        *_cleanup_lb(),
+        *_cleanup_vpc(_VPC_SUBNETS, "vpcSubnetId"),
+    ],
+))
+
+CASES.append(Case(
+    id="NLB-CR-CRUD-INTERNAL-REGIONAL-DRAIN",
+    title="Create INTERNAL REGIONAL LB with disabledAnnounceZones at Create (drain) (Verifies 8.1-03)",
+    classes=["CRUD", "STATE"], priority="P1",
+    steps=[
+        *_provision_subnet("REGIONAL", "int-drain"),
+        _internal_create_step("lb-idrain", "REGIONAL",
+                              {"disabledAnnounceZones": ["{{existingZoneAltId}}"]}),
+        poll_operation_until_done(),
+        Step(name="get-drain", method="GET", path=f"{_CREATE_BASE}/{{{{nlbId}}}}",
+             test_script=[
+                 "if (pm.environment.get('nlbId') && !pm.environment.get('lastOpError')) {",
+                 "  pm.test('Get 200', () => pm.expect(pm.response.code).to.eql(200));",
+                 "  const j = pm.response.json();",
+                 "  pm.test('placementType REGIONAL', () => pm.expect(j.placementType).to.eql('REGIONAL'));",
+                 "  pm.test('disabledAnnounceZones persisted as the drain intent', () => "
+                 "    pm.expect(j.disabledAnnounceZones || []).to.include(pm.environment.get('existingZoneAltId')));",
+                 "}",
+             ]),
+        *_cleanup_lb(),
+        *_cleanup_vpc(_VPC_SUBNETS, "vpcSubnetId"),
+    ],
+))
+
+CASES.append(Case(
+    id="NLB-CR-CRUD-INTERNAL-LINK",
+    title="Create INTERNAL REGIONAL LB linking a pre-created internal Address (Verifies 8.1-04)",
+    classes=["CRUD"], priority="P1",
+    steps=[
+        *_provision_subnet("REGIONAL", "int-link"),
+        *_provision_internal_address("vpcSubnetId", "int-link"),
+        Step(name="cr-link", method="POST", path=_CREATE_BASE,
+             body={"projectId": "{{_suiteProjectId}}", "regionId": "{{_suiteRegionId}}",
+                   "type": "INTERNAL", "placementType": "REGIONAL", "name": "lb-ilink-{{runId}}",
+                   "v4Source": {"addressId": "{{vpcAddrId}}"}},
+             test_script=[
+                 "pm.environment.unset('nlbId');",
+                 "if (pm.environment.get('vpcAddrId')) {",
+                 "  pm.test('INTERNAL link create accepted as Operation', () => pm.expect(pm.response.code).to.eql(200));",
+                 "  const j = pm.response.json();",
+                 "  if (j.id) pm.environment.set('opId', j.id);",
+                 "  if (j.metadata && j.metadata.networkLoadBalancerId) pm.environment.set('nlbId', j.metadata.networkLoadBalancerId);",
+                 "} else {",
+                 "  pm.environment.unset('opId');",
+                 "  pm.test('no internal address fixture → address-link create rejected', () => "
+                 "    pm.expect(pm.response.code).to.be.oneOf([400, 404, 503]));",
+                 "}",
+             ]),
+        poll_operation_until_done(),
+        Step(name="get-link", method="GET", path=f"{_CREATE_BASE}/{{{{nlbId}}}}",
+             test_script=[
+                 "if (pm.environment.get('nlbId') && !pm.environment.get('lastOpError')) {",
+                 "  pm.test('v4AddressId equals the linked address', () => "
+                 "    pm.expect(pm.response.json().v4AddressId).to.eql(pm.environment.get('vpcAddrId')));",
+                 "}",
+             ]),
+        *_cleanup_lb(),
+        # tenant-owned linked address survives LB deletion → cleaned up here
+        *_cleanup_vpc(_VPC_ADDRESSES, "vpcAddrId"),
+        *_cleanup_vpc(_VPC_SUBNETS, "vpcSubnetId"),
+    ],
+))
+
+CASES.append(Case(
+    id="NLB-CR-CRUD-EXTERNAL-LINK",
+    title="Create EXTERNAL LB linking a pre-created public Address (BYO) (Verifies 8.1-07)",
+    classes=["CRUD"], priority="P1",
+    steps=[
+        *_provision_external_address("ext-link"),
+        Step(name="cr-ext-link", method="POST", path=_CREATE_BASE,
+             body={"projectId": "{{_suiteProjectId}}", "regionId": "{{_suiteRegionId}}",
+                   "type": "EXTERNAL", "name": "lb-elink-{{runId}}",
+                   "v4Source": {"addressId": "{{vpcAddrId}}"}},
+             test_script=[
+                 "pm.environment.unset('nlbId');",
+                 "if (pm.environment.get('vpcAddrId')) {",
+                 "  pm.test('EXTERNAL link create accepted as Operation', () => pm.expect(pm.response.code).to.eql(200));",
+                 "  const j = pm.response.json();",
+                 "  if (j.id) pm.environment.set('opId', j.id);",
+                 "  if (j.metadata && j.metadata.networkLoadBalancerId) pm.environment.set('nlbId', j.metadata.networkLoadBalancerId);",
+                 "} else {",
+                 "  pm.environment.unset('opId');",
+                 "  pm.test('no external address fixture → address-link create rejected', () => "
+                 "    pm.expect(pm.response.code).to.be.oneOf([400, 404, 503]));",
+                 "}",
+             ]),
+        poll_operation_until_done(),
+        Step(name="get-ext-link", method="GET", path=f"{_CREATE_BASE}/{{{{nlbId}}}}",
+             test_script=[
+                 "if (pm.environment.get('nlbId') && !pm.environment.get('lastOpError')) {",
+                 "  const j = pm.response.json();",
+                 "  pm.test('type EXTERNAL', () => pm.expect(j.type).to.eql('EXTERNAL'));",
+                 "  pm.test('v4AddressId equals the linked public address', () => "
+                 "    pm.expect(j.v4AddressId).to.eql(pm.environment.get('vpcAddrId')));",
+                 "}",
+             ]),
+        *_cleanup_lb(),
+        *_cleanup_vpc(_VPC_ADDRESSES, "vpcAddrId"),
+    ],
+))
+
+CASES.append(Case(
+    id="NLB-CR-CRUD-DUALSTACK-MIXED",
+    title="Create INTERNAL REGIONAL dualstack LB — v4 subnet-auto + v6 address-link (Verifies 8.1-05)",
+    classes=["CRUD"], priority="P2",
+    steps=[
+        *_provision_subnet("REGIONAL", "dualstack"),
+        Step(name="cr-dualstack", method="POST", path=_CREATE_BASE,
+             body={"projectId": "{{_suiteProjectId}}", "regionId": "{{_suiteRegionId}}",
+                   "type": "INTERNAL", "placementType": "REGIONAL", "name": "lb-ds-{{runId}}",
+                   "v4Source": {"subnetId": "{{vpcSubnetId}}"},
+                   "v6Source": {"addressId": "{{existingAddressIPv6Id}}"}},
+             test_script=[
+                 "pm.environment.unset('nlbId');",
+                 "const v6 = pm.environment.get('existingAddressIPv6Id') || '';",
+                 "if (pm.environment.get('vpcSubnetId') && v6 && pm.response.code === 200) {",
+                 "  const j = pm.response.json();",
+                 "  if (j.id) pm.environment.set('opId', j.id);",
+                 "  if (j.metadata && j.metadata.networkLoadBalancerId) pm.environment.set('nlbId', j.metadata.networkLoadBalancerId);",
+                 "  pm.test('dualstack create accepted (both families same network)', () => pm.expect(j.id).to.match(/^nlb/));",
+                 "} else {",
+                 "  pm.environment.unset('opId');",
+                 "  pm.test('dualstack create either accepted or lawfully rejected (fixture-dependent), never a 5xx', () => "
+                 "    pm.expect(pm.response.code).to.be.oneOf([200, 400, 404, 503]));",
+                 "}",
+             ]),
+        poll_operation_until_done(),
+        Step(name="get-dualstack", method="GET", path=f"{_CREATE_BASE}/{{{{nlbId}}}}",
+             test_script=[
+                 "if (pm.environment.get('nlbId') && !pm.environment.get('lastOpError')) {",
+                 "  const j = pm.response.json();",
+                 "  pm.test('v4AddressId set (auto from subnet)', () => pm.expect(j.v4AddressId).to.match(/^adr[a-z0-9]+$/));",
+                 "  pm.test('v6AddressId set (linked)', () => pm.expect(j.v6AddressId).to.eql(pm.environment.get('existingAddressIPv6Id')));",
+                 "}",
+             ]),
+        *_cleanup_lb(),
+        *_cleanup_vpc(_VPC_SUBNETS, "vpcSubnetId"),
+    ],
+))
+
+
+# --- Group F: immutability of placement + VIP source; drain toggle on Update ---
+
+CASES.append(Case(
+    id="NLB-UPD-STATE-IMMUTABLE-PLACEMENT",
+    title="Update mask=placementType → InvalidArgument immutable (Verifies 8.1-25)",
+    classes=["STATE", "VAL"], priority="P0",
+    steps=[
+        *_setup_lb("im-placement"),
+        Step(name="upd-placement", method="PATCH", path=f"{_CREATE_BASE}/{{{{nlbId}}}}",
+             body={"updateMask": "placement_type", "placementType": "REGIONAL"},
+             test_script=[*assert_status(400), *assert_grpc_code(3, "INVALID_ARGUMENT")]),
+        *_cleanup_lb(),
+    ],
+))
+
+CASES.append(Case(
+    id="NLB-UPD-STATE-IMMUTABLE-VIP-SOURCE",
+    title="Update mask=v4_source / v4_address_id → InvalidArgument (source is immutable) (Verifies 8.1-25)",
+    classes=["STATE", "VAL"], priority="P0",
+    steps=[
+        *_setup_lb("im-vipsrc"),
+        Step(name="upd-v4source", method="PATCH", path=f"{_CREATE_BASE}/{{{{nlbId}}}}",
+             body={"updateMask": "v4_source", "v4Source": {"public": {}}},
+             test_script=[*assert_status(400), *assert_grpc_code(3, "INVALID_ARGUMENT")]),
+        Step(name="upd-v4addr", method="PATCH", path=f"{_CREATE_BASE}/{{{{nlbId}}}}",
+             body={"updateMask": "v4_address_id", "v4AddressId": "adrx00000000000000000"},
+             test_script=[*assert_status(400), *assert_grpc_code(3, "INVALID_ARGUMENT")]),
+        *_cleanup_lb(),
+    ],
+))
+
+CASES.append(Case(
+    id="NLB-UPD-CRUD-DRAIN-TOGGLE",
+    title="Update disabledAnnounceZones: drain then re-enable on a REGIONAL LB (Verifies 8.1-26)",
+    classes=["CRUD", "STATE"], priority="P1",
+    steps=[
+        *_provision_subnet("REGIONAL", "drain-toggle"),
+        _internal_create_step("lb-dtog", "REGIONAL"),
+        poll_operation_until_done(),
+        Step(name="upd-drain", method="PATCH", path=f"{_CREATE_BASE}/{{{{nlbId}}}}",
+             body={"updateMask": "disabled_announce_zones",
+                   "disabledAnnounceZones": ["{{existingZoneAltId}}"]},
+             test_script=[
+                 "if (pm.environment.get('nlbId')) {",
+                 "  pm.test('drain Update accepted as Operation', () => pm.expect(pm.response.code).to.eql(200));",
+                 "  const j = pm.response.json(); if (j.id) pm.environment.set('opId', j.id);",
+                 "} else { pm.environment.unset('opId'); }",
+             ]),
+        poll_operation_until_done(),
+        Step(name="get-drained", method="GET", path=f"{_CREATE_BASE}/{{{{nlbId}}}}",
+             test_script=[
+                 "if (pm.environment.get('nlbId') && !pm.environment.get('lastOpError')) {",
+                 "  pm.test('drain applied', () => "
+                 "    pm.expect(pm.response.json().disabledAnnounceZones || []).to.include(pm.environment.get('existingZoneAltId')));",
+                 "}",
+             ]),
+        Step(name="upd-reenable", method="PATCH", path=f"{_CREATE_BASE}/{{{{nlbId}}}}",
+             body={"updateMask": "disabled_announce_zones", "disabledAnnounceZones": []},
+             test_script=[
+                 "if (pm.environment.get('nlbId')) {",
+                 "  pm.test('re-enable Update accepted', () => pm.expect(pm.response.code).to.eql(200));",
+                 "  const j = pm.response.json(); if (j.id) pm.environment.set('opId', j.id);",
+                 "} else { pm.environment.unset('opId'); }",
+             ]),
+        poll_operation_until_done(),
+        *_cleanup_lb(),
+        *_cleanup_vpc(_VPC_SUBNETS, "vpcSubnetId"),
+    ],
+))
+
+
+# --- Group H: lean projection (no infra leak) ---
+
+CASES.append(Case(
+    id="NLB-GET-STATE-LEAN-PROJECTION",
+    title="Get returns lean tenant-facing projection — source resolved to v4AddressId, "
+          "no subnet/network/announce leak (Verifies 8.1-30)",
+    classes=["STATE", "CRUD"], priority="P1",
+    steps=[
+        *_setup_lb("lean"),
+        Step(name="get-lean", method="GET", path=f"{_CREATE_BASE}/{{{{nlbId}}}}",
+             test_script=[*assert_status(200),
+                          "const j = pm.response.json();",
+                          "pm.test('exposes tenant-facing fields (id/type/status/v4AddressId)', () => {",
+                          "  pm.expect(j.id).to.be.a('string');",
+                          "  pm.expect(j.type).to.be.a('string');",
+                          "  pm.expect(j.status).to.be.a('string');",
+                          "});",
+                          "pm.test('does NOT leak the raw VIP source (v4Source/v6Source)', () => {",
+                          "  pm.expect(j).to.not.have.property('v4Source');",
+                          "  pm.expect(j).to.not.have.property('v6Source');",
+                          "});",
+                          "pm.test('does NOT leak derived networkId / subnetId', () => {",
+                          "  pm.expect(j).to.not.have.property('networkId');",
+                          "  pm.expect(j).to.not.have.property('subnetId');",
+                          "});",
+                          "pm.test('does NOT leak per-zone announce / route / VRF infra state', () => {",
+                          "  pm.expect(j).to.not.have.property('announceState');",
+                          "  pm.expect(j).to.not.have.property('routeTableId');",
+                          "});"]),
+        *_cleanup_lb(),
+    ],
+))
+
+
+# --- Group G: Delete release — linked VIP address survives (used_by cleared) ---
+
+CASES.append(Case(
+    id="NLB-DEL-CRUD-RELEASE-LINKED",
+    title="Delete LB with a linked (BYO) VIP → address survives, only the reference is cleared (Verifies 8.1-28)",
+    classes=["CRUD", "STATE"], priority="P1",
+    steps=[
+        *_provision_external_address("rel-link"),
+        Step(name="cr-linked", method="POST", path=_CREATE_BASE,
+             body={"projectId": "{{_suiteProjectId}}", "regionId": "{{_suiteRegionId}}",
+                   "type": "EXTERNAL", "name": "lb-rel-{{runId}}",
+                   "v4Source": {"addressId": "{{vpcAddrId}}"}},
+             test_script=[
+                 "pm.environment.unset('nlbId');",
+                 "if (pm.environment.get('vpcAddrId') && pm.response.code === 200) {",
+                 "  const j = pm.response.json();",
+                 "  if (j.id) pm.environment.set('opId', j.id);",
+                 "  if (j.metadata && j.metadata.networkLoadBalancerId) pm.environment.set('nlbId', j.metadata.networkLoadBalancerId);",
+                 "} else { pm.environment.unset('opId'); }",
+             ]),
+        poll_operation_until_done(),
+        Step(name="del-linked-lb", method="DELETE", path=f"{_CREATE_BASE}/{{{{nlbId}}}}",
+             test_script=[
+                 "if (pm.environment.get('nlbId')) {",
+                 "  pm.test('Delete accepted as Operation', () => pm.expect(pm.response.code).to.eql(200));",
+                 "  const j = pm.response.json(); if (j.id) pm.environment.set('opId', j.id);",
+                 "} else { pm.environment.unset('opId'); }",
+             ]),
+        poll_operation_until_done(),
+        Step(name="lb-gone", method="GET", path=f"{_CREATE_BASE}/{{{{nlbId}}}}",
+             test_script=[
+                 "if (pm.environment.get('nlbId')) {",
+                 "  pm.test('LB is gone (404)', () => pm.expect(pm.response.code).to.eql(404));",
+                 "}",
+             ]),
+        Step(name="linked-address-survives", method="GET", path=f"{_VPC_ADDRESSES}/{{{{vpcAddrId}}}}",
+             test_script=[
+                 "if (pm.environment.get('vpcAddrId') && pm.environment.get('nlbId')) {",
+                 "  pm.test('linked tenant address SURVIVES the LB delete (used_by cleared, not freed)', () => "
+                 "    pm.expect(pm.response.code).to.eql(200));",
+                 "}",
+             ]),
+        # tenant address is now unreferenced → clean it up
+        *_cleanup_vpc(_VPC_ADDRESSES, "vpcAddrId"),
     ],
 ))

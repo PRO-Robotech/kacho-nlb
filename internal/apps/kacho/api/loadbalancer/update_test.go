@@ -13,7 +13,7 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/fieldmaskpb"
 
-	lbv1 "github.com/PRO-Robotech/kacho-nlb/proto/gen/go/kacho/cloud/loadbalancer/v1"
+	lbv1 "github.com/PRO-Robotech/kacho-proto/gen/go/kacho/cloud/loadbalancer/v1"
 
 	"github.com/PRO-Robotech/kacho-nlb/internal/domain"
 )
@@ -23,7 +23,7 @@ func TestUpdate_HappyPath_PatchName(t *testing.T) {
 	repo := newFakeRepo()
 	lbID := seedLB(t, repo, "prj-a", "edge")
 	opsRepo := newFakeOpsRepo()
-	uc := NewUpdateLoadBalancerUseCase(repo, opsRepo, &fakeSecurityGroupClient{}, slog.Default())
+	uc := NewUpdateLoadBalancerUseCase(repo, opsRepo, &fakeZoneClient{}, slog.Default())
 	op, err := uc.Execute(context.Background(), &lbv1.UpdateNetworkLoadBalancerRequest{
 		NetworkLoadBalancerId: lbID,
 		Name:                  "edge-v2",
@@ -35,15 +35,14 @@ func TestUpdate_HappyPath_PatchName(t *testing.T) {
 	require.Equal(t, "edge-v2", string(repo.lbs[lbID].Name))
 }
 
-// (nlb-side): Update(labels) re-emits the FGA-register
-// mirror-feed intent (carrying the new labels + parent) so kacho-iam keeps its
-// resource_mirror current under label-change reconcile.
+// Update(labels) re-emits the FGA-register mirror-feed intent so kacho-iam keeps
+// its resource_mirror current under label-change reconcile.
 func TestUpdate_LabelsMask_EmitsMirrorIntent(t *testing.T) {
 	t.Parallel()
 	repo := newFakeRepo()
 	lbID := seedLB(t, repo, "prj-a", "edge")
 	opsRepo := newFakeOpsRepo()
-	uc := NewUpdateLoadBalancerUseCase(repo, opsRepo, &fakeSecurityGroupClient{}, slog.Default())
+	uc := NewUpdateLoadBalancerUseCase(repo, opsRepo, &fakeZoneClient{}, slog.Default())
 	op, err := uc.Execute(context.Background(), &lbv1.UpdateNetworkLoadBalancerRequest{
 		NetworkLoadBalancerId: lbID,
 		Labels:                map[string]string{"tier": "critical"},
@@ -58,13 +57,13 @@ func TestUpdate_LabelsMask_EmitsMirrorIntent(t *testing.T) {
 	require.Equal(t, "prj-a", repo.fga[0].Intent.ParentProjectID)
 }
 
-// (compute parity): a non-labels Update is a mirror no-op.
+// A non-labels Update is a mirror no-op.
 func TestUpdate_NonLabelsMask_NoMirrorIntent(t *testing.T) {
 	t.Parallel()
 	repo := newFakeRepo()
 	lbID := seedLB(t, repo, "prj-a", "edge")
 	opsRepo := newFakeOpsRepo()
-	uc := NewUpdateLoadBalancerUseCase(repo, opsRepo, &fakeSecurityGroupClient{}, slog.Default())
+	uc := NewUpdateLoadBalancerUseCase(repo, opsRepo, &fakeZoneClient{}, slog.Default())
 	op, err := uc.Execute(context.Background(), &lbv1.UpdateNetworkLoadBalancerRequest{
 		NetworkLoadBalancerId: lbID,
 		Name:                  "edge-v2",
@@ -75,13 +74,13 @@ func TestUpdate_NonLabelsMask_NoMirrorIntent(t *testing.T) {
 	require.Empty(t, repo.fga, "non-labels Update emits no mirror intent")
 }
 
-// TestUpdate_SessionAffinityMask — session_affinity is mutable via update_mask.
+// session_affinity is mutable via update_mask.
 func TestUpdate_SessionAffinityMask(t *testing.T) {
 	t.Parallel()
 	repo := newFakeRepo()
 	lbID := seedLB(t, repo, "prj-a", "edge")
 	opsRepo := newFakeOpsRepo()
-	uc := NewUpdateLoadBalancerUseCase(repo, opsRepo, &fakeSecurityGroupClient{}, slog.Default())
+	uc := NewUpdateLoadBalancerUseCase(repo, opsRepo, &fakeZoneClient{}, slog.Default())
 	op, err := uc.Execute(context.Background(), &lbv1.UpdateNetworkLoadBalancerRequest{
 		NetworkLoadBalancerId: lbID,
 		SessionAffinity:       lbv1.NetworkLoadBalancer_CLIENT_IP_ONLY,
@@ -92,47 +91,79 @@ func TestUpdate_SessionAffinityMask(t *testing.T) {
 	require.Equal(t, domain.SessionAffinityClientIPOnly, repo.lbs[lbID].SessionAffinity)
 }
 
-// TestUpdate_CrossZoneEnabledMask — cross_zone_enabled is mutable via update_mask
-// and is not in the immutable set.
-func TestUpdate_CrossZoneEnabledMask(t *testing.T) {
+// 8.1-26: disabled_announce_zones — drain then re-enable (REGIONAL); ZONAL/all-zones reject.
+func TestUpdate_DisabledAnnounceZones(t *testing.T) {
 	t.Parallel()
 	repo := newFakeRepo()
 	lbID := seedLB(t, repo, "prj-a", "edge")
-	repo.lbs[lbID].CrossZoneEnabled = true
+	repo.lbs[lbID].Type = domain.LBTypeInternal
+	repo.lbs[lbID].RegionID = "region-1"
+	repo.lbs[lbID].PlacementType = domain.PlacementRegional
 	opsRepo := newFakeOpsRepo()
-	uc := NewUpdateLoadBalancerUseCase(repo, opsRepo, &fakeSecurityGroupClient{}, slog.Default())
+	uc := NewUpdateLoadBalancerUseCase(repo, opsRepo, &fakeZoneClient{}, slog.Default())
+
+	// drain region-1-b
 	op, err := uc.Execute(context.Background(), &lbv1.UpdateNetworkLoadBalancerRequest{
 		NetworkLoadBalancerId: lbID,
-		CrossZoneEnabled:      false,
-		UpdateMask:            &fieldmaskpb.FieldMask{Paths: []string{"cross_zone_enabled"}},
+		DisabledAnnounceZones: []string{"region-1-b"},
+		UpdateMask:            &fieldmaskpb.FieldMask{Paths: []string{"disabled_announce_zones"}},
 	})
 	require.NoError(t, err)
 	require.Nil(t, awaitOpDone(t, opsRepo, op.ID).Error)
-	require.False(t, repo.lbs[lbID].CrossZoneEnabled)
+	require.Equal(t, []string{"region-1-b"}, repo.lbs[lbID].DisabledAnnounceZones)
+
+	// re-enable (empty)
+	op2, err := uc.Execute(context.Background(), &lbv1.UpdateNetworkLoadBalancerRequest{
+		NetworkLoadBalancerId: lbID,
+		UpdateMask:            &fieldmaskpb.FieldMask{Paths: []string{"disabled_announce_zones"}},
+	})
+	require.NoError(t, err)
+	require.Nil(t, awaitOpDone(t, opsRepo, op2.ID).Error)
+	require.Empty(t, repo.lbs[lbID].DisabledAnnounceZones)
+
+	// drain all zones → reject
+	_, err = uc.Execute(context.Background(), &lbv1.UpdateNetworkLoadBalancerRequest{
+		NetworkLoadBalancerId: lbID,
+		DisabledAnnounceZones: []string{"region-1-a", "region-1-b"},
+		UpdateMask:            &fieldmaskpb.FieldMask{Paths: []string{"disabled_announce_zones"}},
+	})
+	require.Equal(t, codes.InvalidArgument, status.Code(err))
+	require.Equal(t, "disabled_announce_zones must not cover all zones of the region", status.Convert(err).Message())
 }
 
-func TestUpdate_ImmutableType(t *testing.T) {
+// 8.1-26 (ZONAL branch): drain on a ZONAL LB → reject.
+func TestUpdate_DisabledAnnounceZones_ZonalReject(t *testing.T) {
 	t.Parallel()
 	repo := newFakeRepo()
 	lbID := seedLB(t, repo, "prj-a", "edge")
-	uc := NewUpdateLoadBalancerUseCase(repo, newFakeOpsRepo(), nil, nil)
+	repo.lbs[lbID].Type = domain.LBTypeInternal
+	repo.lbs[lbID].PlacementType = domain.PlacementZonal
+	uc := NewUpdateLoadBalancerUseCase(repo, newFakeOpsRepo(), &fakeZoneClient{}, slog.Default())
 	_, err := uc.Execute(context.Background(), &lbv1.UpdateNetworkLoadBalancerRequest{
 		NetworkLoadBalancerId: lbID,
-		UpdateMask:            &fieldmaskpb.FieldMask{Paths: []string{"type"}},
+		DisabledAnnounceZones: []string{"region-1-a"},
+		UpdateMask:            &fieldmaskpb.FieldMask{Paths: []string{"disabled_announce_zones"}},
 	})
 	require.Equal(t, codes.InvalidArgument, status.Code(err))
+	require.Equal(t, "disabled_announce_zones is only valid for REGIONAL load balancer", status.Convert(err).Message())
 }
 
-func TestUpdate_ImmutableProjectID(t *testing.T) {
+// 8.1-25: immutable fields in update_mask → InvalidArgument.
+func TestUpdate_ImmutableFields(t *testing.T) {
 	t.Parallel()
-	repo := newFakeRepo()
-	lbID := seedLB(t, repo, "prj-a", "edge")
-	uc := NewUpdateLoadBalancerUseCase(repo, newFakeOpsRepo(), nil, nil)
-	_, err := uc.Execute(context.Background(), &lbv1.UpdateNetworkLoadBalancerRequest{
-		NetworkLoadBalancerId: lbID,
-		UpdateMask:            &fieldmaskpb.FieldMask{Paths: []string{"project_id"}},
-	})
-	require.Equal(t, codes.InvalidArgument, status.Code(err))
+	for _, field := range []string{"type", "placement_type", "region_id", "project_id", "v4_source", "v6_source", "v4_address_id", "v6_address_id"} {
+		t.Run(field, func(t *testing.T) {
+			repo := newFakeRepo()
+			lbID := seedLB(t, repo, "prj-a", "edge")
+			uc := NewUpdateLoadBalancerUseCase(repo, newFakeOpsRepo(), nil, nil)
+			_, err := uc.Execute(context.Background(), &lbv1.UpdateNetworkLoadBalancerRequest{
+				NetworkLoadBalancerId: lbID,
+				UpdateMask:            &fieldmaskpb.FieldMask{Paths: []string{field}},
+			})
+			require.Equal(t, codes.InvalidArgument, status.Code(err))
+			require.Contains(t, status.Convert(err).Message(), "immutable")
+		})
+	}
 }
 
 func TestUpdate_UnknownField(t *testing.T) {
@@ -152,7 +183,7 @@ func TestUpdate_EmptyMask_FullPatch(t *testing.T) {
 	repo := newFakeRepo()
 	lbID := seedLB(t, repo, "prj-a", "edge")
 	opsRepo := newFakeOpsRepo()
-	uc := NewUpdateLoadBalancerUseCase(repo, opsRepo, nil, nil)
+	uc := NewUpdateLoadBalancerUseCase(repo, opsRepo, &fakeZoneClient{}, nil)
 	op, err := uc.Execute(context.Background(), &lbv1.UpdateNetworkLoadBalancerRequest{
 		NetworkLoadBalancerId: lbID,
 		Name:                  "renamed",

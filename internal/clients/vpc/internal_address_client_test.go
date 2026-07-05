@@ -13,14 +13,39 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/anypb"
 
-	operationpb "github.com/PRO-Robotech/kacho-corelib/proto/gen/go/kacho/cloud/operation"
-	vpcpb "github.com/PRO-Robotech/kacho-vpc/proto/gen/go/kacho/cloud/vpc/v1"
+	"github.com/PRO-Robotech/kacho-corelib/auth"
+	"github.com/PRO-Robotech/kacho-corelib/operations"
+	operationpb "github.com/PRO-Robotech/kacho-proto/gen/go/kacho/cloud/operation"
+	vpcpb "github.com/PRO-Robotech/kacho-proto/gen/go/kacho/cloud/vpc/v1"
 
 	"github.com/PRO-Robotech/kacho-nlb/internal/domain"
 )
+
+// TestInternalAddressClient_PropagatesPrincipal — регрессия: worker-вызовы vpc
+// обязаны нести principal тенанта в outgoing-metadata (auth.PropagateOutgoing),
+// иначе vpc authz отвергает как authz_no_principal. Проверяем, что SetReference,
+// вызванный с ctx-principal'ом, доносит x-kacho-principal-* до сервера.
+func TestInternalAddressClient_PropagatesPrincipal(t *testing.T) {
+	internalAddrs := &fakeInternalAddressService{}
+	conn := startFakeVPC(t, nil, nil, nil, internalAddrs, nil)
+	client := NewInternalAddressClient(conn, conn)
+
+	ctx := operations.WithPrincipal(context.Background(),
+		operations.Principal{Type: "user", ID: "usr-regress", DisplayName: "Regress User"})
+	err := client.SetReference(ctx, "adr-1",
+		AddressOwner{Kind: "network_load_balancer", ID: "nlb-1"}, true)
+	require.NoError(t, err)
+
+	got := internalAddrs.lastSetMD.Get(auth.MDKeyPrincipalID)
+	require.Len(t, got, 1, "principal id must reach vpc via outgoing metadata")
+	assert.Equal(t, "usr-regress", got[0])
+	assert.Equal(t, []string{"user"}, internalAddrs.lastSetMD.Get(auth.MDKeyPrincipalType))
+	assert.True(t, internalAddrs.setCalls[0].GetOwned(), "owned=true пробрасывается")
+}
 
 // fakeAddressForAlloc реализует AddressService.{Create,Delete}.
 // Возвращает done=true Operation с inline Address response (для теста auto-alloc).
@@ -85,13 +110,16 @@ type fakeInternalAddressService struct {
 
 	setCalls   []*vpcpb.SetAddressReferenceRequest
 	clearCalls []*vpcpb.ClearAddressReferenceRequest
+
+	lastSetMD metadata.MD // incoming metadata последнего SetAddressReference (проверка principal-проброса)
 }
 
 func (f *fakeInternalAddressService) SetAddressReference(
-	_ context.Context, req *vpcpb.SetAddressReferenceRequest,
+	ctx context.Context, req *vpcpb.SetAddressReferenceRequest,
 ) (*vpcpb.AddressReference, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.lastSetMD, _ = metadata.FromIncomingContext(ctx)
 	f.setCalls = append(f.setCalls, req)
 	if f.setErr != nil {
 		return nil, f.setErr
@@ -149,7 +177,7 @@ func TestInternalAddressClient_AllocateExternalIP_HappyPath(t *testing.T) {
 		ProjectID: "prj-1",
 		Name:      "listener-vip-1",
 		ZoneID:    "ru-central1-a",
-		Owner:     AddressOwner{Kind: "nlb_listener", ID: "lst-1"},
+		Owner:     AddressOwner{Kind: "nlb_listener", ID: "lst-1", Name: "listener-a"},
 	})
 	require.NoError(t, err)
 	assert.Equal(t, "e9b-ip-1", resp.AddressID)
@@ -159,6 +187,9 @@ func TestInternalAddressClient_AllocateExternalIP_HappyPath(t *testing.T) {
 	assert.Equal(t, "e9b-ip-1", intAddrSvc.setCalls[0].AddressId)
 	assert.Equal(t, "nlb_listener", intAddrSvc.setCalls[0].ReferrerType)
 	assert.Equal(t, "lst-1", intAddrSvc.setCalls[0].ReferrerId)
+	// referrer_name пробрасывается в vpc — used_by-зеркало показывает имя
+	// потребителя (иначе UI не может отрендерить ссылку на ресурс).
+	assert.Equal(t, "listener-a", intAddrSvc.setCalls[0].ReferrerName)
 }
 
 func TestInternalAddressClient_AllocateExternalIP_SetReferenceFailsTriggersCleanup(t *testing.T) {
@@ -321,7 +352,7 @@ func TestInternalAddressClient_SetReference_AlreadyExistsMapsToPrecondition(t *t
 	conn := startFakeVPC(t, nil, nil, &fakeAddressForAlloc{}, intAddrSvc, &fakeOperationService{})
 
 	c := NewInternalAddressClient(conn, conn)
-	err := c.SetReference(ctxBackground(), "e9b-ip-1", AddressOwner{Kind: "nlb_listener", ID: "lst-1"})
+	err := c.SetReference(ctxBackground(), "e9b-ip-1", AddressOwner{Kind: "nlb_listener", ID: "lst-1"}, true)
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, domain.ErrFailedPrecondition))
 }
@@ -331,7 +362,7 @@ func TestInternalAddressClient_SetReference_NotFoundMapsToInvalidArg(t *testing.
 	conn := startFakeVPC(t, nil, nil, &fakeAddressForAlloc{}, intAddrSvc, &fakeOperationService{})
 
 	c := NewInternalAddressClient(conn, conn)
-	err := c.SetReference(ctxBackground(), "e9b-nx", AddressOwner{Kind: "k", ID: "i"})
+	err := c.SetReference(ctxBackground(), "e9b-nx", AddressOwner{Kind: "k", ID: "i"}, false)
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, domain.ErrInvalidArg))
 }
@@ -393,7 +424,7 @@ func TestInternalAddressClient_SetReference_EmptyArgs(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			err := c.SetReference(ctxBackground(), tc.id, tc.owner)
+			err := c.SetReference(ctxBackground(), tc.id, tc.owner, false)
 			require.Error(t, err)
 			assert.True(t, errors.Is(err, domain.ErrInvalidArg))
 		})

@@ -43,9 +43,10 @@ import (
 	"github.com/PRO-Robotech/kacho-corelib/outbox/drainer"
 	"github.com/PRO-Robotech/kacho-corelib/outbox/metrics"
 
-	operationpb "github.com/PRO-Robotech/kacho-corelib/proto/gen/go/kacho/cloud/operation"
-	lbv1 "github.com/PRO-Robotech/kacho-nlb/proto/gen/go/kacho/cloud/loadbalancer/v1"
+	operationpb "github.com/PRO-Robotech/kacho-proto/gen/go/kacho/cloud/operation"
+	lbv1 "github.com/PRO-Robotech/kacho-proto/gen/go/kacho/cloud/loadbalancer/v1"
 
+	announceapi "github.com/PRO-Robotech/kacho-nlb/internal/apps/kacho/api/announce"
 	internallifecycle "github.com/PRO-Robotech/kacho-nlb/internal/apps/kacho/api/internal_lifecycle"
 	"github.com/PRO-Robotech/kacho-nlb/internal/apps/kacho/api/listener"
 	lbhandler "github.com/PRO-Robotech/kacho-nlb/internal/apps/kacho/api/loadbalancer"
@@ -81,14 +82,13 @@ type peerClients struct {
 	Project  iamclient.ProjectClient
 	Check    iamclient.CheckClient
 	Register iamclient.RegisterResourceClient // FGA-proxy (register-drainer)
-	// Geo (Region-валидация — ребро nlb→geo, kacho-geo)
+	// Geo (Region/Zone-валидация — ребро nlb→geo, kacho-geo)
 	Region geoclient.RegionClient
+	Zone   geoclient.ZoneClient
 	// Compute (Instance-resolve — НЕ geography, ребро nlb→compute остаётся)
 	Instance computeclient.InstanceClient
 	// VPC
 	Subnet           vpcclient.SubnetClient
-	Network          vpcclient.NetworkClient
-	SecurityGroup    vpcclient.SecurityGroupClient
 	NetworkInterface vpcclient.NetworkInterfaceClient
 	Address          vpcclient.AddressClient
 	InternalAddress  vpcclient.InternalAddressClient
@@ -340,21 +340,20 @@ func runServe(configPath string) error {
 	// (Internal-vs-external инвариант: Internal.* живут на internalSrv).
 	lbHandler := lbhandler.NewHandler(
 		repo, opsRepo,
-		peers.Project, peers.Region, peers.Network, peers.SecurityGroup,
+		peers.Project, peers.Region, peers.Zone,
+		peers.Subnet, peers.Address, peers.InternalAddress,
 		peers.ListFilter,
 		logger,
 	)
 	lbv1.RegisterNetworkLoadBalancerServiceServer(publicSrv, lbHandler)
 
 	// ListenerService: Get/List/Create/Update/Delete/ListOperations.
-	// Peer-clients (vpc Address / InternalAddress / Subnet)
-	// допускают nil — Create/Delete вернут Unavailable если peer не сконфигурирован.
+	// VIP консолидирован на LoadBalancer — листенер сам адрес не аллоцирует;
+	// InternalAddress нужен только для release legacy-VIP в Delete (nil → Unavailable).
 	lbv1.RegisterListenerServiceServer(publicSrv, listener.NewHandler(
 		repo,
 		opsRepo,
-		peers.Address,
 		peers.InternalAddress,
-		peers.Subnet,
 		peers.ListFilter,
 		logger,
 	))
@@ -387,6 +386,16 @@ func runServe(configPath string) error {
 		logger,
 	)
 	lbv1.RegisterInternalResourceLifecycleServiceServer(internalSrv, lifecycleHandler)
+
+	// InternalLoadBalancerAnnounceService. Наблюдаемая per-zone announce-state
+	// anycast-VIP (control-plane сторона feedback-петли data plane → nlb): read
+	// viewer-gated (v_get), inbound write least-priv (announce_writer). Зарегистрирован
+	// ТОЛЬКО на internalSrv (:9091) — инфра-чувствительные данные (BGP/route/VRF/
+	// kernel/infra-id) не выходят на external endpoint; per-RPC Check энфорсится тем
+	// же authzIntr, что и на public (НЕ exempt). announce-store — standalone поверх
+	// master-pool'а (не CQRS-ресурс: data-plane feedback, idempotent upsert без outbox).
+	announceHandler := announceapi.NewHandler(kachopg.NewAnnounceStore(pool), logger)
+	lbv1.RegisterInternalLoadBalancerAnnounceServiceServer(internalSrv, announceHandler)
 
 	publicListener, err := listenEndpoint(cfg.APIServer.Endpoint)
 	if err != nil {
@@ -844,6 +853,7 @@ func dialPeers(
 	// прежнюю region-валидацию через nlb→compute.
 	if geoConn != nil {
 		peers.Region = geoclient.NewRegionClient(geoConn)
+		peers.Zone = geoclient.NewZoneClient(geoConn)
 	}
 
 	// kacho-compute — один conn на public listener (InstanceService.Get —
@@ -855,8 +865,6 @@ func dialPeers(
 	// kacho-vpc — public (Address/Subnet/NIC/Operation) + internal (InternalAddressService).
 	if vpcPublicConn != nil {
 		peers.Subnet = vpcclient.NewSubnetClient(vpcPublicConn)
-		peers.Network = vpcclient.NewNetworkClient(vpcPublicConn)
-		peers.SecurityGroup = vpcclient.NewSecurityGroupClient(vpcPublicConn)
 		peers.NetworkInterface = vpcclient.NewNetworkInterfaceClient(vpcPublicConn)
 		peers.Address = vpcclient.NewAddressClient(vpcPublicConn)
 	}

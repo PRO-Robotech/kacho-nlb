@@ -1,6 +1,6 @@
 {
   "info": {
-    "_postman_id": "644a696e-f857-465a-9dc3-479b355bb209",
+    "_postman_id": "4b071f9a-3622-4d5b-a7de-25b85663d06c",
     "name": "kacho-nlb / newman / cross-resource",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
@@ -57,7 +57,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\"projectId\": \"{{_suiteProjectId}}\", \"regionId\": \"{{_suiteRegionId}}\", \"type\": \"EXTERNAL\", \"name\": \"xres-ext-flow-{{runId}}\", \"sessionAffinity\": \"FIVE_TUPLE\", \"crossZoneEnabled\": true}",
+              "raw": "{\"projectId\": \"{{_suiteProjectId}}\", \"regionId\": \"{{_suiteRegionId}}\", \"type\": \"EXTERNAL\", \"name\": \"xres-ext-flow-{{runId}}\", \"v4Source\": {\"public\": {}}, \"sessionAffinity\": \"FIVE_TUPLE\"}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -93,7 +93,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-1",
           "request": {
             "method": "GET",
             "header": [
@@ -238,7 +238,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-2",
           "request": {
             "method": "GET",
             "header": [
@@ -385,7 +385,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-3",
           "request": {
             "method": "GET",
             "header": [
@@ -488,7 +488,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-4",
           "request": {
             "method": "GET",
             "header": [
@@ -591,7 +591,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-5",
           "request": {
             "method": "GET",
             "header": [
@@ -689,7 +689,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-6",
           "request": {
             "method": "GET",
             "header": [
@@ -902,7 +902,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-7",
           "request": {
             "method": "GET",
             "header": [
@@ -999,7 +999,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-8",
           "request": {
             "method": "GET",
             "header": [
@@ -1096,7 +1096,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-9",
           "request": {
             "method": "GET",
             "header": [
@@ -1184,7 +1184,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-10",
           "request": {
             "method": "GET",
             "header": [
@@ -1272,7 +1272,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-11",
           "request": {
             "method": "GET",
             "header": [
@@ -1360,7 +1360,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-12",
           "request": {
             "method": "GET",
             "header": [
@@ -1437,7 +1437,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\"projectId\": \"{{_suiteProjectId}}\", \"regionId\": \"{{_suiteRegionId}}\", \"type\": \"EXTERNAL\", \"name\": \"xres-ext-v6-{{runId}}\"}",
+              "raw": "{\"projectId\": \"{{_suiteProjectId}}\", \"regionId\": \"{{_suiteRegionId}}\", \"type\": \"EXTERNAL\", \"name\": \"xres-ext-v6-{{runId}}\", \"v4Source\": {\"public\": {}}}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -1473,7 +1473,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-13",
           "request": {
             "method": "GET",
             "header": [
@@ -1575,7 +1575,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-14",
           "request": {
             "method": "GET",
             "header": [
@@ -1704,7 +1704,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-15",
           "request": {
             "method": "GET",
             "header": [
@@ -1792,7 +1792,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-16",
           "request": {
             "method": "GET",
             "header": [
@@ -1869,7 +1869,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\"projectId\": \"{{_suiteProjectId}}\", \"regionId\": \"{{_suiteRegionId}}\", \"type\": \"EXTERNAL\", \"name\": \"xres-def-unatt-{{runId}}\"}",
+              "raw": "{\"projectId\": \"{{_suiteProjectId}}\", \"regionId\": \"{{_suiteRegionId}}\", \"type\": \"EXTERNAL\", \"name\": \"xres-def-unatt-{{runId}}\", \"v4Source\": {\"public\": {}}}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -1905,7 +1905,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-17",
           "request": {
             "method": "GET",
             "header": [
@@ -2007,7 +2007,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-18",
           "request": {
             "method": "GET",
             "header": [
@@ -2114,7 +2114,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-19",
           "request": {
             "method": "GET",
             "header": [
@@ -2212,7 +2212,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-20",
           "request": {
             "method": "GET",
             "header": [
@@ -2371,7 +2371,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-21",
           "request": {
             "method": "GET",
             "header": [
@@ -2459,7 +2459,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-22",
           "request": {
             "method": "GET",
             "header": [
@@ -2547,7 +2547,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-23",
           "request": {
             "method": "GET",
             "header": [
@@ -2624,7 +2624,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\"projectId\": \"{{_suiteProjectId}}\", \"regionId\": \"{{_suiteRegionId}}\", \"type\": \"EXTERNAL\", \"name\": \"xres-v4-v6-{{runId}}\"}",
+              "raw": "{\"projectId\": \"{{_suiteProjectId}}\", \"regionId\": \"{{_suiteRegionId}}\", \"type\": \"EXTERNAL\", \"name\": \"xres-v4-v6-{{runId}}\", \"v4Source\": {\"public\": {}}}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -2660,7 +2660,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-24",
           "request": {
             "method": "GET",
             "header": [
@@ -2757,7 +2757,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-25",
           "request": {
             "method": "GET",
             "header": [
@@ -2879,7 +2879,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-26",
           "request": {
             "method": "GET",
             "header": [
@@ -2934,6 +2934,116 @@
       "description": "class:CRUD | class:STATE | priority:P0",
       "item": [
         {
+          "name": "provision-subnet",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/vpc/v1/subnets",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "vpc",
+                "v1",
+                "subnets"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"projectId\": \"{{_suiteProjectId}}\", \"networkId\": \"{{existingNetworkId}}\", \"name\": \"xres-int-sub-{{runId}}\", \"v4CidrBlocks\": [\"{{_subnetCidr}}\"], \"placementType\": \"ZONAL\", \"zoneId\": \"{{existingZoneId}}\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "var __seq = parseInt(pm.environment.get('_cidrSeq') || '0', 10) + 1;",
+                  "pm.environment.set('_cidrSeq', String(__seq));",
+                  "var __run = (pm.environment.get('runId') || 'x0');",
+                  "var __h = 0; for (var i = 0; i < __run.length; i++) { __h = (__h * 31 + __run.charCodeAt(i)) & 0xffff; }",
+                  "pm.environment.set('_subnetCidr', '10.' + (200 + (__h % 40)) + '.' + (__seq % 250) + '.0/24');"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.environment.unset('xresSubnetId');",
+                  "if (pm.response.code === 200) {",
+                  "  const j = pm.response.json();",
+                  "  if (j.id) pm.environment.set('opId', j.id);",
+                  "  if (j.metadata && j.metadata.subnetId) pm.environment.set('xresSubnetId', j.metadata.subnetId);",
+                  "} else { pm.environment.unset('opId'); }"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "poll-op-27",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/operations/{{opId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "operations",
+                "{{opId}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.environment.get('opId') || pm.response.code !== 200) {",
+                  "  pm.environment.unset('_pollCount');",
+                  "  return;",
+                  "}",
+                  "pm.test('poll status 200', () => pm.expect(pm.response.code).to.eql(200));",
+                  "const j = pm.response.json();",
+                  "const pc = parseInt(pm.environment.get('_pollCount') || '0', 10);",
+                  "if (!j.done && pc < 6) {",
+                  "  pm.environment.set('_pollCount', String(pc + 1));",
+                  "  postman.setNextRequest(pm.info.requestName);",
+                  "  return;",
+                  "}",
+                  "pm.environment.unset('_pollCount');",
+                  "pm.test('operation done', () => pm.expect(j.done, JSON.stringify(j)).to.eql(true));",
+                  "if (j.error) pm.environment.set('lastOpError', JSON.stringify(j.error));",
+                  "else pm.environment.unset('lastOpError');",
+                  "if (j.response) pm.environment.set('lastOpResponse', JSON.stringify(j.response));"
+                ]
+              }
+            }
+          ]
+        },
+        {
           "name": "create-internal-lb",
           "request": {
             "method": "POST",
@@ -2956,7 +3066,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\"projectId\": \"{{_suiteProjectId}}\", \"regionId\": \"{{_suiteRegionId}}\", \"type\": \"INTERNAL\", \"name\": \"xres-int-{{runId}}\", \"networkId\": \"{{existingNetworkId}}\", \"sessionAffinity\": \"CLIENT_IP_ONLY\", \"crossZoneEnabled\": false}",
+              "raw": "{\"projectId\": \"{{_suiteProjectId}}\", \"regionId\": \"{{_suiteRegionId}}\", \"type\": \"INTERNAL\", \"placementType\": \"ZONAL\", \"name\": \"xres-int-{{runId}}\", \"sessionAffinity\": \"CLIENT_IP_ONLY\", \"v4Source\": {\"subnetId\": \"{{xresSubnetId}}\"}}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -2970,13 +3080,15 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('accepted (Operation) or fail-closed reject (network/vpc dependent)', () =>   pm.expect(pm.response.code).to.be.oneOf([200, 400, 503]));",
                   "pm.environment.unset('nlbId');",
-                  "if (pm.response.code === 200) {",
+                  "if (pm.environment.get('xresSubnetId')) {",
+                  "  pm.test('INTERNAL subnet-source LB accepted as Operation', () => pm.expect(pm.response.code).to.eql(200));",
                   "  const j = pm.response.json();",
-                  "  pm.test('Operation envelope on accept', () => pm.expect(j.id).to.match(/^nlb[a-z0-9]+$/));",
-                  "  pm.environment.set('opId', j.id);",
-                  "  if (j.metadata && j.metadata.networkLoadBalancerId)     pm.environment.set('nlbId', j.metadata.networkLoadBalancerId);",
+                  "  if (j.id) pm.environment.set('opId', j.id);",
+                  "  if (j.metadata && j.metadata.networkLoadBalancerId) pm.environment.set('nlbId', j.metadata.networkLoadBalancerId);",
+                  "} else {",
+                  "  pm.environment.unset('opId');",
+                  "  pm.test('no subnet fixture → INTERNAL subnet-source create rejected', () =>     pm.expect(pm.response.code).to.be.oneOf([400, 404, 503]));",
                   "}"
                 ]
               }
@@ -2984,7 +3096,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-28",
           "request": {
             "method": "GET",
             "header": [
@@ -3062,13 +3174,13 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.environment.unset('xresIntReady');",
-                  "if (pm.response.code === 200 && !pm.environment.get('lastOpError')) {",
+                  "if (pm.environment.get('nlbId') && pm.response.code === 200 && !pm.environment.get('lastOpError')) {",
                   "  pm.environment.set('xresIntReady', '1');",
                   "  const j = pm.response.json();",
                   "  pm.test('type INTERNAL', () => pm.expect(j.type).to.eql('INTERNAL'));",
-                  "  pm.test('networkId round-trips', () =>     pm.expect(j.networkId).to.eql(pm.environment.get('existingNetworkId')));",
+                  "  pm.test('placementType ZONAL', () => pm.expect(j.placementType).to.eql('ZONAL'));",
                   "  pm.test('sessionAffinity CLIENT_IP_ONLY round-trips', () =>     pm.expect(j.sessionAffinity).to.eql('CLIENT_IP_ONLY'));",
-                  "  pm.test('crossZoneEnabled=false round-trips', () =>     pm.expect(j.crossZoneEnabled).to.eql(false));",
+                  "  pm.test('v4AddressId resolved to a bound vpc Address', () =>     pm.expect(j.v4AddressId).to.match(/^adr[a-z0-9]+$/));",
                   "}"
                 ]
               }
@@ -3130,7 +3242,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-29",
           "request": {
             "method": "GET",
             "header": [
@@ -3275,7 +3387,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-30",
           "request": {
             "method": "GET",
             "header": [
@@ -3373,7 +3485,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-31",
           "request": {
             "method": "GET",
             "header": [
@@ -3510,7 +3622,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-32",
           "request": {
             "method": "GET",
             "header": [
@@ -3598,7 +3710,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-33",
           "request": {
             "method": "GET",
             "header": [
@@ -3686,7 +3798,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-34",
           "request": {
             "method": "GET",
             "header": [
@@ -3774,7 +3886,95 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-35",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/operations/{{opId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "operations",
+                "{{opId}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.environment.get('opId') || pm.response.code !== 200) {",
+                  "  pm.environment.unset('_pollCount');",
+                  "  return;",
+                  "}",
+                  "pm.test('poll status 200', () => pm.expect(pm.response.code).to.eql(200));",
+                  "const j = pm.response.json();",
+                  "const pc = parseInt(pm.environment.get('_pollCount') || '0', 10);",
+                  "if (!j.done && pc < 6) {",
+                  "  pm.environment.set('_pollCount', String(pc + 1));",
+                  "  postman.setNextRequest(pm.info.requestName);",
+                  "  return;",
+                  "}",
+                  "pm.environment.unset('_pollCount');",
+                  "pm.test('operation done', () => pm.expect(j.done, JSON.stringify(j)).to.eql(true));",
+                  "if (j.error) pm.environment.set('lastOpError', JSON.stringify(j.error));",
+                  "else pm.environment.unset('lastOpError');",
+                  "if (j.response) pm.environment.set('lastOpResponse', JSON.stringify(j.response));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "cleanup-int-subnet",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/vpc/v1/subnets/{{xresSubnetId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "vpc",
+                "v1",
+                "subnets",
+                "{{xresSubnetId}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "try {",
+                  "  const j = pm.response.json();",
+                  "  const v = (j.id);",
+                  "  if (v !== undefined && v !== null) pm.environment.set('opId', String(v));",
+                  "} catch (e) {}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "poll-op-36",
           "request": {
             "method": "GET",
             "header": [
@@ -3825,11 +4025,11 @@
       ]
     },
     {
-      "name": "XRES-E2E-INTERNAL-NO-NETWORK-INVALID — UC-2 negative: INTERNAL LB without network_id → InvalidArgument (Verifies 6.0-35/6.0-24)",
+      "name": "XRES-E2E-INTERNAL-NO-NETWORK-INVALID — INTERNAL LB with no placementType and no VIP source → InvalidArgument (8.1 replaces the old network_id requirement) (Verifies 8.1-12/8.1-19)",
       "description": "class:NEG | class:VAL | priority:P0",
       "item": [
         {
-          "name": "create-internal-no-network",
+          "name": "create-internal-bare",
           "request": {
             "method": "POST",
             "header": [
@@ -3851,7 +4051,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\"projectId\": \"{{_suiteProjectId}}\", \"regionId\": \"{{_suiteRegionId}}\", \"type\": \"INTERNAL\", \"name\": \"int-no-net-{{runId}}\"}",
+              "raw": "{\"projectId\": \"{{_suiteProjectId}}\", \"regionId\": \"{{_suiteRegionId}}\", \"type\": \"INTERNAL\", \"name\": \"int-bare-{{runId}}\"}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -3870,11 +4070,10 @@
                   "  const j = pm.response.json();",
                   "  pm.expect(j.code, JSON.stringify(j)).to.eql(3);",
                   "});",
-                  "const det = (pm.response.json().details || []).find(d => (d['@type']||'').includes('BadRequest'));",
-                  "if (det && det.fieldViolations) {",
-                  "  const fields = det.fieldViolations.map(v => v.field);",
-                  "  pm.test('violation names the network_id field', () =>     pm.expect(fields.some(f => f === 'network_id' || f === 'networkId')).to.be.true);",
-                  "}"
+                  "pm.test('rejected for missing placement or missing vip source', () => {",
+                  "  const m = (pm.response.json().message || '').toLowerCase();",
+                  "  pm.expect(m).to.satisfy(s => s.includes('placement_type') || s.includes('vip source'));",
+                  "});"
                 ]
               }
             }
@@ -3883,11 +4082,11 @@
       ]
     },
     {
-      "name": "XRES-E2E-EXTERNAL-WITH-NETWORK-INVALID — UC-2 negative: EXTERNAL LB carrying network_id → InvalidArgument (network_id is INTERNAL-only) (Verifies 6.0-35/6.0-25)",
-      "description": "class:NEG | class:VAL | priority:P1",
+      "name": "XRES-E2E-EXTERNAL-WITH-NETWORK-INVALID — EXTERNAL LB carrying a removed networkId field + valid public source → created (grpc-gateway ignores the removed field) (Verifies 8.1-32)",
+      "description": "class:CRUD | class:CONF | priority:P1",
       "item": [
         {
-          "name": "create-external-with-network",
+          "name": "create-external-with-removed-network",
           "request": {
             "method": "POST",
             "header": [
@@ -3909,7 +4108,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\"projectId\": \"{{_suiteProjectId}}\", \"regionId\": \"{{_suiteRegionId}}\", \"type\": \"EXTERNAL\", \"name\": \"ext-net-{{runId}}\", \"networkId\": \"{{garbageNetworkId}}\"}",
+              "raw": "{\"projectId\": \"{{_suiteProjectId}}\", \"regionId\": \"{{_suiteRegionId}}\", \"type\": \"EXTERNAL\", \"name\": \"ext-net-{{runId}}\", \"networkId\": \"{{garbageNetworkId}}\", \"v4Source\": {\"public\": {}}}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -3923,16 +4122,190 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('status 400', () => pm.expect(pm.response.code).to.eql(400));",
-                  "pm.test('grpc code 3 (INVALID_ARGUMENT)', () => {",
+                  "pm.test('status 200', () => pm.expect(pm.response.code).to.eql(200));",
+                  "try {",
                   "  const j = pm.response.json();",
-                  "  pm.expect(j.code, JSON.stringify(j)).to.eql(3);",
-                  "});",
-                  "const det = (pm.response.json().details || []).find(d => (d['@type']||'').includes('BadRequest'));",
-                  "if (det && det.fieldViolations) {",
-                  "  const fields = det.fieldViolations.map(v => v.field);",
-                  "  pm.test('violation names the network_id field', () =>     pm.expect(fields.some(f => f === 'network_id' || f === 'networkId')).to.be.true);",
-                  "}"
+                  "  const v = (j.id);",
+                  "  if (v !== undefined && v !== null) pm.environment.set('opId', String(v));",
+                  "} catch (e) {}",
+                  "try {",
+                  "  const j = pm.response.json();",
+                  "  const v = (j.metadata && j.metadata.networkLoadBalancerId);",
+                  "  if (v !== undefined && v !== null) pm.environment.set('nlbId', String(v));",
+                  "} catch (e) {}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "poll-op-37",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/operations/{{opId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "operations",
+                "{{opId}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.environment.get('opId') || pm.response.code !== 200) {",
+                  "  pm.environment.unset('_pollCount');",
+                  "  return;",
+                  "}",
+                  "pm.test('poll status 200', () => pm.expect(pm.response.code).to.eql(200));",
+                  "const j = pm.response.json();",
+                  "const pc = parseInt(pm.environment.get('_pollCount') || '0', 10);",
+                  "if (!j.done && pc < 6) {",
+                  "  pm.environment.set('_pollCount', String(pc + 1));",
+                  "  postman.setNextRequest(pm.info.requestName);",
+                  "  return;",
+                  "}",
+                  "pm.environment.unset('_pollCount');",
+                  "pm.test('operation done', () => pm.expect(j.done, JSON.stringify(j)).to.eql(true));",
+                  "if (j.error) pm.environment.set('lastOpError', JSON.stringify(j.error));",
+                  "else pm.environment.unset('lastOpError');",
+                  "if (j.response) pm.environment.set('lastOpResponse', JSON.stringify(j.response));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "get-no-network",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/nlb/v1/networkLoadBalancers/{{nlbId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "nlb",
+                "v1",
+                "networkLoadBalancers",
+                "{{nlbId}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.expect(pm.response.code).to.eql(200));",
+                  "pm.test('output does not echo the removed networkId', () =>   pm.expect(pm.response.json()).to.not.have.property('networkId'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "cleanup-lb",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/nlb/v1/networkLoadBalancers/{{nlbId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "nlb",
+                "v1",
+                "networkLoadBalancers",
+                "{{nlbId}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "try {",
+                  "  const j = pm.response.json();",
+                  "  const v = (j.id);",
+                  "  if (v !== undefined && v !== null) pm.environment.set('opId', String(v));",
+                  "} catch (e) {}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "poll-op-38",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/operations/{{opId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "operations",
+                "{{opId}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.environment.get('opId') || pm.response.code !== 200) {",
+                  "  pm.environment.unset('_pollCount');",
+                  "  return;",
+                  "}",
+                  "pm.test('poll status 200', () => pm.expect(pm.response.code).to.eql(200));",
+                  "const j = pm.response.json();",
+                  "const pc = parseInt(pm.environment.get('_pollCount') || '0', 10);",
+                  "if (!j.done && pc < 6) {",
+                  "  pm.environment.set('_pollCount', String(pc + 1));",
+                  "  postman.setNextRequest(pm.info.requestName);",
+                  "  return;",
+                  "}",
+                  "pm.environment.unset('_pollCount');",
+                  "pm.test('operation done', () => pm.expect(j.done, JSON.stringify(j)).to.eql(true));",
+                  "if (j.error) pm.environment.set('lastOpError', JSON.stringify(j.error));",
+                  "else pm.environment.unset('lastOpError');",
+                  "if (j.response) pm.environment.set('lastOpResponse', JSON.stringify(j.response));"
                 ]
               }
             }
@@ -3941,11 +4314,11 @@
       ]
     },
     {
-      "name": "XRES-E2E-INTERNAL-SG-FOREIGN-REJECTED — UC-2 negative: INTERNAL LB with a security group not belonging to the network → rejected (sync precheck) (Verifies 6.0-35/6.0-29)",
-      "description": "class:NEG | class:VAL | priority:P2",
+      "name": "XRES-E2E-INTERNAL-SG-FOREIGN-REJECTED — EXTERNAL LB carrying a removed securityGroupIds field + valid public source → created (LB-level SG was removed in 8.1; grpc-gateway ignores it) (Verifies 8.1-32)",
+      "description": "class:CRUD | class:CONF | priority:P2",
       "item": [
         {
-          "name": "create-internal-bad-sg",
+          "name": "create-with-removed-sg",
           "request": {
             "method": "POST",
             "header": [
@@ -3967,7 +4340,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\"projectId\": \"{{_suiteProjectId}}\", \"regionId\": \"{{_suiteRegionId}}\", \"type\": \"INTERNAL\", \"name\": \"int-sg-{{runId}}\", \"networkId\": \"{{existingNetworkId}}\", \"securityGroupIds\": [\"{{garbageSecurityGroupId}}\"]}",
+              "raw": "{\"projectId\": \"{{_suiteProjectId}}\", \"regionId\": \"{{_suiteRegionId}}\", \"type\": \"EXTERNAL\", \"name\": \"ext-sg-{{runId}}\", \"securityGroupIds\": [\"{{garbageSecurityGroupId}}\"], \"v4Source\": {\"public\": {}}}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -3981,8 +4354,190 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('rejected (InvalidArgument or Unavailable), never created', () =>   pm.expect(pm.response.code).to.be.oneOf([400, 503]));",
-                  "if (pm.response.code === 400)   pm.test('grpc INVALID_ARGUMENT (3)', () => pm.expect(pm.response.json().code).to.eql(3));"
+                  "pm.test('status 200', () => pm.expect(pm.response.code).to.eql(200));",
+                  "try {",
+                  "  const j = pm.response.json();",
+                  "  const v = (j.id);",
+                  "  if (v !== undefined && v !== null) pm.environment.set('opId', String(v));",
+                  "} catch (e) {}",
+                  "try {",
+                  "  const j = pm.response.json();",
+                  "  const v = (j.metadata && j.metadata.networkLoadBalancerId);",
+                  "  if (v !== undefined && v !== null) pm.environment.set('nlbId', String(v));",
+                  "} catch (e) {}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "poll-op-39",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/operations/{{opId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "operations",
+                "{{opId}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.environment.get('opId') || pm.response.code !== 200) {",
+                  "  pm.environment.unset('_pollCount');",
+                  "  return;",
+                  "}",
+                  "pm.test('poll status 200', () => pm.expect(pm.response.code).to.eql(200));",
+                  "const j = pm.response.json();",
+                  "const pc = parseInt(pm.environment.get('_pollCount') || '0', 10);",
+                  "if (!j.done && pc < 6) {",
+                  "  pm.environment.set('_pollCount', String(pc + 1));",
+                  "  postman.setNextRequest(pm.info.requestName);",
+                  "  return;",
+                  "}",
+                  "pm.environment.unset('_pollCount');",
+                  "pm.test('operation done', () => pm.expect(j.done, JSON.stringify(j)).to.eql(true));",
+                  "if (j.error) pm.environment.set('lastOpError', JSON.stringify(j.error));",
+                  "else pm.environment.unset('lastOpError');",
+                  "if (j.response) pm.environment.set('lastOpResponse', JSON.stringify(j.response));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "get-no-sg",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/nlb/v1/networkLoadBalancers/{{nlbId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "nlb",
+                "v1",
+                "networkLoadBalancers",
+                "{{nlbId}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.expect(pm.response.code).to.eql(200));",
+                  "pm.test('output does not echo the removed securityGroupIds', () =>   pm.expect(pm.response.json()).to.not.have.property('securityGroupIds'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "cleanup-lb",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/nlb/v1/networkLoadBalancers/{{nlbId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "nlb",
+                "v1",
+                "networkLoadBalancers",
+                "{{nlbId}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "try {",
+                  "  const j = pm.response.json();",
+                  "  const v = (j.id);",
+                  "  if (v !== undefined && v !== null) pm.environment.set('opId', String(v));",
+                  "} catch (e) {}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "poll-op-40",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/operations/{{opId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "operations",
+                "{{opId}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.environment.get('opId') || pm.response.code !== 200) {",
+                  "  pm.environment.unset('_pollCount');",
+                  "  return;",
+                  "}",
+                  "pm.test('poll status 200', () => pm.expect(pm.response.code).to.eql(200));",
+                  "const j = pm.response.json();",
+                  "const pc = parseInt(pm.environment.get('_pollCount') || '0', 10);",
+                  "if (!j.done && pc < 6) {",
+                  "  pm.environment.set('_pollCount', String(pc + 1));",
+                  "  postman.setNextRequest(pm.info.requestName);",
+                  "  return;",
+                  "}",
+                  "pm.environment.unset('_pollCount');",
+                  "pm.test('operation done', () => pm.expect(j.done, JSON.stringify(j)).to.eql(true));",
+                  "if (j.error) pm.environment.set('lastOpError', JSON.stringify(j.error));",
+                  "else pm.environment.unset('lastOpError');",
+                  "if (j.response) pm.environment.set('lastOpResponse', JSON.stringify(j.response));"
                 ]
               }
             }
@@ -4017,7 +4572,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\"projectId\": \"{{_suiteProjectId}}\", \"regionId\": \"{{_suiteRegionId}}\", \"type\": \"EXTERNAL\", \"name\": \"xres-teardown-{{runId}}\"}",
+              "raw": "{\"projectId\": \"{{_suiteProjectId}}\", \"regionId\": \"{{_suiteRegionId}}\", \"type\": \"EXTERNAL\", \"name\": \"xres-teardown-{{runId}}\", \"v4Source\": {\"public\": {}}}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -4053,7 +4608,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-41",
           "request": {
             "method": "GET",
             "header": [
@@ -4155,7 +4710,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-42",
           "request": {
             "method": "GET",
             "header": [
@@ -4262,7 +4817,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-43",
           "request": {
             "method": "GET",
             "header": [
@@ -4360,7 +4915,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-44",
           "request": {
             "method": "GET",
             "header": [
@@ -4458,7 +5013,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-45",
           "request": {
             "method": "GET",
             "header": [
@@ -4555,7 +5110,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-46",
           "request": {
             "method": "GET",
             "header": [
@@ -4644,7 +5199,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-47",
           "request": {
             "method": "GET",
             "header": [
@@ -4812,7 +5367,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-48",
           "request": {
             "method": "GET",
             "header": [
@@ -4910,7 +5465,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-49",
           "request": {
             "method": "GET",
             "header": [
@@ -5008,7 +5563,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-50",
           "request": {
             "method": "GET",
             "header": [
@@ -5097,7 +5652,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-51",
           "request": {
             "method": "GET",
             "header": [
@@ -5225,7 +5780,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-52",
           "request": {
             "method": "GET",
             "header": [
@@ -5353,7 +5908,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-53",
           "request": {
             "method": "GET",
             "header": [
@@ -5430,7 +5985,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\"projectId\": \"{{_suiteProjectId}}\", \"regionId\": \"{{_suiteRegionId}}\", \"type\": \"EXTERNAL\", \"name\": \"xres-del-notempty-{{runId}}\"}",
+              "raw": "{\"projectId\": \"{{_suiteProjectId}}\", \"regionId\": \"{{_suiteRegionId}}\", \"type\": \"EXTERNAL\", \"name\": \"xres-del-notempty-{{runId}}\", \"v4Source\": {\"public\": {}}}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -5466,7 +6021,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-54",
           "request": {
             "method": "GET",
             "header": [
@@ -5568,7 +6123,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-55",
           "request": {
             "method": "GET",
             "header": [
@@ -5658,7 +6213,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-56",
           "request": {
             "method": "GET",
             "header": [
@@ -5780,7 +6335,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-57",
           "request": {
             "method": "GET",
             "header": [
@@ -5868,7 +6423,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-58",
           "request": {
             "method": "GET",
             "header": [
@@ -5945,7 +6500,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\"projectId\": \"{{_suiteProjectId}}\", \"regionId\": \"{{_suiteRegionId}}\", \"type\": \"EXTERNAL\", \"name\": \"xres-dangling-{{runId}}\"}",
+              "raw": "{\"projectId\": \"{{_suiteProjectId}}\", \"regionId\": \"{{_suiteRegionId}}\", \"type\": \"EXTERNAL\", \"name\": \"xres-dangling-{{runId}}\", \"v4Source\": {\"public\": {}}}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -5981,7 +6536,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-59",
           "request": {
             "method": "GET",
             "header": [
@@ -6088,7 +6643,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-60",
           "request": {
             "method": "GET",
             "header": [
@@ -6191,7 +6746,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-61",
           "request": {
             "method": "GET",
             "header": [
@@ -6371,7 +6926,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-62",
           "request": {
             "method": "GET",
             "header": [
@@ -6459,7 +7014,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-63",
           "request": {
             "method": "GET",
             "header": [
@@ -6547,7 +7102,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-64",
           "request": {
             "method": "GET",
             "header": [
@@ -6624,7 +7179,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\"projectId\": \"{{_suiteProjectId}}\", \"regionId\": \"{{_suiteRegionId}}\", \"type\": \"EXTERNAL\", \"name\": \"xres-dangling-neg-{{runId}}\"}",
+              "raw": "{\"projectId\": \"{{_suiteProjectId}}\", \"regionId\": \"{{_suiteRegionId}}\", \"type\": \"EXTERNAL\", \"name\": \"xres-dangling-neg-{{runId}}\", \"v4Source\": {\"public\": {}}}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -6660,7 +7215,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-65",
           "request": {
             "method": "GET",
             "header": [
@@ -6788,7 +7343,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-66",
           "request": {
             "method": "GET",
             "header": [

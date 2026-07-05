@@ -4,6 +4,8 @@
 package loadbalancer
 
 import (
+	"context"
+
 	geoclient "github.com/PRO-Robotech/kacho-nlb/internal/clients/geo"
 	iamclient "github.com/PRO-Robotech/kacho-nlb/internal/clients/iam"
 	vpcclient "github.com/PRO-Robotech/kacho-nlb/internal/clients/vpc"
@@ -18,35 +20,49 @@ import (
 // двойники (см. *_mock_test.go в этом же пакете).
 
 // Repo — корневой CQRS-Repository kacho-nlb. Сохранён как алиас, чтобы handler-
-// слой не импортировал leaf-пакет `repo/kacho` напрямую под другим именем —
-// весь приём идёт через type Repo (читаемая локальная переменная для use-case'ов).
+// слой не импортировал leaf-пакет `repo/kacho` напрямую под другим именем.
 type Repo = kachorepo.Repository
 
-// ProjectClient — Get(projectID) → *iamclient.Project. Используется sync-precheck
-// в Create/Move use-case'ах для валидации `project_id` (`InvalidArgument` если
-// peer вернул NotFound; `Unavailable` если peer недоступен).
+// ProjectClient — Get(projectID) → *iamclient.Project. sync-precheck `project_id`
+// в Create/Move (NotFound → InvalidArgument; недоступен → Unavailable).
 type ProjectClient = iamclient.ProjectClient
 
-// RegionClient — Get(regionID) → *geoclient.Region. Используется sync-precheck
-// в Create use-case'е для валидации `region_id` через geo.RegionService.Get
-// (kacho-geo; ребро nlb→geo заменило nlb→compute «ради region»).
+// RegionClient — Get(regionID) → *geoclient.Region. sync-precheck `region_id`
+// через geo.RegionService.Get (ребро nlb→geo).
 type RegionClient = geoclient.RegionClient
 
-// NetworkClient — Get(networkID) → *vpcclient.Network. Используется sync-precheck
-// в Create use-case'е для валидации `network_id` INTERNAL-LB через
-// vpc.NetworkService.Get (ребро nlb→vpc): not-found → `InvalidArgument`, peer
-// недоступен → `Unavailable` (fail-closed для мутации).
-type NetworkClient = vpcclient.NetworkClient
+// ZoneClient — ListZoneIDsInRegion(regionID) → зоны региона. sync-precheck
+// disabled_announce_zones (зоны ∈ регион, не все зоны) и деривация underlying-зоны
+// public-VIP (EXTERNAL auto) через geo.ZoneService.List (ребро nlb→geo).
+type ZoneClient = geoclient.ZoneClient
 
-// SecurityGroupClient — Get(sgID) → *vpcclient.SecurityGroup. Используется
-// sync-precheck в Create/Update use-case'ах для валидации `security_group_ids`
-// INTERNAL-LB через vpc.SecurityGroupService.Get (ребро nlb→vpc): not-found или
-// SG чужой сети → `InvalidArgument`, peer недоступен → `Unavailable` (fail-closed
-// для мутации).
-type SecurityGroupClient = vpcclient.SecurityGroupClient
+// InternalAddressClient — VIP-lifecycle port над vpc InternalAddressService:
+// per-family auto-аллокация (AllocateInternalIP/IPv6 из подсети, AllocateExternalIP/
+// IPv6 — платформенный public), link существующего Address (AttachExisting) и
+// release (FreeIP/ClearReference) в compensation/Delete. Concrete
+// `*vpcclient.internalAddressClient` удовлетворяет интерфейс структурно.
+type InternalAddressClient interface {
+	AllocateInternalIP(ctx context.Context, req vpcclient.AllocateInternalIPRequest) (*vpcclient.AllocateResponse, error)
+	AllocateInternalIPv6(ctx context.Context, req vpcclient.AllocateInternalIPRequest) (*vpcclient.AllocateResponse, error)
+	AllocateExternalIP(ctx context.Context, req vpcclient.AllocateExternalIPRequest) (*vpcclient.AllocateResponse, error)
+	AllocateExternalIPv6(ctx context.Context, req vpcclient.AllocateExternalIPRequest) (*vpcclient.AllocateResponse, error)
+	AttachExisting(ctx context.Context, req vpcclient.AttachExistingRequest) (*vpcclient.AllocateResponse, error)
+	FreeIP(ctx context.Context, addressID string, owner vpcclient.AddressOwner) error
+	ClearReference(ctx context.Context, addressID string, owner vpcclient.AddressOwner) error
+}
 
-// Logger — узкий port логгера; вся работа use-case'ов и worker'ов идёт через
-// этот интерфейс — concrete *slog.Logger удовлетворяет его автоматически.
+// SubnetClient — Get(subnetID) → *vpcclient.Subnet. sync-precheck placement подсети
+// (== placement LB) + derived network_id (dualstack same-network) через
+// vpc.SubnetService.Get. not-found → InvalidArgument; недоступен → Unavailable.
+type SubnetClient = vpcclient.SubnetClient
+
+// AddressClient — Get(addressID) → *vpcclient.Address (публичный vpc
+// AddressService.Get, authz-gated `v_get`). sync-precheck link-источника: адрес
+// резолвится под tenant-identity, проверяются kind/family/ownership/placement.
+// Анти-oracle: несоответствие/no-access → generic InvalidArgument.
+type AddressClient = vpcclient.AddressClient
+
+// Logger — узкий port логгера; concrete *slog.Logger удовлетворяет его автоматически.
 type Logger interface {
 	Info(msg string, args ...any)
 	Warn(msg string, args ...any)

@@ -24,7 +24,7 @@ import (
 	"github.com/PRO-Robotech/kacho-corelib/ids"
 	"github.com/PRO-Robotech/kacho-corelib/operations"
 
-	operationpb "github.com/PRO-Robotech/kacho-corelib/proto/gen/go/kacho/cloud/operation"
+	operationpb "github.com/PRO-Robotech/kacho-proto/gen/go/kacho/cloud/operation"
 
 	opapi "github.com/PRO-Robotech/kacho-nlb/internal/apps/kacho/api/operation"
 	"github.com/PRO-Robotech/kacho-nlb/internal/migrations"

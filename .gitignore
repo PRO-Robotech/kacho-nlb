@@ -33,3 +33,10 @@ tests/k6/*.summary.json
 .claude/worktrees/
 go.work
 go.work.sum
+
+# AI-оснастка (источник истины — kacho-workspace, локально синкается) — не коммитим
+.claude/
+CLAUDE.md
+AGENTS.md
+.codex/
+.agents/

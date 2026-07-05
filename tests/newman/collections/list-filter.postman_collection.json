@@ -1,6 +1,6 @@
 {
   "info": {
-    "_postman_id": "ce681f98-66c3-407a-b84c-874713e98bd1",
+    "_postman_id": "3aea86d2-b550-4cba-ad04-bce9deef8143",
     "name": "kacho-nlb / newman / list-filter",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
@@ -57,7 +57,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\"projectId\": \"{{_suiteProjectId}}\", \"regionId\": \"{{_suiteRegionId}}\", \"name\": \"lf-nlb-own-{{runId}}\", \"type\": \"EXTERNAL\"}",
+              "raw": "{\"projectId\": \"{{_suiteProjectId}}\", \"regionId\": \"{{_suiteRegionId}}\", \"name\": \"lf-nlb-own-{{runId}}\", \"type\": \"EXTERNAL\", \"v4Source\": {\"public\": {}}}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -103,7 +103,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-1",
           "request": {
             "method": "GET",
             "header": [
@@ -260,7 +260,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-2",
           "request": {
             "method": "GET",
             "header": [
@@ -383,7 +383,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-3",
           "request": {
             "method": "GET",
             "header": [
@@ -540,7 +540,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-4",
           "request": {
             "method": "GET",
             "header": [
@@ -678,7 +678,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\"projectId\": \"{{_suiteProjectId}}\", \"regionId\": \"{{_suiteRegionId}}\", \"name\": \"lf-nlb-xleak-{{runId}}\", \"type\": \"EXTERNAL\"}",
+              "raw": "{\"projectId\": \"{{_suiteProjectId}}\", \"regionId\": \"{{_suiteRegionId}}\", \"name\": \"lf-nlb-xleak-{{runId}}\", \"type\": \"EXTERNAL\", \"v4Source\": {\"public\": {}}}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -724,7 +724,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-5",
           "request": {
             "method": "GET",
             "header": [
@@ -884,7 +884,7 @@
           ]
         },
         {
-          "name": "poll-op",
+          "name": "poll-op-6",
           "request": {
             "method": "GET",
             "header": [

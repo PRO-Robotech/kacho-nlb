@@ -12,8 +12,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 
-	operationpb "github.com/PRO-Robotech/kacho-corelib/proto/gen/go/kacho/cloud/operation"
-	lbv1 "github.com/PRO-Robotech/kacho-nlb/proto/gen/go/kacho/cloud/loadbalancer/v1"
+	operationpb "github.com/PRO-Robotech/kacho-proto/gen/go/kacho/cloud/operation"
+	lbv1 "github.com/PRO-Robotech/kacho-proto/gen/go/kacho/cloud/loadbalancer/v1"
 
 	"github.com/PRO-Robotech/kacho-nlb/internal/check"
 )
@@ -44,6 +44,7 @@ var allPublicServiceDescs = []grpc.ServiceDesc{
 // поэтому их RPC ТОЖЕ обязаны быть в PermissionMap (с реальным Relation, не Public).
 var allInternalServiceDescs = []grpc.ServiceDesc{
 	lbv1.InternalResourceLifecycleService_ServiceDesc,
+	lbv1.InternalLoadBalancerAnnounceService_ServiceDesc,
 }
 
 // allServiceDescs — public ∪ internal (все listener'ы гоняют один authz-interceptor).
@@ -212,7 +213,8 @@ func TestDrift_CatalogRegex(t *testing.T) {
 //
 // Ожидание:
 //
-//	12 NLB + 6 Listener + 9 TG + 2 Operation = 29 public + 1 internal Subscribe = 30 entries.
+//	12 NLB + 6 Listener + 9 TG + 2 Operation = 29 public + 1 internal Subscribe +
+//	2 internal Announce (Get/Report) = 32 entries.
 func TestDrift_RPCMethodCount(t *testing.T) {
 	got := len(check.PermissionMap())
 

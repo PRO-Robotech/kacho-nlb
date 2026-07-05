@@ -262,6 +262,9 @@ func (w *fakeLBWriter) Insert(_ context.Context, lb *domain.LoadBalancer) (*kach
 func (w *fakeLBWriter) Update(context.Context, *domain.LoadBalancer) (*kachorepo.LoadBalancerRecord, error) {
 	return nil, errors.New("fakeLBWriter.Update not implemented")
 }
+func (w *fakeLBWriter) AttachVIP(context.Context, string, domain.IPVersion, string, string, domain.VipOrigin) (*kachorepo.LoadBalancerRecord, error) {
+	return nil, errors.New("fakeLBWriter.AttachVIP not implemented")
+}
 func (w *fakeLBWriter) SetStatusCAS(context.Context, string, domain.LBStatus, domain.LBStatus) (*kachorepo.LoadBalancerRecord, error) {
 	return nil, errors.New("fakeLBWriter.SetStatusCAS not implemented")
 }
@@ -857,7 +860,7 @@ func (c *fakeInternalAddressClient) FreeIP(_ context.Context, id string, _ vpccl
 	c.freeCalls = append(c.freeCalls, id)
 	return c.freeErr
 }
-func (c *fakeInternalAddressClient) SetReference(_ context.Context, id string, owner vpcclient.AddressOwner) error {
+func (c *fakeInternalAddressClient) SetReference(_ context.Context, id string, owner vpcclient.AddressOwner, _ bool) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.setRefCalls = append(c.setRefCalls, setRefCall{addressID: id, owner: owner})
@@ -868,6 +871,15 @@ func (c *fakeInternalAddressClient) ClearReference(_ context.Context, id string,
 	defer c.mu.Unlock()
 	c.clearCalls = append(c.clearCalls, id)
 	return c.clearErr
+}
+func (c *fakeInternalAddressClient) AttachExisting(_ context.Context, req vpcclient.AttachExistingRequest) (*vpcclient.AllocateResponse, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.setRefCalls = append(c.setRefCalls, setRefCall{addressID: req.AddressID, owner: req.Owner})
+	if c.setRefErr != nil {
+		return nil, c.setRefErr
+	}
+	return &vpcclient.AllocateResponse{AddressID: req.AddressID, Value: c.nextAllocValue}, nil
 }
 
 // fakeSubnetClient — minimal SubnetClient stub (not exercised in current

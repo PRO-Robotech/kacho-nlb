@@ -49,6 +49,15 @@ type LoadBalancerWriterIface interface {
 	// через SetStatusCAS.
 	Update(ctx context.Context, lb *domain.LoadBalancer) (*LoadBalancerRecord, error)
 
+	// AttachVIP — атомарный CAS-attach anycast-VIP одного семейства (IPV4/IPV6) к
+	// LB-строке: UPDATE … SET address_<fam>=$, address_id_<fam>=$, vip_origin_<fam>=$
+	// WHERE id=$ AND (address_<fam>='' OR address_<fam>=$new) RETURNING. 0 rows →
+	// ErrFailedPrecondition (семейство уже несёт другой адрес; повтор того же —
+	// идемпотентный no-op). per-region UNIQUE 23505 → generic ErrFailedPrecondition
+	// (анти-oracle); status-aware CHECK 23514 → ErrInvalidArg (семейство не в
+	// ip_families ДО persist). Single-VIP-per-LB на DB-уровне (ban #10).
+	AttachVIP(ctx context.Context, id string, family domain.IPVersion, address, addressID string, origin domain.VipOrigin) (*LoadBalancerRecord, error)
+
 	// SetStatusCAS — atomic compare-and-swap на status-колонке. expected — ожидаемый
 	// текущий статус (например `STOPPED`); newStatus — целевой. 0 affected
 	// (CAS-miss или row absent) → ErrFailedPrecondition. Skill workspace
