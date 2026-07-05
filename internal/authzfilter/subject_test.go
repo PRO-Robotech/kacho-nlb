@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -79,19 +80,49 @@ func TestResolve_NilFilterBypass(t *testing.T) {
 	}
 }
 
-// system subject → bypass without calling the filter (no identity to scope by).
-func TestResolve_SystemSubjectBypass(t *testing.T) {
+// SECURITY (audit SEC-high #1 / CWE-862): a system/empty subject on a List path
+// (a request whose forwarded principal was dropped — anonymous peer, non-forwarder
+// mTLS peer, missing x-kacho-principal-* headers) MUST NOT short-circuit to
+// BypassAll. Resolve delegates to the filter, which is the sole per-object authz
+// layer for ScopeFiltered List RPCs; short-circuiting here re-opens cross-tenant
+// enumeration. Resolve must forward the (empty) subject to the filter rather than
+// bypassing it.
+func TestResolve_SystemSubjectDoesNotBypass(t *testing.T) {
 	flt := &fakeResolveFilter{dec: Decision{Empty: true}}
 	dec, err := Resolve(context.Background(), flt,
 		ResourceTypeLoadBalancer, ActionLoadBalancerList)
 	if err != nil {
 		t.Fatalf("system subject: %v", err)
 	}
-	if !dec.IsBypass() {
-		t.Fatalf("system subject: expected bypass, got %+v", dec)
+	if dec.IsBypass() {
+		t.Fatalf("system subject MUST NOT bypass (cross-tenant leak), got %+v", dec)
 	}
-	if flt.calls != 0 {
-		t.Fatalf("system subject: filter must NOT be called, calls=%d", flt.calls)
+	if flt.calls != 1 {
+		t.Fatalf("system subject: filter must be consulted, calls=%d", flt.calls)
+	}
+	if flt.gotSubj != "" {
+		t.Fatalf("system subject must be passed through empty, got %q", flt.gotSubj)
+	}
+}
+
+// SECURITY (audit SEC-high #1): with the real enabled FGAFilter, an empty/system
+// subject fails closed (Unauthenticated) and never queries iam — proving a
+// principal-less caller cannot enumerate another project's resources.
+func TestResolve_SystemSubjectFailClosed_RealFilter(t *testing.T) {
+	mock := &mockAuthClient{}
+	flt := NewFGAFilter(mock, Config{
+		Enabled: true, Timeout: time.Second, CacheTTL: time.Second, CacheMaxEntries: 10,
+	})
+	_, err := Resolve(context.Background(), flt,
+		ResourceTypeLoadBalancer, ActionLoadBalancerList)
+	if err == nil {
+		t.Fatal("system subject must fail closed with the real filter, got nil error (BypassAll leak)")
+	}
+	if code := status.Code(err); code != codes.Unauthenticated {
+		t.Fatalf("want Unauthenticated for empty subject, got %s", code)
+	}
+	if mock.calls.Load() != 0 {
+		t.Fatalf("filter must not query iam for empty subject, calls=%d", mock.calls.Load())
 	}
 }
 

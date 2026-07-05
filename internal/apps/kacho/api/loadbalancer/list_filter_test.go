@@ -152,19 +152,24 @@ func TestListLoadBalancersFilter_NilFilterPassthrough(t *testing.T) {
 	require.Len(t, resp.GetNetworkLoadBalancers(), 2)
 }
 
-// system-principal (нет user-identity) → bypass (фоновые / dev вызовы).
-func TestListLoadBalancersFilter_SystemSubjectPassthrough(t *testing.T) {
+// SECURITY (audit SEC-high #1 / CWE-862): a system/empty-subject request (a
+// caller whose forwarded principal was dropped — anonymous peer, non-forwarder
+// mTLS, missing x-kacho-principal-* headers) MUST NOT bypass the per-object
+// filter on a List path. With an enabled filter it fails closed to an EMPTY
+// result, never the victim project's rows — no cross-tenant enumeration.
+func TestListLoadBalancersFilter_SystemSubjectNoLeak(t *testing.T) {
 	repo := newFakeRepo()
 	seedLB(t, repo, "prj-a", "lb-a1")
 
-	flt := &fakeListFilter{allowed: map[string][]string{}} // даже с пустым грантом — system bypass
+	flt := &fakeListFilter{allowed: map[string][]string{}} // empty grant
 	uc := NewListLoadBalancersUseCase(repo, flt)
 
-	// background ctx → SystemPrincipal → subject "" → bypass без ListObjects.
+	// background ctx → SystemPrincipal → subject "" → filter consulted, empty grant.
 	resp, err := uc.Execute(context.Background(),
 		&lbv1.ListNetworkLoadBalancersRequest{ProjectId: "prj-a"})
 	require.NoError(t, err)
-	require.Len(t, resp.GetNetworkLoadBalancers(), 1)
+	require.Empty(t, resp.GetNetworkLoadBalancers(),
+		"principal-less caller must not enumerate the project's load balancers")
 }
 
 // errFromFilter — guard: фильтр возвращает не-status ошибку → всё равно Unavailable.
