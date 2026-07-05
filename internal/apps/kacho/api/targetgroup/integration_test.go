@@ -174,9 +174,9 @@ func TestIntegration_DeleteTG_BlocksOnAttached(t *testing.T) {
 	ctx := context.Background()
 	_, err := pool.Exec(ctx, `
 		INSERT INTO kacho_nlb.load_balancers (id, project_id, region_id, name, description, labels,
-			type, status, session_affinity, cross_zone_enabled, deletion_protection)
+			type, status, session_affinity, deletion_protection)
 		VALUES ($1, 'prj-x', 'ru-central1', 'lb-int', '', '{}', 'EXTERNAL', 'ACTIVE',
-		        'FIVE_TUPLE', true, false)`, lbID,
+		        'FIVE_TUPLE', false)`, lbID,
 	)
 	require.NoError(t, err)
 	_, err = pool.Exec(ctx, `
