@@ -27,7 +27,7 @@ func instTarget(idx int) domain.Target {
 	}
 }
 
-// --- Finding #1: Move ↔ Attach TOCTOU (cross-project attach) -----------------
+// --- Move ↔ Attach TOCTOU (cross-project attach) -----------------------------
 
 // TestMoveProject_BlockedByAttachedTG_Atomic — MoveProject должен атомарно
 // отказывать, если у LB есть приаттаченный TG (иначе attached_target_groups
@@ -213,7 +213,7 @@ func TestMoveAttach_Race(t *testing.T) {
 	}
 }
 
-// --- Finding #2/#4: cumulative per-group target cap -------------------------
+// --- cumulative per-group target cap -----------------------------------------
 
 // TestAddTargets_CumulativeCap — серия AddTargets не должна пробить
 // MaxTargetsPerGroup (=100); превышающий вызов → FailedPrecondition, count не растёт.
@@ -342,7 +342,7 @@ func TestAddTargets_CumulativeCap_Concurrent(t *testing.T) {
 	assert.Len(t, targets, 70, "exactly one full batch (70) must have committed — not 0, not >cap")
 }
 
-// --- Finding #5: deletion_protection atomic guard ---------------------------
+// --- deletion_protection atomic guard ----------------------------------------
 
 // TestDeleteIfUnprotected_Guard — защищённый LB не удаляется атомарным guard'ом;
 // снятие защиты открывает удаление; отсутствующий id → NotFound.
@@ -398,7 +398,7 @@ func TestDeleteIfUnprotected_Guard(t *testing.T) {
 	assert.True(t, errors.Is(err, kacho.ErrNotFound), "LB must be gone after unprotected delete")
 }
 
-// --- Finding #6: 23505 constraint-specific messages -------------------------
+// --- 23505 constraint-specific messages --------------------------------------
 
 // TestUnique_PortProto_Message — коллизия (lb, port, protocol) отдаёт сообщение
 // про port/protocol, а НЕ про «name already exists».

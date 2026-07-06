@@ -56,7 +56,7 @@ func TestMapDomainErr_AllSentinels(t *testing.T) {
 
 // StripSentinel behaviour is now unit-tested centrally in
 // internal/apps/kacho/api/shared/errmap_test.go (single source of truth after
-// the mapper de-duplication, audit ARCH-medium). mapDomainErr coverage above
+// the mapper de-duplication). mapDomainErr coverage above
 // still verifies listener делегирует в shared корректно.
 
 // TestOperationToProto_FillsPrincipal — principal mapping correctness.

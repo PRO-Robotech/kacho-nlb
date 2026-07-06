@@ -132,7 +132,7 @@ func (c Config) Validate() error {
 		// поэтому он НЕ настраивает TLS на listener'ах. Прежний gate принимал его как
 		// «one-way TLS+JWT» и пропускал prod-конфиг с mtls.server.enable=false → boot
 		// поднимал plaintext gRPC на public И internal :9091, доверяя client-asserted
-		// principal без mTLS (CWE-319/CWE-290, audit SEC HIGH). Fail-closed, паритет с
+		// principal без mTLS (CWE-319/CWE-290). Fail-closed, паритет с
 		// kacho-vpc/kacho-compute (server-mTLS — обязателен, gate только на реальном
 		// mTLS-настройке):
 		//   1) dead authn.type=tls отвергается явно (оператор не примет его за transport-
@@ -158,7 +158,7 @@ func (c Config) Validate() error {
 		// ЛИБО one-way TLS (<edge>.tls). Без этого dialOne падает в insecure gRPC
 		// (buildCreds → insecure.NewCredentials), и on-path attacker читает/подменяет
 		// IPAM-аллокацию (VIP), instance-resolve, region-валидацию — integrity/
-		// defense-in-depth (CWE-319, audit SEC #2). Прежде проверялись только server
+		// defense-in-depth (CWE-319). Прежде проверялись только server
 		// + iam-register. Проверяем только СКОНФИГУРИРОВАННЫЕ рёбра (addr задан),
 		// чтобы dev-подобные частичные prod-конфиги без некоторых peer'ов не ломались.
 		for _, e := range c.peerEdges() {
@@ -196,8 +196,8 @@ func (c Config) Validate() error {
 				"production mode: authz.trusted-forwarder-sans must be non-empty when mtls.server.enable=true "+
 					"(empty allow-list trusts any mTLS-verified peer to forward the end-user principal — impersonation vector)"))
 		}
-		// Postgres transport fail-closed (security.md «mTLS/TLS ВЕЗДЕ», CWE-319,
-		// audit SEC #1). Peer-рёбра проверяются выше; DB-соединение — тот же
+		// Postgres transport fail-closed (security.md «mTLS/TLS ВЕЗДЕ», CWE-319).
+		// Peer-рёбра проверяются выше; DB-соединение — тот же
 		// периметр: `sslmode=disable`/`allow`/`prefer` (или отсутствие sslmode,
 		// libpq-default 'prefer') допускает plaintext-канал, по которому
 		// DB-пароль (KACHO_NLB_DB_PASSWORD) и tenant-данные (VIP/listener/target)

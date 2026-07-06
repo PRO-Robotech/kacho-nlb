@@ -165,7 +165,7 @@ func (u *DeleteLoadBalancerUseCase) doDelete(ctx context.Context, id, projectID 
 	}
 	defer w.Abort()
 
-	// Atomic guard на deletion_protection (ban #10): конкурентный
+	// Atomic guard на deletion_protection: конкурентный
 	// Update(deletion_protection=true) между sync-precheck и этим DELETE
 	// пресекается на DB-уровне (0 rows при защищённом LB → FailedPrecondition).
 	if err := w.LoadBalancers().DeleteIfUnprotected(ctx, id); err != nil {
@@ -194,7 +194,7 @@ func (u *DeleteLoadBalancerUseCase) doDelete(ctx context.Context, id, projectID 
 	return out, nil
 }
 
-// releaseVIP — освобождает VIP одного семейства по address_id (§3.9): owned (auto)
+// releaseVIP — освобождает VIP одного семейства по address_id: owned (auto)
 // → two-step ClearReference → FreeIP (иначе FreeIP==AddressService.Delete упрётся
 // в собственный Delete-guard на owned-референсе); linked → ClearReference без
 // Delete (tenant-адрес уцелевает). Пустой addressID → no-op. Идемпотентно

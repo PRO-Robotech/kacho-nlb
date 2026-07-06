@@ -165,9 +165,9 @@ func TestReportAnnounceState_Upsert_Idempotent(t *testing.T) {
 }
 
 // TestGetAnnounceState_UnknownCodeNormalizedToInternal — a store error that is a
-// gRPC status carrying codes.Unknown must NOT be forwarded verbatim; it must be
+// gRPC status carrying codes.Unknown must NOT be forwarded as-is; it must be
 // normalized to Internal (no-leak), matching shared.MapDomainErr used by the
-// loadbalancer/listener/targetgroup handlers (audit ARCH r3 #4). A per-package
+// loadbalancer/listener/targetgroup handlers. A per-package
 // pass-through that forwards any status (incl. Unknown) is the divergence the
 // shared mapper was created to eliminate.
 func TestGetAnnounceState_UnknownCodeNormalizedToInternal(t *testing.T) {

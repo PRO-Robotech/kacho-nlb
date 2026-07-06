@@ -18,7 +18,7 @@ import (
 
 // mapDomainErr транслирует sentinel-ошибки `domain`/`kacho` (repo) и peer-client
 // ошибки в gRPC-status. Делегирует единому мапперу `shared.MapDomainErr` (один
-// источник истины для всех use-case пакетов, см. audit ARCH-medium).
+// источник истины для всех use-case пакетов).
 func mapDomainErr(err error) error {
 	return shared.MapDomainErr(err)
 }
@@ -30,7 +30,7 @@ func stripSentinel(err error, fallbackText string) string {
 }
 
 // operationToProto — тонкий делегатор к единому `shared.OperationToProto`
-// (один источник истины для всех use-case пакетов, см. audit LEAN #10).
+// (один источник истины для всех use-case пакетов).
 func operationToProto(op *operations.Operation) *operationpb.Operation {
 	return shared.OperationToProto(op)
 }
@@ -48,8 +48,7 @@ func lbRecordToProto(rec *kachorepo.LoadBalancerRecord) (*lbv1.NetworkLoadBalanc
 	return dst, nil
 }
 
-// errInvalidArg — тонкий делегатор к единому `shared.ErrInvalidArg`
-// (см. audit LEAN #11).
+// errInvalidArg — тонкий делегатор к единому `shared.ErrInvalidArg`.
 func errInvalidArg(field, msg string) error {
 	return shared.ErrInvalidArg(field, msg)
 }

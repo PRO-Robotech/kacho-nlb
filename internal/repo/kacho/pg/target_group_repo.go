@@ -211,7 +211,7 @@ func (r *targetGroupReader) ListByProject(ctx context.Context, projectID string,
 func (r *targetGroupReader) ListTargets(ctx context.Context, tgID string) ([]*kacho.TargetRecord, error) {
 	// LIMIT MaxTargetsPerGroup — safety-net: cap на группу гарантирует ≤100 строк,
 	// но LIMIT защищает Get() от материализации распухшей (legacy/невалидной) группы
-	// в память безусловно (audit CWE-770: unbounded ListTargets).
+	// в память безусловно (CWE-770: unbounded ListTargets).
 	q := fmt.Sprintf(`SELECT %s FROM kacho_nlb.targets WHERE target_group_id = $1 ORDER BY created_at ASC, id ASC LIMIT %d`,
 		targetCols, domain.MaxTargetsPerGroup)
 	rows, err := r.tx.Query(ctx, q, tgID)
@@ -374,7 +374,7 @@ func (w *targetGroupWriter) SetStatusCAS(ctx context.Context, id string, expecte
 
 // MoveProject — atomic project-rewrite of a TargetGroup.
 //
-// Инвариант (workspace CLAUDE.md запрет #10, within-service refs на DB-уровне):
+// Инвариант (within-service refs на DB-уровне):
 // приаттаченный TG двигать НЕЛЬЗЯ — иначе attached_target_groups свяжет LB в
 // проекте A с TG в проекте B (cross-project attach, запрещён моделью). Sync-
 // precheck HasAttachedLB в use-case'е — только UX/fast-fail; здесь инвариант
@@ -437,7 +437,7 @@ func (w *targetGroupWriter) AddTargets(ctx context.Context, tgID string, targets
 	if len(targets) == 0 {
 		return 0, nil
 	}
-	// Cumulative per-group cap (workspace CLAUDE.md запрет #10, «raid protection»):
+	// Cumulative per-group cap («raid protection»):
 	// per-call limit в use-case'е не мешает раздуть группу серией AddTargets. Здесь
 	// прибиваем инвариант на DB-уровне. FOR UPDATE на parent target_groups строке
 	// сериализует конкурентные AddTargets одной группы (иначе два воркера оба

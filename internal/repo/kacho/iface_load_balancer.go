@@ -57,7 +57,7 @@ type LoadBalancerWriterIface interface {
 	// ErrFailedPrecondition (семейство уже несёт другой адрес; повтор того же —
 	// идемпотентный no-op). per-region UNIQUE 23505 → generic ErrFailedPrecondition
 	// (анти-oracle); status-aware CHECK 23514 → ErrInvalidArg (семейство не в
-	// ip_families ДО persist). Single-VIP-per-LB на DB-уровне (ban #10).
+	// ip_families ДО persist). Single-VIP-per-LB на DB-уровне.
 	AttachVIP(ctx context.Context, id string, family domain.IPVersion, address, addressID string, origin domain.VipOrigin) (*LoadBalancerRecord, error)
 
 	// SetStatusCAS — atomic compare-and-swap на status-колонке. expected — ожидаемый
@@ -78,7 +78,7 @@ type LoadBalancerWriterIface interface {
 
 	// DeleteIfUnprotected — atomic guarded delete для user-facing Delete-воркера:
 	// DELETE ... WHERE id=$1 AND deletion_protection=false. Инвариант «защищённый
-	// LB не удаляется» прибит на DB-уровне (workspace CLAUDE.md запрет #10) —
+	// LB не удаляется» прибит на DB-уровне —
 	// sync-precheck в use-case'е только UX; конкурентный Update(protection=true)
 	// между precheck и apply здесь пресекается атомарно. 0 rows при существующем
 	// LB → ErrFailedPrecondition; row absent → ErrNotFound; FK-violation → ErrFailedPrecondition.

@@ -261,7 +261,7 @@ func (w *loadBalancerWriter) Insert(ctx context.Context, lb *domain.LoadBalancer
 }
 
 // AttachVIP — атомарный CAS-attach anycast-VIP одного семейства к LB-строке
-// (ban #10: single-VIP-per-LB через кардинальность строки + CAS, не TOCTOU).
+// (single-VIP-per-LB через кардинальность строки + CAS, не TOCTOU).
 //
 //	UPDATE … SET address_v4=$, address_id_v4=$, vip_origin_v4=$
 //	 WHERE id=$ AND (address_v4='' OR address_v4=$new) RETURNING …
@@ -409,7 +409,7 @@ func (w *loadBalancerWriter) SetStatusCAS(ctx context.Context, id string, expect
 
 // MoveProject — atomic project-rewrite LB + каскад на listeners (denorm sync).
 //
-// Инвариант (workspace CLAUDE.md запрет #10, within-service refs на DB-уровне):
+// Инвариант (within-service refs на DB-уровне):
 // LB с приаттаченными target-group'ами двигать НЕЛЬЗЯ — иначе attached_target_groups
 // свяжет LB в проекте B с TG в проекте A (cross-project attach, запрещён моделью).
 // Sync-precheck HasAttachedTargetGroups в use-case'е — только UX/fast-fail; здесь
@@ -471,7 +471,7 @@ func (w *loadBalancerWriter) Delete(ctx context.Context, id string) error {
 }
 
 // DeleteIfUnprotected — atomic guarded delete: удаляет строку только если
-// deletion_protection=false. Инвариант прибит на DB-уровне (ban #10) —
+// deletion_protection=false. Инвариант прибит на DB-уровне —
 // конкурентный Update(protection=true) между sync-precheck и apply пресекается.
 // 0 rows: различаем «LB нет» (NotFound) vs «защищён» (FailedPrecondition).
 func (w *loadBalancerWriter) DeleteIfUnprotected(ctx context.Context, id string) error {

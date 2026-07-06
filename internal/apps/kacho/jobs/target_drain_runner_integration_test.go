@@ -463,7 +463,7 @@ func TestRun_TransientErrorContinues(t *testing.T) {
 	// Детерминированный сигнал: дожидаемся, что хотя бы один tick РЕАЛЬНО поймал
 	// SQL-ошибку (dropped table), прежде чем cancel'ить — иначе тест мог пройти
 	// вакуумно, если под нагрузкой CI ни один tick не успел выполниться за
-	// фиксированный sleep (audit TEST #7, CWE-367). Буферизованный канал, чтобы
+	// фиксированный sleep (CWE-367). Буферизованный канал, чтобы
 	// tick-goroutine не блокировался после первого сигнала.
 	tickErr := make(chan error, 8)
 	r.onTickErr = func(err error) {

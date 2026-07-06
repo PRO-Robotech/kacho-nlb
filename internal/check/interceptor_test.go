@@ -655,7 +655,7 @@ func TestAZD024_CacheHit_FastPath(t *testing.T) {
 	// Warm: peer set intentionally slow (100ms). The correctness invariant of a
 	// cache hit is that the peer is NOT consulted — assert the call-count stays
 	// 1 rather than a wall-clock upper bound (a hard latency ceiling is flaky
-	// under -race/GC/CPU-throttle on shared CI; acceptance §AZD-024 ≤20ms p95 is
+	// under -race/GC/CPU-throttle on shared CI; the ≤20ms p95 target is
 	// a metric budget, not a per-call assertion). A regression that dropped the
 	// cache would call the peer and increment the counter (and stall 100ms).
 	delay.Store(int64(100 * time.Millisecond))

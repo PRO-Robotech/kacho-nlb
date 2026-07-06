@@ -203,7 +203,7 @@ func TestValidate_Production_SecureTransport_OK(t *testing.T) {
 // (server-creds строятся исключительно из grpcsrv.TLSServerCreds(cfg.MTLS.Server) в
 // composition root), поэтому authn.type=tls НЕ настраивает TLS на listener'ах — boot
 // поднял бы plaintext gRPC на public И internal :9091, доверяя client-asserted
-// principal без mTLS (CWE-319/CWE-290, audit SEC HIGH). Fail-closed: prod требует
+// principal без mTLS (CWE-319/CWE-290). Fail-closed: prod требует
 // mtls.server.enable=true; dead authn.type=tls отвергается, чтобы оператор не принял
 // его за реальную transport-security. RED до фикса (сейчас проходит как «one-way TLS»).
 func TestValidate_Production_RejectsDeadAuthnTLS(t *testing.T) {
@@ -406,7 +406,7 @@ func TestModeString(t *testing.T) {
 	}
 }
 
-// ─── Peer-edge transport fail-closed (audit SEC #2) ──────────────────────────
+// ─── Peer-edge transport fail-closed ─────────────────────────────────────────
 //
 // В production каждое СКОНФИГУРИРОВАННОЕ (addr задан) cross-service ребро
 // (vpc / compute / geo / iam-project) обязано иметь transport-security: mTLS
@@ -491,7 +491,7 @@ func TestValidate_Dev_InsecurePeerEdges_OK(t *testing.T) {
 	}
 }
 
-// --- Postgres transport fail-closed (audit SEC #1, CWE-319) ------------------
+// --- Postgres transport fail-closed (CWE-319) ------------------
 // В production DSN с `sslmode=disable`/`allow`/`prefer` (или без sslmode вовсе)
 // → plaintext-совместимое DB-соединение: credentials + tenant-данные идут по
 // сети в открытую. Boot обязан отвергнуть такой prod-конфиг (parity с peer-edge

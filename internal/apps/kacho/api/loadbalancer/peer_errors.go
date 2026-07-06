@@ -52,7 +52,7 @@ func zonePeerErr(err error) error {
 }
 
 // peerErrToStatus — тонкий делегатор к единому `shared.PeerErrToStatus`
-// (один источник истины для project/region precheck, см. audit ARCH #7).
+// (один источник истины для project/region precheck).
 func peerErrToStatus(err error, kind, id string) error {
 	return shared.PeerErrToStatus(err, kind, id)
 }

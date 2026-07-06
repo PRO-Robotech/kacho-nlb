@@ -39,7 +39,7 @@ func (networkLoadBalancer) toPb(rec kachorepo.LoadBalancerRecord) (*lbv1.Network
 	}
 	// Lean-проекция: связанный vpc Address (v4_address_id/v6_address_id) +
 	// placement + disabled_announce_zones. Сам VIP-IP, source, network,
-	// vip_origin, announce/route/VRF/per-zone — НЕ выходят (§3.6, security.md).
+	// vip_origin, announce/route/VRF/per-zone — НЕ выходят (security.md).
 	return &lbv1.NetworkLoadBalancer{
 		Id:                    string(rec.ID),
 		ProjectId:             string(rec.ProjectID),

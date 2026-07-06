@@ -22,8 +22,7 @@ func validateLoadBalancerID(id string) error {
 	return corevalidate.ResourceID("network load balancer", ids.PrefixLoadBalancer, id)
 }
 
-// errInvalidArg — тонкий делегатор к единому `shared.ErrInvalidArg`
-// (см. audit LEAN #11).
+// errInvalidArg — тонкий делегатор к единому `shared.ErrInvalidArg`.
 func errInvalidArg(field, msg string) error {
 	return shared.ErrInvalidArg(field, msg)
 }
@@ -32,7 +31,7 @@ func errInvalidArg(field, msg string) error {
 // report.go) — тот же sentinel→gRPC маппер, что у loadbalancer/listener/
 // targetgroup. Локальной копии больше нет: расходящийся pass-through (форвардил
 // любой status, включая codes.Unknown) и потеря sentinel-текста — ровно та
-// дивергенция, ради устранения которой заведён общий маппер (audit ARCH r3 #4).
+// дивергенция, ради устранения которой заведён общий маппер.
 
 // zoneFromProto — proto AnnounceZoneState → domain.AnnounceZone (inbound write).
 func zoneFromProto(z *lbv1.AnnounceZoneState) domain.AnnounceZone {

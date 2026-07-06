@@ -19,8 +19,8 @@ import (
 // OperationToProto — единый domain `operations.Operation` → proto Operation
 // маппер для всех use-case пакетов kacho-nlb (loadbalancer / listener /
 // targetgroup / operation). Раньше был скопирован byte-for-byte в четырёх
-// местах и успел разойтись (часть копий имела nil-guard, часть — нет; audit
-// LEAN #10). Здесь — один источник истины: nil → nil, principal_* заполняются,
+// местах и успел разойтись (часть копий имела nil-guard, часть — нет).
+// Здесь — один источник истины: nil → nil, principal_* заполняются,
 // result-oneof (error|response) выставляется.
 func OperationToProto(op *operations.Operation) *operationpb.Operation {
 	if op == nil {
@@ -47,15 +47,15 @@ func OperationToProto(op *operations.Operation) *operationpb.Operation {
 }
 
 // ErrInvalidArg — InvalidArgument с указанием поля + ошибки. Единый источник
-// истины (раньше идентично продублирован в loadbalancer/targetgroup/announce,
-// audit LEAN #11); handler'ы используют его для sync-проверок required-полей.
+// истины (раньше идентично продублирован в loadbalancer/targetgroup/announce);
+// handler'ы используют его для sync-проверок required-полей.
 func ErrInvalidArg(field, msg string) error {
 	return status.Errorf(codes.InvalidArgument, "%s: %s", field, msg)
 }
 
 // PeerErrToStatus — peer-client error (sentinel-wrapped) → gRPC-status. Единый
-// источник истины (раньше продублирован в loadbalancer/targetgroup, audit ARCH
-// #7). Используется при sync project/region precheck и в worker per-target
+// источник истины (раньше продублирован в loadbalancer/targetgroup).
+// Используется при sync project/region precheck и в worker per-target
 // peer-validate.
 func PeerErrToStatus(err error, kind, id string) error {
 	if err == nil {

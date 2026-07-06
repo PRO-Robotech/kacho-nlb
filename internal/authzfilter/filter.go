@@ -34,7 +34,7 @@ import (
 //   - BypassAll=true: фильтр не применяется (admin / wildcard-grant / fail-open /
 //     disabled). repo.List возвращает project-scoped строки как есть. Пустой
 //     (system) subject НЕ даёт BypassAll — enabled-фильтр fail-close'ит его
-//     (Unauthenticated), см. Resolve (audit SEC-high #1).
+//     (Unauthenticated), см. Resolve.
 //   - Empty=true: subject ничего не разрешено в этом resource_type — use-case
 //     возвращает пустой response без обращения к repo (no-leak).
 //   - AllowedIDs: explicit-список id, к которым subject имеет access; use-case

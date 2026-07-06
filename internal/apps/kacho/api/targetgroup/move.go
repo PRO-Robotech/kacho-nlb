@@ -36,7 +36,7 @@ import (
 //     (Вариант A: project-rewrite in the SAME tx as MoveProject).
 //
 // Destination-project authorization (`editor on project:<dst>`) — handler-side
-// Check via checkClient (audit SEC-high #2): the per-RPC interceptor authorizes
+// Check via checkClient: the per-RPC interceptor authorizes
 // only the source TG, so the caller's grant on the destination is verified here.
 type MoveTargetGroupUseCase struct {
 	repo          Repo
@@ -115,7 +115,7 @@ func (u *MoveTargetGroupUseCase) Execute(
 		}
 	}
 
-	// Destination-project authorization (audit SEC-high #2 / CWE-862/863): the
+	// Destination-project authorization (CWE-862/863): the
 	// per-RPC interceptor authorizes the caller on the SOURCE TG only; the caller
 	// must ALSO hold `editor` on the destination project, else it could inject
 	// the TG into a victim's project.

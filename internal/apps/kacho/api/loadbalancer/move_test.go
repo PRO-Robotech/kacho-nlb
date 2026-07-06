@@ -89,7 +89,7 @@ func TestMove_NotFound(t *testing.T) {
 	require.Equal(t, codes.NotFound, status.Code(err))
 }
 
-// SECURITY (audit SEC-high #2 / CWE-862/863): the caller must be authorized on
+// SECURITY (CWE-862/863): the caller must be authorized on
 // the DESTINATION project (editor on project:<dst>). The per-RPC interceptor only
 // checks the source LB; a caller with editor on the source but NO grant on the
 // destination must be denied — otherwise it can inject its LB into a victim's
