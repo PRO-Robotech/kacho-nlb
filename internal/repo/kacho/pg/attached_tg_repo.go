@@ -10,6 +10,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/PRO-Robotech/kacho-nlb/internal/domain"
 	"github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho"
 )
 
@@ -107,6 +108,12 @@ type attachedTGWriter struct {
 // UPDATE (не KEY SHARE) обязателен: он конфликтует с FOR NO KEY UPDATE, который
 // Move берёт на свою row-у, — только так возникает блокировка + re-check.
 //
+// `AND lb.status <> $4` (DELETING) — DB-level guard против конкурентной
+// Delete-саги (симметрично Listener.Insert): тот же FOR NO KEY UPDATE-lock на LB
+// сериализует Attach с LoadBalancers.MarkDeleting — TG нельзя приаттачить к
+// DELETING LB, иначе attached_target_groups (FK-RESTRICT) расклинил бы финальный
+// Delete + free_ip_runner (sec-hardening r8b, DATA #1).
+//
 // FK на load_balancer_id/target_group_id → SQLSTATE 23503 → ErrFailedPrecondition.
 func (w *attachedTGWriter) Attach(ctx context.Context, lbID, tgID string, priority int32) (*kacho.AttachedTargetGroupRecord, bool, error) {
 	q := fmt.Sprintf(`
@@ -117,11 +124,11 @@ func (w *attachedTGWriter) Attach(ctx context.Context, lbID, tgID string, priori
           JOIN kacho_nlb.target_groups  tg
             ON tg.project_id = lb.project_id
            AND tg.region_id  = lb.region_id
-         WHERE lb.id = $1 AND tg.id = $2
+         WHERE lb.id = $1 AND tg.id = $2 AND lb.status <> $4
            FOR NO KEY UPDATE OF lb, tg
         ON CONFLICT (load_balancer_id, target_group_id) DO NOTHING
         RETURNING %s`, attachedTGCols)
-	row := w.tx.QueryRow(ctx, q, lbID, tgID, priority)
+	row := w.tx.QueryRow(ctx, q, lbID, tgID, priority, string(domain.LBStatusDeleting))
 	rec, err := scanAttachedTG(row)
 	if err != nil {
 		if pgxIsNoRows(err) {

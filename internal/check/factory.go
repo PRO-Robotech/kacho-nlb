@@ -37,10 +37,6 @@ type Options struct {
 
 	// CacheTTL — TTL positive-кеша (default 5s, ≤10s).
 	CacheTTL time.Duration
-
-	// AllowSystemPrincipal — если true, system:bootstrap пропускается без
-	// Check (для миграций / фоновых job'ов).
-	AllowSystemPrincipal bool
 }
 
 // ErrIAMCheckNotConfigured — peer.iam.CheckClient = nil И Breakglass=false.
@@ -65,13 +61,12 @@ func NewInterceptor(opts Options) (*authz.Interceptor, *authz.Cache, error) {
 	// Breakglass (раньше два byte-идентичных литерала легко
 	// расходились при добавлении нового поля в одну из копий).
 	base := authz.InterceptorOptions{
-		ServiceName:          opts.ServiceName,
-		Map:                  PermissionMap(),
-		Cache:                cache,
-		Logger:               opts.Logger,
-		DenyRateLimitPerSec:  opts.DenyRateLimitPerSec,
-		CheckTimeout:         opts.CheckTimeout,
-		AllowSystemPrincipal: opts.AllowSystemPrincipal,
+		ServiceName:         opts.ServiceName,
+		Map:                 PermissionMap(),
+		Cache:               cache,
+		Logger:              opts.Logger,
+		DenyRateLimitPerSec: opts.DenyRateLimitPerSec,
+		CheckTimeout:        opts.CheckTimeout,
 	}
 
 	if opts.Breakglass {

@@ -5,6 +5,7 @@ package targetgroup
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/netip"
@@ -297,12 +298,12 @@ func mapPeerTargetErr(idx int, field, id string, err error) error {
 		"target[%d].%s '%s': peer lookup failed", idx, field, id)
 }
 
-// errIsKind — errors.Is wrapper для удобства switch'а; импортирует errors лениво.
+// errIsKind — errors.Is с nil-guard для удобства switch'а.
 func errIsKind(err error, sentinel error) bool {
 	if err == nil || sentinel == nil {
 		return false
 	}
-	return errsIs(err, sentinel)
+	return errors.Is(err, sentinel)
 }
 
 // addressInAnyCIDR — true если addr ∈ хотя бы одного prefix'а из cidrs.

@@ -66,6 +66,20 @@ type LoadBalancerWriterIface interface {
 	// CLAUDE.md «Within-service refs — DB-уровень».
 	SetStatusCAS(ctx context.Context, id string, expected, newStatus domain.LBStatus) (*LoadBalancerRecord, error)
 
+	// MarkDeleting — atomic guarded transition в status=DELETING, первый шаг
+	// Delete-саги ДО необратимого release cross-domain VIP. Guards прибиты на
+	// DB-уровне под row-lock: удаляемый LB не защищён (deletion_protection=false)
+	// И не имеет детей (NOT EXISTS listeners / attached_target_groups). Row-lock
+	// сериализует переход с конкурентными child-INSERT'ами (Listener.Insert /
+	// AttachedTargetGroups.Attach берут FOR NO KEY UPDATE OF lb и отвергают
+	// DELETING-родителя) — окно «ребёнок появился после mark» закрыто с обеих
+	// сторон. Идемпотентно (уже DELETING → re-mark, RETURNING строку). 0 rows:
+	// различаем «LB нет» (ErrNotFound) vs «защищён / есть дети»
+	// (ErrFailedPrecondition). Пометка DELETING также делает строку видимой
+	// free_ip_runner'у — краш между release VIP и финальным DELETE
+	// самозалечивается реконсайлом (durable-handle).
+	MarkDeleting(ctx context.Context, id string) (*LoadBalancerRecord, error)
+
 	// MoveProject меняет project_id у LB и каскадно — у его листенеров (denorm
 	// sync в одной TX). Возвращает обновлённый LB-record.
 	MoveProject(ctx context.Context, id, newProjectID string) (*LoadBalancerRecord, error)

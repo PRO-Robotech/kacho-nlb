@@ -299,21 +299,34 @@ func TestAddTargets_CumulativeCap_Concurrent(t *testing.T) {
 	// regression (final count 0) also satisfies it. We assert exactly-one-winner:
 	// one Commit succeeds, the other observes the cap rejection, final count == 70.
 	var (
-		wg        sync.WaitGroup
 		mu        sync.Mutex
 		wins      int
 		capReject int
 	)
-	wg.Add(2)
+	// Start-барьер (зеркало runConcurrentAttachVIP): каждая goroutine открывает
+	// СВОЙ writer-TX ДО сигнала старта, чтобы обе транзакции были провабельно
+	// открыты и конкурировали за parent-row FOR UPDATE lock в один момент. Без
+	// него планировщик может дать goroutine A закоммититься раньше, чем B откроет
+	// TX — гонка вырождается в последовательность, и регрессия, снявшая row-lock
+	// (software check-then-act), не была бы поймана детерминированно.
+	start := make(chan struct{})
+	var ready, done sync.WaitGroup
+	ready.Add(2)
+	done.Add(2)
 	for g := 0; g < 2; g++ {
 		g := g
 		go func() {
-			defer wg.Done()
+			defer done.Done()
 			w, err := repo.Writer(ctx)
 			if err != nil {
+				ready.Done()
 				return
 			}
 			defer w.Abort()
+
+			ready.Done()
+			<-start // старт-барьер: обе writer-TX уже открыты (BeginTx eager)
+
 			_, aerr := w.TargetGroups().AddTargets(ctx, string(tg.ID), mkBatch(g*1000, 70))
 			if aerr == nil {
 				if cerr := w.Commit(); cerr == nil {
@@ -330,7 +343,9 @@ func TestAddTargets_CumulativeCap_Concurrent(t *testing.T) {
 			}
 		}()
 	}
-	wg.Wait()
+	ready.Wait()
+	close(start)
+	done.Wait()
 
 	assert.Equal(t, 1, wins, "exactly one concurrent AddTargets batch must win")
 	assert.Equal(t, 1, capReject, "the losing batch must be rejected with FailedPrecondition (cap)")

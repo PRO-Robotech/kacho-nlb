@@ -36,17 +36,18 @@ type fakeRepo struct {
 	outbox []outboxEvent
 	fga    []fgaIntentEvent // FGARegisterOutbox intents (flushed on Commit)
 	// Knobs for fault injection.
-	failOnInsert    error
-	failOnUpdate    error
-	failOnDelete    error
-	failOnSetStatus error
-	failOnAttachVIP error
-	failOnMove      error
-	failOnAttach    error
-	failOnList      error
-	failOnGet       error
-	failOnOutbox    error
-	preCommitHook   func() error
+	failOnInsert       error
+	failOnUpdate       error
+	failOnDelete       error
+	failOnSetStatus    error
+	failOnMarkDeleting error
+	failOnAttachVIP    error
+	failOnMove         error
+	failOnAttach       error
+	failOnList         error
+	failOnGet          error
+	failOnOutbox       error
+	preCommitHook      func() error
 }
 
 type outboxEvent struct {
@@ -371,6 +372,34 @@ func (q *fakeLBWriter) AttachVIP(ctx context.Context, id string, family domain.I
 		cur.AddressIDV6 = domain.AddressID(addressID)
 		cur.VipOriginV6 = origin
 	}
+	c := *cur
+	q.w.pendingLBs = append(q.w.pendingLBs, &c)
+	*cur = c
+	return &c, nil
+}
+
+func (q *fakeLBWriter) MarkDeleting(ctx context.Context, id string) (*kachorepo.LoadBalancerRecord, error) {
+	if q.w.r.failOnMarkDeleting != nil {
+		return nil, q.w.r.failOnMarkDeleting
+	}
+	q.w.r.mu.Lock()
+	defer q.w.r.mu.Unlock()
+	cur, ok := q.w.r.lbs[id]
+	if !ok {
+		return nil, fmt.Errorf("%w: NetworkLoadBalancer %s not found", kachorepo.ErrNotFound, id)
+	}
+	if cur.DeletionProtection {
+		return nil, fmt.Errorf("%w: NetworkLoadBalancer %s has deletion protection enabled", kachorepo.ErrFailedPrecondition, id)
+	}
+	if len(q.w.r.lists[id]) > 0 {
+		return nil, fmt.Errorf("%w: NetworkLoadBalancer %s has listener(s); delete first", kachorepo.ErrFailedPrecondition, id)
+	}
+	for k := range q.w.r.pivot {
+		if len(k) > len(id) && k[:len(id)] == id && k[len(id)] == '/' {
+			return nil, fmt.Errorf("%w: NetworkLoadBalancer %s has attached target group(s); detach first", kachorepo.ErrFailedPrecondition, id)
+		}
+	}
+	cur.Status = domain.LBStatusDeleting
 	c := *cur
 	q.w.pendingLBs = append(q.w.pendingLBs, &c)
 	*cur = c

@@ -4,8 +4,6 @@
 package targetgroup
 
 import (
-	"errors"
-
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
@@ -58,10 +56,4 @@ func tgRecordToProto(rec *kachorepo.TargetGroupRecord) (*lbv1.TargetGroup, error
 		return nil, mapDomainErr(err)
 	}
 	return dst, nil
-}
-
-// errsIs — internal alias на `errors.Is` (хелпер для удобства внутри пакета,
-// чтобы избежать дополнительного import-блока в add_targets.go).
-func errsIs(err, target error) bool {
-	return errors.Is(err, target)
 }

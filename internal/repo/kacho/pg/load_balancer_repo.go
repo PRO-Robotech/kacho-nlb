@@ -407,6 +407,72 @@ func (w *loadBalancerWriter) SetStatusCAS(ctx context.Context, id string, expect
 	return rec, nil
 }
 
+// MarkDeleting — atomic guarded transition в status=DELETING (первый шаг
+// Delete-саги ДО release VIP). Guard'ы на DB-уровне:
+//
+//	UPDATE ... SET status='DELETING'
+//	 WHERE id=$1 AND deletion_protection=false
+//	   AND NOT EXISTS(listeners) AND NOT EXISTS(attached_target_groups)
+//	RETURNING ...
+//
+// Single-statement UPDATE берёт row-lock на LB → сериализуется с child-INSERT'ами
+// (Listener.Insert / Attach держат FOR NO KEY UPDATE OF lb и отвергают
+// DELETING-родителя): либо mark успевает первым и child-INSERT видит DELETING → 0
+// rows, либо child закоммитился первым и NOT EXISTS ловит его → 0 rows у mark.
+// Идемпотентно (уже DELETING, unprotected, без детей → re-mark). 0 rows:
+// disambig (LB нет → NotFound; защищён/есть дети → FailedPrecondition).
+func (w *loadBalancerWriter) MarkDeleting(ctx context.Context, id string) (*kacho.LoadBalancerRecord, error) {
+	q := fmt.Sprintf(`
+        UPDATE kacho_nlb.load_balancers
+           SET status = $2, updated_at = now()
+         WHERE id = $1
+           AND deletion_protection = false
+           AND NOT EXISTS (SELECT 1 FROM kacho_nlb.listeners WHERE load_balancer_id = $1)
+           AND NOT EXISTS (SELECT 1 FROM kacho_nlb.attached_target_groups WHERE load_balancer_id = $1)
+        RETURNING %s`, loadBalancerCols)
+	row := w.tx.QueryRow(ctx, q, id, string(domain.LBStatusDeleting))
+	rec, err := scanLB(row)
+	if err != nil {
+		if pgxIsNoRows(err) {
+			return nil, w.markDeletingBlockReason(ctx, id)
+		}
+		return nil, mapPgErr(err, "NetworkLoadBalancer", id)
+	}
+	return rec, nil
+}
+
+// markDeletingBlockReason — различает причину 0-rows у MarkDeleting: LB отсутствует
+// → ErrNotFound; защищён/есть дети → ErrFailedPrecondition (тексты зеркалят
+// sync-precheck Delete-use-case'а). Читает под той же writer-TX (row уже
+// row-locked mark-UPDATE'ом, если существует).
+func (w *loadBalancerWriter) markDeletingBlockReason(ctx context.Context, id string) error {
+	var protected, hasListener, hasAttached bool
+	e := w.tx.QueryRow(ctx, `
+        SELECT lb.deletion_protection,
+               EXISTS(SELECT 1 FROM kacho_nlb.listeners WHERE load_balancer_id = lb.id),
+               EXISTS(SELECT 1 FROM kacho_nlb.attached_target_groups WHERE load_balancer_id = lb.id)
+          FROM kacho_nlb.load_balancers lb
+         WHERE lb.id = $1`, id,
+	).Scan(&protected, &hasListener, &hasAttached)
+	if e != nil {
+		if pgxIsNoRows(e) {
+			return fmt.Errorf("%w: NetworkLoadBalancer %s not found", kacho.ErrNotFound, id)
+		}
+		return mapPgErr(e, "NetworkLoadBalancer", id)
+	}
+	switch {
+	case protected:
+		return fmt.Errorf("%w: NetworkLoadBalancer %s has deletion protection enabled", kacho.ErrFailedPrecondition, id)
+	case hasListener:
+		return fmt.Errorf("%w: NetworkLoadBalancer %s has listener(s); delete first", kacho.ErrFailedPrecondition, id)
+	case hasAttached:
+		return fmt.Errorf("%w: NetworkLoadBalancer %s has attached target group(s); detach first", kacho.ErrFailedPrecondition, id)
+	}
+	// Guards очистились между UPDATE и этим SELECT (ребёнок удалён под гонку) —
+	// generic precondition-miss; повторный Delete пройдёт.
+	return fmt.Errorf("%w: NetworkLoadBalancer %s could not be marked for deletion", kacho.ErrFailedPrecondition, id)
+}
+
 // MoveProject — atomic project-rewrite LB + каскад на listeners (denorm sync).
 //
 // Инвариант (within-service refs на DB-уровне):
