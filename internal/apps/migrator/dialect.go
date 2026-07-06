@@ -6,13 +6,10 @@
 // исключительно через этот отдельный binary; никакого `switch os.Args[1]` в
 // kacho-loadbalancer.
 //
-// dialect.go определяет ключевую абстракцию пакета — интерфейс [Dialect]
-// (правило: «migrator multi-dialect-ready»). Каждая поддерживаемая БД —
-// отдельная реализация (`postgres.go`, в будущем `cockroach.go`); фабрика
-// [NewDialect] выбирает реализацию по имени из CLI/конфига. Это позволяет
-// per-dialect tweaks без if-ветвей внутри общего Runner'а.
-//
-// Источник pattern'а — `kacho-vpc/internal/apps/migrator/` (96).
+// dialect.go определяет ключевую абстракцию пакета — интерфейс [Dialect].
+// Единственная поддерживаемая БД — PostgreSQL (`postgres.go`); [ResolveDialect]
+// выбирает реализацию по имени из CLI/конфига (неизвестное имя → ошибка). Это
+// держит per-dialect tweaks за интерфейсом, без if-ветвей внутри общего Runner'а.
 package migrator
 
 import (
@@ -24,11 +21,8 @@ import (
 
 // Dialect — абстракция SQL-диалекта для миграций.
 //
-// Реализации (на момент):
+// Реализация:
 //   - [postgresDialect] (`postgres.go`) — production, через goose + pgx driver.
-//
-// Cockroach / другие диалекты добавляются как новые impl'ы; их регистрация
-// [RegisterDialect] либо init в файле impl'а.
 type Dialect interface {
 	// Up применяет миграции вверх. target=="" → до самой последней; иначе
 	// до версии target (включительно).
@@ -57,45 +51,19 @@ type DialectSpec struct {
 	SQLDriver    string // sql.Open driver-имя ("pgx")
 }
 
-// Built-in spec'и.
-var (
-	SpecPostgres = DialectSpec{
-		Name:         "postgres",
-		GooseDialect: "postgres",
-		SQLDriver:    "pgx",
-	}
-)
-
-type dialectFactory func() Dialect
-
-var registry = map[string]dialectFactory{
-	SpecPostgres.Name: func() Dialect { return newPostgresDialect() },
+// SpecPostgres — spec единственного поддерживаемого диалекта.
+var SpecPostgres = DialectSpec{
+	Name:         "postgres",
+	GooseDialect: "postgres",
+	SQLDriver:    "pgx",
 }
 
-// NewDialect — фабрика; неизвестное имя → ошибка со списком поддерживаемых.
-func NewDialect(name string) (Dialect, error) {
-	factory, ok := registry[name]
-	if !ok {
-		return nil, fmt.Errorf("unknown dialect %q (supported: %v)", name, listDialects())
+// ResolveDialect выбирает реализацию [Dialect] по имени из CLI/конфига.
+// postgres — единственный поддерживаемый диалект; любое другое имя → ошибка
+// (потребляется cmd/migrator: `--dialect <name>`).
+func ResolveDialect(name string) (Dialect, error) {
+	if name != SpecPostgres.Name {
+		return nil, fmt.Errorf("unknown dialect %q (supported: %s)", name, SpecPostgres.Name)
 	}
-	return factory(), nil
-}
-
-// ResolveDialect — alias для NewDialect (consistency с kacho-vpc).
-func ResolveDialect(name string) (Dialect, error) { return NewDialect(name) }
-
-// RegisterDialect — расширяет registry (для тестов / будущих диалектов).
-func RegisterDialect(spec DialectSpec, factory func() Dialect) {
-	if spec.Name == "" {
-		panic("migrator.RegisterDialect: spec.Name is empty")
-	}
-	registry[spec.Name] = dialectFactory(factory)
-}
-
-func listDialects() []string {
-	out := make([]string, 0, len(registry))
-	for k := range registry {
-		out = append(out, k)
-	}
-	return out
+	return newPostgresDialect(), nil
 }
