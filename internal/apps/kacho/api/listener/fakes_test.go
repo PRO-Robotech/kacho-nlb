@@ -741,36 +741,6 @@ func awaitOpDone(t interface {
 
 // ---- vpc clients ----
 
-// fakeAddressClient — in-memory `vpcclient.AddressClient`.
-type fakeAddressClient struct {
-	mu        sync.Mutex
-	byID      map[string]*vpcclient.Address
-	getErr    error
-	getErrCnt int // how many times to return getErr before returning success
-}
-
-func newFakeAddressClient() *fakeAddressClient {
-	return &fakeAddressClient{byID: map[string]*vpcclient.Address{}}
-}
-func (c *fakeAddressClient) seed(addr *vpcclient.Address) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.byID[addr.ID] = addr
-}
-func (c *fakeAddressClient) Get(_ context.Context, id string) (*vpcclient.Address, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.getErrCnt > 0 {
-		c.getErrCnt--
-		return nil, c.getErr
-	}
-	if addr, ok := c.byID[id]; ok {
-		c := *addr
-		return &c, nil
-	}
-	return nil, fmt.Errorf("%w: address %s not found", domain.ErrInvalidArg, id)
-}
-
 // fakeInternalAddressClient — in-memory `vpcclient.InternalAddressClient`.
 type fakeInternalAddressClient struct {
 	mu                   sync.Mutex
