@@ -4,12 +4,9 @@
 package listener
 
 import (
-	"context"
-
 	"github.com/PRO-Robotech/kacho-corelib/operations"
 
 	vpcclient "github.com/PRO-Robotech/kacho-nlb/internal/clients/vpc"
-	"github.com/PRO-Robotech/kacho-nlb/internal/domain"
 	kachorepo "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho"
 )
 
@@ -56,25 +53,8 @@ const (
 
 // FGA relation strings live in `internal/domain`:
 // `domain.FGARelationAdmin` / `domain.FGARelationLoadBalancer`.
-
-// permissionsCtxAccessor — port для извлечения acting subject FGA-id из ctx.
-// На E0 (без auth-interceptor) возвращает "" → creator tuple не пишется
-// (best-effort). На E2+ — заполняется api-gateway auth-interceptor через
-// `operations.WithPrincipal(ctx, p)`; адаптер тянет принципала и форматирует
-// FGA-subject (`<type>:<id>`).
-type permissionsCtxAccessor interface {
-	SubjectFromContext(ctx context.Context) string
-}
-
-// principalSubjectAccessor — реализация на базе `operations.PrincipalFromContext`.
-// Возвращает `<type>:<id>` если оба поля заполнены и тип != "system";
-// иначе "" — anonymous/system, creator tuple не пишется.
-type principalSubjectAccessor struct{}
-
-// SubjectFromContext — см. permissionsCtxAccessor. Delegates to
-// `domain.FGASubjectFromPrincipal` so the subject-string format stays in one
-// place across LB/Listener/TG.
-func (principalSubjectAccessor) SubjectFromContext(ctx context.Context) string {
-	p := operations.PrincipalFromContext(ctx)
-	return domain.FGASubjectFromPrincipal(p.Type, p.ID)
-}
+//
+// Acting-subject FGA-id извлекается inline в create.go как в sibling-пакетах
+// (loadbalancer/targetgroup): `domain.FGASubjectFromPrincipal(p.Type, p.ID)` над
+// `operations.PrincipalFromContext(ctx)` — без отдельного single-impl порта
+// (subject-format живёт единожды в domain.FGASubjectFromPrincipal).

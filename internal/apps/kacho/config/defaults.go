@@ -14,9 +14,12 @@ import "github.com/spf13/viper"
 // (`repository.postgres.url`, `authz.iam.addr` в production-mode) НЕ
 // дефолтятся — их отсутствие ловит `Config.Validate`.
 func RegisterDefaults(v *viper.Viper) {
-	// Mode: dev — безопасный default. Production-deploy явно ставит
-	// `mode: production` в ConfigMap.
-	v.SetDefault("mode", "dev")
+	// Mode: production — fail-closed default (security.md «Любой деплой —
+	// production-mode»). Пропущенный/пустой `mode` НЕ снимает молча
+	// authN/authZ/mTLS-гварды (CWE-1188 insecure default); dev — ЯВНЫЙ opt-in
+	// (`mode: dev`), только для локальных фикстур. Паритет с kacho-vpc
+	// (`authn.mode`=production по умолчанию).
+	v.SetDefault("mode", "production")
 
 	// Logger
 	v.SetDefault("logger.level", "DEBUG")

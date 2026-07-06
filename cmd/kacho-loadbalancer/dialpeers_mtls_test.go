@@ -45,6 +45,7 @@ func edgeSpec(t *testing.T, specs []peerDialSpec, name string) peerDialSpec {
 // the edge is enabled the dial presents the kacho-nlb client-cert (NOT insecure).
 // RED until dialPeers exposes peerDialSpecs wiring cfg.MTLS.VPC / cfg.MTLS.Compute.
 func TestPeerDialSpecs_VPCComputeWiredToPerEdgeMTLS(t *testing.T) {
+	t.Setenv("KACHO_NLB_MODE", "dev") // dev-opt-in: default mode is fail-closed production
 	t.Setenv("KACHO_NLB_REPOSITORY__POSTGRES__URL", "postgres://u:p@h/kacho_nlb")
 	// Enable the vpc + compute edges with distinct ServerNames so a zero-value
 	// (insecure) TLSClient on either edge is observable as a mismatch.
@@ -86,6 +87,7 @@ func TestPeerDialSpecs_VPCComputeWiredToPerEdgeMTLS(t *testing.T) {
 // that the vpc/compute edges are modelled on. Pins that no edge accidentally
 // shares another edge's TLSClient.
 func TestPeerDialSpecs_IAMPerListenerMTLS(t *testing.T) {
+	t.Setenv("KACHO_NLB_MODE", "dev") // dev-opt-in: default mode is fail-closed production
 	t.Setenv("KACHO_NLB_REPOSITORY__POSTGRES__URL", "postgres://u:p@h/kacho_nlb")
 	cfg, err := config.Load("")
 	require.NoError(t, err)
@@ -103,6 +105,7 @@ func TestPeerDialSpecs_IAMPerListenerMTLS(t *testing.T) {
 // cert paths are never read (viper seeds CAFiles to an empty string default,
 // which is functionally equivalent to nil for an off edge).
 func TestPeerDialSpecs_DisabledEdgesInsecure(t *testing.T) {
+	t.Setenv("KACHO_NLB_MODE", "dev") // dev-opt-in: default mode is fail-closed production
 	t.Setenv("KACHO_NLB_REPOSITORY__POSTGRES__URL", "postgres://u:p@h/kacho_nlb")
 	cfg, err := config.Load("")
 	require.NoError(t, err)

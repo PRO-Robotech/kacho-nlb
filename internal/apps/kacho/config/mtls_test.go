@@ -20,10 +20,14 @@ import (
 // (enabled → creds build), fail-closed on missing CA. Newman (mismatch)
 // is an e2e concern; here we verify the config→creds wiring contract.
 
-// minimalEnv sets the only hard-required config field (postgres URL) so
-// config.Load("") passes validation for an env-driven mTLS test.
+// minimalEnv sets the only hard-required config field (postgres URL) plus an
+// explicit dev opt-in so config.Load("") passes validation for an env-driven
+// mTLS test. mode defaults to production (fail-closed, security.md); these
+// tests exercise the config→creds wiring in the relaxed dev path, so dev is set
+// explicitly.
 func minimalEnv(t *testing.T) {
 	t.Helper()
+	t.Setenv("KACHO_NLB_MODE", "dev")
 	t.Setenv("KACHO_NLB_REPOSITORY__POSTGRES__URL", "postgres://u:p@h/kacho_nlb")
 }
 

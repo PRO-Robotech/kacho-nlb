@@ -102,3 +102,21 @@ func TestAnnounceStore_LoadStateAbsentLB(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, found)
 }
+
+// TestAnnounceStore_ReportZonesAbsentLB — репорт announce-state для
+// несуществующего LB нарушает FK load_balancer_announce_state → load_balancers
+// (SQLSTATE 23503) и обязан маппиться в FailedPrecondition-сентинел БЕЗ утечки
+// raw pgx/SQL-текста наружу (data-integrity.md «Никогда не leak'ай pgx-текст»).
+// Покрывает ранее незакрытую FK-violation → error-mapping ветку ReportZones.
+func TestAnnounceStore_ReportZonesAbsentLB(t *testing.T) {
+	tc := newTestCtx(t)
+	store := kachopg.NewAnnounceStore(tc.Pool)
+
+	err := store.ReportZones(context.Background(), "nlbDOESNOTEXIST00000",
+		[]domain.AnnounceZone{{ZoneID: "zone-a", IPVersion: domain.IPVersionV4, InfraID: 1}})
+	require.Error(t, err, "report to a nonexistent LB must fail (FK 23503)")
+	require.ErrorIs(t, err, kacho.ErrFailedPrecondition, "FK-violation must map to FailedPrecondition")
+	for _, leak := range []string{"SQLSTATE", "23503", "foreign key", "violates", "load_balancer_announce_state"} {
+		require.NotContains(t, err.Error(), leak, "mapped error must not leak raw pgx/SQL text")
+	}
+}

@@ -466,8 +466,50 @@ func (w *targetGroupWriter) AddTargets(ctx context.Context, tgID string, targets
 	inserted := 0
 	for i := range targets {
 		t := targets[i]
-		id := newTargetID()
 		instID, nicID, ipSubnet, ipAddr, extAddr, extZoneID := splitTargetIdentity(t)
+
+		// 1. Reactivate a same-identity DRAINING row atomically (CAS). A removed
+		// target lives as status='DRAINING' until the phase-B drain runner
+		// DELETEs it; its identity still occupies the partial-UNIQUE slot (the
+		// indexes carry no status predicate). A plain INSERT ... ON CONFLICT DO
+		// NOTHING would therefore treat re-adding it as a swallowed no-op, and
+		// the drain runner would then delete the still-DRAINING row — silently
+		// dropping a target the tenant asked to keep in service (finding DATA #2,
+		// CWE-362). Match on the full identity tuple (IS NOT DISTINCT FROM handles
+		// the NULL identity columns) and flip it back to ACTIVE with the re-added
+		// weight. Serializes with the drain runner's DELETE on the target row lock.
+		const reactivateQ = `
+            UPDATE kacho_nlb.targets
+               SET status = 'ACTIVE', drain_started_at = NULL,
+                   weight = $8, updated_at = now()
+             WHERE target_group_id = $1
+               AND status = 'DRAINING'
+               AND instance_id         IS NOT DISTINCT FROM $2
+               AND nic_id              IS NOT DISTINCT FROM $3
+               AND ip_ref_subnet_id    IS NOT DISTINCT FROM $4
+               AND ip_ref_address      IS NOT DISTINCT FROM $5
+               AND external_ip_address IS NOT DISTINCT FROM $6
+               AND external_ip_zone_id IS NOT DISTINCT FROM $7
+            RETURNING id`
+		var reactivatedID string
+		err := w.tx.QueryRow(ctx, reactivateQ,
+			tgID,
+			nullableStr(instID), nullableStr(nicID),
+			nullableStr(ipSubnet), nullableStr(ipAddr),
+			nullableStr(extAddr), nullableStr(extZoneID),
+			int32(t.Weight),
+		).Scan(&reactivatedID)
+		if err == nil {
+			inserted++
+			continue
+		}
+		if !pgxIsNoRows(err) {
+			return inserted, mapPgErr(err, "Target", "")
+		}
+
+		// 2. No DRAINING row to reactivate → genuine insert. ON CONFLICT DO
+		// NOTHING keeps re-add of an already-ACTIVE identity idempotent (0 rows).
+		id := newTargetID()
 		const q = `
             INSERT INTO kacho_nlb.targets
                 (id, target_group_id,
@@ -478,7 +520,7 @@ func (w *targetGroupWriter) AddTargets(ctx context.Context, tgID string, targets
             ON CONFLICT DO NOTHING
             RETURNING id`
 		var returnedID string
-		err := w.tx.QueryRow(ctx, q,
+		err = w.tx.QueryRow(ctx, q,
 			id, tgID,
 			nullableStr(instID), nullableStr(nicID),
 			nullableStr(ipSubnet), nullableStr(ipAddr),

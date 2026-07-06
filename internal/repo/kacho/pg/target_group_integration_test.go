@@ -254,6 +254,81 @@ func TestTG_DrainLifecycle(t *testing.T) {
 	assert.Empty(t, targetsAfter)
 }
 
+// TestTG_AddTargets_ReactivatesDrainingTarget — re-add of a target that is
+// mid-removal (status='DRAINING') must reactivate it (status='ACTIVE',
+// drain_started_at=NULL, new weight) in place, NOT be swallowed by ON CONFLICT
+// DO NOTHING and then hard-deleted by the phase-B drain runner (finding DATA #2,
+// CWE-362 — within-service state changed by conflicting paths must be an atomic
+// CAS, not a check-then-noop).
+func TestTG_AddTargets_ReactivatesDrainingTarget(t *testing.T) {
+	tc := newTestCtx(t)
+	repo := tc.Repo
+	pool := tc.Pool
+	ctx := context.Background()
+
+	tg := newTG("prj01TGRA1234567890ll", "reactivate-tg")
+	t1 := domain.Target{
+		InstanceID: option.MustNewOption(domain.InstanceID("epd0REACT1")),
+		Weight:     100,
+	}
+	commitWriter(t, repo, func(w kacho.RepositoryWriter) {
+		_, err := w.TargetGroups().Insert(ctx, tg)
+		require.NoError(t, err)
+		n, err := w.TargetGroups().AddTargets(ctx, string(tg.ID), []domain.Target{t1})
+		require.NoError(t, err)
+		require.Equal(t, 1, n)
+	})
+
+	rd, _ := repo.Reader(ctx)
+	targets, err := rd.TargetGroups().ListTargets(ctx, string(tg.ID))
+	require.NoError(t, err)
+	_ = rd.Close()
+	require.Len(t, targets, 1)
+	targetID := targets[0].ID
+
+	// Phase A: mark DRAINING (mid-removal window).
+	commitWriter(t, repo, func(w kacho.RepositoryWriter) {
+		n, err := w.TargetGroups().RemoveTargetsMarkDraining(ctx, string(tg.ID), []string{targetID})
+		require.NoError(t, err)
+		require.Equal(t, 1, n)
+	})
+
+	// Re-add the SAME identity while DRAINING → must reactivate (counted as 1),
+	// applying the re-added weight.
+	reAdd := domain.Target{
+		InstanceID: option.MustNewOption(domain.InstanceID("epd0REACT1")),
+		Weight:     42,
+	}
+	commitWriter(t, repo, func(w kacho.RepositoryWriter) {
+		n, err := w.TargetGroups().AddTargets(ctx, string(tg.ID), []domain.Target{reAdd})
+		require.NoError(t, err)
+		require.Equal(t, 1, n, "re-add of a DRAINING target must reactivate it, not be a swallowed no-op")
+	})
+
+	// Row is back ACTIVE with drain cleared and new weight — reactivated in place.
+	var st string
+	var drainStarted *time.Time
+	var weight int
+	require.NoError(t, pool.QueryRow(ctx,
+		`SELECT status, drain_started_at, weight FROM kacho_nlb.targets WHERE target_group_id=$1`,
+		string(tg.ID)).Scan(&st, &drainStarted, &weight))
+	assert.Equal(t, "ACTIVE", st)
+	assert.Nil(t, drainStarted, "drain_started_at cleared on reactivation")
+	assert.Equal(t, 42, weight, "reactivation applies the re-added weight")
+
+	var cnt int
+	require.NoError(t, pool.QueryRow(ctx,
+		`SELECT count(*) FROM kacho_nlb.targets WHERE target_group_id=$1`, string(tg.ID)).Scan(&cnt))
+	assert.Equal(t, 1, cnt, "single target row (reactivated, not duplicated)")
+
+	// Phase-B drain must NOT delete the now-ACTIVE target even at zero delay.
+	commitWriter(t, repo, func(w kacho.RepositoryWriter) {
+		n, err := w.TargetGroups().DeleteTargetsDrained(ctx, string(tg.ID), 0)
+		require.NoError(t, err)
+		require.Equal(t, 0, n, "reactivated (ACTIVE) target is not drain-deleted")
+	})
+}
+
 // TestTG_Delete_FK_RESTRICT — targets есть → нельзя удалить TG.
 func TestTG_Delete_FK_RESTRICT_Targets(t *testing.T) {
 	repo, cleanup := newRepo(t, setupTestDB(t))

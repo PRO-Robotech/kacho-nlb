@@ -916,7 +916,7 @@ func (o *fakeFGARegisterOutbox) Emit(_ context.Context, eventType string, intent
 }
 
 // contextWithSubject — helper для тестов: кладёт `operations.Principal` в
-// ctx так, чтобы `principalSubjectAccessor.SubjectFromContext(ctx)` вернул
+// ctx так, чтобы inline `domain.FGASubjectFromPrincipal(...)` в create.go вернул
 // `subject` (формат `<type>:<id>`). Используется create_test.go для проверки,
 // что FGA creator-tuple содержит реального acting subject'а.
 func contextWithSubject(subject string) context.Context {

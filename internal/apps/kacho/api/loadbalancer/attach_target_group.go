@@ -183,12 +183,12 @@ func (u *AttachTargetGroupUseCase) doAttach(ctx context.Context, lbID, tgID, pro
 	}
 	defer w.Abort()
 
-	rec, attached, err := w.AttachedTargetGroups().Attach(ctx, lbID, tgID, 0)
-	if err != nil {
+	// rec/attached intentionally unused: UPDATED is emitted unconditionally
+	// (see below), so neither the returned record nor the insert-vs-no-op flag
+	// changes the outbox decision.
+	if _, _, err := w.AttachedTargetGroups().Attach(ctx, lbID, tgID, 0); err != nil {
 		return nil, mapDomainErr(err)
 	}
-	_ = rec
-	_ = attached
 	// Always emit UPDATED even on idempotent no-op (downstream may sync attach
 	// state). The trigger `attached_tg_lb_status_recompute_trg` recomputes
 	// lb.status on real INSERT.

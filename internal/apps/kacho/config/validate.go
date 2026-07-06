@@ -40,12 +40,14 @@ func (m ModeEnum) String() string {
 }
 
 // ParseMode разбирает строку из YAML / ENV (`dev` / `production`). Регистр
-// игнорируется. Пустая строка → ModeDev (см. RegisterDefaults).
+// игнорируется. Пустая/неуказанная строка → ModeProduction — fail-closed
+// (security.md; RegisterDefaults тоже дефолтит `production`). dev — ЯВНЫЙ
+// opt-in; пустой `mode: ""` не должен молча включать relaxed-режим.
 func ParseMode(s string) (ModeEnum, error) {
 	switch strings.ToLower(strings.TrimSpace(s)) {
-	case "", "dev", "development":
+	case "dev", "development":
 		return ModeDev, nil
-	case "production", "prod":
+	case "", "production", "prod":
 		return ModeProduction, nil
 	default:
 		return 0, fmt.Errorf("invalid mode %q (want dev|production)", s)

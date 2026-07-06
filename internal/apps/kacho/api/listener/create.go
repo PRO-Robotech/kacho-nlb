@@ -44,7 +44,6 @@ import (
 type CreateUseCase struct {
 	repo    RepoFactory
 	opsRepo OperationsRepo
-	subject permissionsCtxAccessor
 	logger  *slog.Logger
 }
 
@@ -58,7 +57,6 @@ func NewCreateUseCase(
 	return &CreateUseCase{
 		repo:    repo,
 		opsRepo: opsRepo,
-		subject: principalSubjectAccessor{},
 		logger:  logger,
 	}
 }
@@ -123,7 +121,9 @@ func (u *CreateUseCase) Run(ctx context.Context, req *lbv1.CreateListenerRequest
 	in := createInput{
 		listener: listener,
 		lb:       lb,
-		fgaOwner: u.subject.SubjectFromContext(ctx),
+		// Acting subject FGA-id inline (parity с loadbalancer/targetgroup):
+		// `<type>:<id>` либо "" для anonymous/system (creator-tuple пропускается).
+		fgaOwner: domain.FGASubjectFromPrincipal(principal.Type, principal.ID),
 	}
 	operations.Run(ctx, u.opsRepo, op.ID, func(workerCtx context.Context) (*anypb.Any, error) {
 		return u.doCreate(workerCtx, in)

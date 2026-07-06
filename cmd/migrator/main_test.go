@@ -101,6 +101,9 @@ func TestBuildRunner_DSNFromFlag(t *testing.T) {
 }
 
 func TestBuildRunner_EnvDSNFallback(t *testing.T) {
+	// mode defaults to fail-closed production; the migrator only needs the DSN,
+	// so opt into dev explicitly to exercise the env-DSN fallback path.
+	t.Setenv("KACHO_NLB_MODE", "dev")
 	t.Setenv("KACHO_NLB_REPOSITORY__POSTGRES__URL", "postgres://envuser:envpass@h/db")
 	opts := &rootOptions{dialect: "postgres" /* dsn пуст*/}
 	r, err := buildRunner(opts, fstest.MapFS{"0001_x.sql": &fstest.MapFile{Data: []byte("-- empty")}})
