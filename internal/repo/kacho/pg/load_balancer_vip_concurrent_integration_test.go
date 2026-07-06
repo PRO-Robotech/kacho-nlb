@@ -63,7 +63,6 @@ func runConcurrentAttachVIP(t *testing.T, repo kacho.Repository, cands []vipAtta
 	done.Add(len(cands))
 
 	for _, c := range cands {
-		c := c
 		go func() {
 			defer done.Done()
 

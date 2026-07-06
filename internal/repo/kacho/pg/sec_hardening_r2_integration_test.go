@@ -314,7 +314,6 @@ func TestAddTargets_CumulativeCap_Concurrent(t *testing.T) {
 	ready.Add(2)
 	done.Add(2)
 	for g := 0; g < 2; g++ {
-		g := g
 		go func() {
 			defer done.Done()
 			w, err := repo.Writer(ctx)

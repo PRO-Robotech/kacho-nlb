@@ -33,7 +33,6 @@ func TestMapDomainErr_AllSentinels(t *testing.T) {
 		{"pre-formed status passes through", grpcstatus.Error(codes.PermissionDenied, "no access"), codes.PermissionDenied},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			got := MapDomainErr(tc.err)
