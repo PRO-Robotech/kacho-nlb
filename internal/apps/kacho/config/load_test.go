@@ -60,6 +60,10 @@ func TestLoad_MinimalYAML(t *testing.T) {
 
 func TestLoad_DefaultsApplied(t *testing.T) {
 	// path == "" → только defaults + ENV (ENV для required url задан ниже).
+	// mode=dev задаётся ЯВНО: default fail-closed (production, см.
+	// TestLoad_DefaultMode_FailsClosedProduction) не даст Load'у пройти без
+	// mTLS/iam — тут проверяются НЕ-mode дефолты, поэтому dev-opt-in.
+	t.Setenv("KACHO_NLB_MODE", "dev")
 	t.Setenv("KACHO_NLB_REPOSITORY__POSTGRES__URL", "postgres://u:p@h/d")
 	cfg, err := Load("")
 	if err != nil {
@@ -67,7 +71,7 @@ func TestLoad_DefaultsApplied(t *testing.T) {
 	}
 	// Дефолты из RegisterDefaults:
 	if cfg.Mode() != ModeDev {
-		t.Errorf("default Mode: got %v, want ModeDev", cfg.Mode())
+		t.Errorf("explicit Mode=dev: got %v, want ModeDev", cfg.Mode())
 	}
 	if cfg.Logger.Level != "DEBUG" {
 		t.Errorf("default Logger.Level: got %q, want DEBUG", cfg.Logger.Level)
@@ -104,7 +108,26 @@ func TestLoad_DefaultsApplied(t *testing.T) {
 	}
 }
 
+// TestLoad_DefaultMode_FailsClosedProduction — безопасный дефолт fail-closed:
+// пропущенный `mode` резолвится в production (security.md «Любой деплой —
+// production-mode»), поэтому конфиг без mTLS/iam НЕ грузится молча в dev-режиме
+// (CWE-1188 insecure default). Раньше default был `dev` → отсутствие ключа
+// молча снимало authN/authZ.
+func TestLoad_DefaultMode_FailsClosedProduction(t *testing.T) {
+	// Только required url; mode НЕ задан → default production → Validate
+	// обязана потребовать production-гварды (mtls.server / iam-register / ...).
+	t.Setenv("KACHO_NLB_REPOSITORY__POSTGRES__URL", "postgres://u:p@h/d?sslmode=require")
+	_, err := Load("")
+	if err == nil {
+		t.Fatalf("unset mode must default to production and fail closed without mTLS/iam, got nil error")
+	}
+	if !strings.Contains(err.Error(), "production mode") {
+		t.Errorf("expected production-mode guard error (fail-closed default), got: %v", err)
+	}
+}
+
 func TestLoad_EnvOverride(t *testing.T) {
+	t.Setenv("KACHO_NLB_MODE", "dev") // dev-opt-in: default fail-closed production
 	// ENV: KACHO_NLB_REPOSITORY__POSTGRES__URL → repository.postgres.url
 	t.Setenv("KACHO_NLB_REPOSITORY__POSTGRES__URL", "postgres://envuser:envpass@envhost/kacho_nlb")
 	t.Setenv("KACHO_NLB_LOGGER__LEVEL", "WARN")

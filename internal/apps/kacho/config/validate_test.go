@@ -16,7 +16,7 @@ func TestParseMode(t *testing.T) {
 		want    ModeEnum
 		wantErr bool
 	}{
-		{"", ModeDev, false},
+		{"", ModeProduction, false}, // unset/empty fails closed (security.md)
 		{"dev", ModeDev, false},
 		{"DEV", ModeDev, false},
 		{"development", ModeDev, false},

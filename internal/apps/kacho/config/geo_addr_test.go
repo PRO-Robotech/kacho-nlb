@@ -11,6 +11,7 @@ package config
 import "testing"
 
 func TestLoad_GeoGRPCAddr_FromEnv(t *testing.T) {
+	t.Setenv("KACHO_NLB_MODE", "dev") // dev-opt-in: default fail-closed production
 	t.Setenv("KACHO_NLB_REPOSITORY__POSTGRES__URL", "postgres://u:p@h/d")
 	t.Setenv("KACHO_NLB_GEO_GRPC_ADDR", "kacho-geo.kacho.svc.cluster.local:9090")
 
@@ -24,6 +25,7 @@ func TestLoad_GeoGRPCAddr_FromEnv(t *testing.T) {
 }
 
 func TestLoad_GeoMTLS_FromEnv(t *testing.T) {
+	t.Setenv("KACHO_NLB_MODE", "dev") // dev-opt-in: default fail-closed production
 	t.Setenv("KACHO_NLB_REPOSITORY__POSTGRES__URL", "postgres://u:p@h/d")
 	t.Setenv("KACHO_NLB_MTLS__GEO__ENABLE", "true")
 	t.Setenv("KACHO_NLB_MTLS__GEO__SERVERNAME", "kacho-geo.kacho.svc.cluster.local")

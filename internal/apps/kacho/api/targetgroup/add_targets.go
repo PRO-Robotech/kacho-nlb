@@ -37,9 +37,9 @@ import (
 //   - nic: vpc.NetworkInterfaceService.Get + region match via subnet;
 //   - ip_ref: vpc.SubnetService.Get + region match + IP-in-CIDR (008);
 //   - external_ip: bogon-check уже в Validate, peer-validate нет;
-//   - Writer-TX → AddTargets (ON CONFLICT DO NOTHING per partial UNIQUE) +
-//     outbox UPDATED только если >0 строк вставлено (idempotent
-//     no-op) → Commit.
+//   - Writer-TX → AddTargets (reactivate same-identity DRAINING row via CAS,
+//     иначе INSERT ON CONFLICT DO NOTHING per partial UNIQUE) + outbox UPDATED
+//     только если >0 строк вставлено/реактивировано (idempotent no-op) → Commit.
 type AddTargetsUseCase struct {
 	repo           Repo
 	opsRepo        OpsRepo

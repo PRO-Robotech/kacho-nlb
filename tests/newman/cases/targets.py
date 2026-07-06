@@ -168,8 +168,11 @@ CASES.append(Case(
         Step(name="add-empty", method="POST", path=f"{_TG_BASE}/{{{{tgId}}}}:addTargets",
              body={"targets": []},
              test_script=[
-                 "pm.test('rejected (sync 400 or async)', () => "
-                 "  pm.expect(pm.response.code).to.be.oneOf([200, 400]));",
+                 # Empty-list guard is synchronous (add_targets.go:80, before any
+                 # Operation is created) → always InvalidArgument/400. A 200 here
+                 # would be the validation regression this case exists to catch.
+                 "pm.test('rejected sync 400', () => "
+                 "  pm.expect(pm.response.code).to.eql(400));",
              ]),
         *_cleanup_tg(),
     ],
@@ -184,7 +187,9 @@ CASES.append(Case(
         Step(name="add-w-neg", method="POST", path=f"{_TG_BASE}/{{{{tgId}}}}:addTargets",
              body={"targets": [{"externalIp": {"address": "203.0.113.20"}, "weight": -1}]},
              test_script=[
-                 "pm.test('rejected', () => pm.expect(pm.response.code).to.be.oneOf([200, 400]));",
+                 # weight bounds are validated synchronously (domain Target.Validate
+                 # via add_targets.go:89, before Operation creation) → always 400.
+                 "pm.test('rejected sync 400', () => pm.expect(pm.response.code).to.eql(400));",
              ]),
         *_cleanup_tg(),
     ],
@@ -199,7 +204,9 @@ CASES.append(Case(
         Step(name="add-w-over", method="POST", path=f"{_TG_BASE}/{{{{tgId}}}}:addTargets",
              body={"targets": [{"externalIp": {"address": "203.0.113.21"}, "weight": 1001}]},
              test_script=[
-                 "pm.test('rejected', () => pm.expect(pm.response.code).to.be.oneOf([200, 400]));",
+                 # weight bounds are validated synchronously (domain Target.Validate
+                 # via add_targets.go:89, before Operation creation) → always 400.
+                 "pm.test('rejected sync 400', () => pm.expect(pm.response.code).to.eql(400));",
              ]),
         *_cleanup_tg(),
     ],
