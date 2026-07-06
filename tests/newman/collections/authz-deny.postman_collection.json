@@ -1,6 +1,6 @@
 {
   "info": {
-    "_postman_id": "fef2e9ff-be9a-4a48-9839-d2a2bd55529c",
+    "_postman_id": "7fb0395e-6f7e-4861-ad04-66dfe3157413",
     "name": "kacho-nlb / newman / authz-deny",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
@@ -921,6 +921,68 @@
       "description": "class:AZD | priority:P0",
       "item": [
         {
+          "name": "precond-editorA-denied-on-dst",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/nlb/v1/networkLoadBalancers",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "nlb",
+                "v1",
+                "networkLoadBalancers"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"projectId\": \"{{_suiteProjectCrossId}}\", \"regionId\": \"{{_suiteRegionId}}\", \"name\": \"azd-mvpc-{{runId}}\", \"type\": \"EXTERNAL\", \"v4Source\": {\"public\": {}}}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// AZD per-step: bearer from env 'jwtProjectEditorA'",
+                  "const __t = pm.environment.get('jwtProjectEditorA') || pm.variables.get('jwtProjectEditorA') || '';",
+                  "if (__t) {",
+                  "  pm.request.headers.upsert({key: 'Authorization', value: 'Bearer ' + __t});",
+                  "} else {",
+                  "  pm.request.headers.remove('Authorization');",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 403', () => pm.expect(pm.response.code).to.eql(403));",
+                  "pm.test('grpc code 7 (PERMISSION_DENIED)', () => {",
+                  "  const j = pm.response.json();",
+                  "  pm.expect(j.code, JSON.stringify(j)).to.eql(7);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
           "name": "setup-cr",
           "request": {
             "method": "POST",
@@ -1090,8 +1152,16 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('rejected (403)', () =>   pm.expect(pm.response.code).to.be.oneOf([200, 403]));",
-                  "if (pm.response.code === 403) pm.test('grpc 7', () =>   pm.expect(pm.response.json().code).to.eql(7));"
+                  "pm.test('status 403', () => pm.expect(pm.response.code).to.eql(403));",
+                  "pm.test('grpc code 7 (PERMISSION_DENIED)', () => {",
+                  "  const j = pm.response.json();",
+                  "  pm.expect(j.code, JSON.stringify(j)).to.eql(7);",
+                  "});",
+                  "pm.test('denial references destination project scope', () => {",
+                  "  const m = (pm.response.json().message || '').toLowerCase();",
+                  "  pm.expect(m).to.include('not authorized');",
+                  "  pm.expect(m).to.include((pm.environment.get('_suiteProjectCrossId') || '').toLowerCase());",
+                  "});"
                 ]
               }
             }
@@ -1259,7 +1329,8 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('rejected (403/404)', () =>   pm.expect(pm.response.code).to.be.oneOf([200, 403, 404]));"
+                  "pm.test('rejected (403/404, never 200)', () =>   pm.expect(pm.response.code).to.be.oneOf([403, 404]));",
+                  "pm.test('grpc deny code (5 NotFound or 7 PermissionDenied)', () =>   pm.expect(pm.response.json().code).to.be.oneOf([5, 7]));"
                 ]
               }
             }
@@ -1824,6 +1895,68 @@
       "description": "class:AZD | priority:P0",
       "item": [
         {
+          "name": "precond-editorA-denied-on-dst",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/nlb/v1/targetGroups",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "nlb",
+                "v1",
+                "targetGroups"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"projectId\": \"{{_suiteProjectCrossId}}\", \"regionId\": \"{{_suiteRegionId}}\", \"name\": \"azd-tgrmvpc-{{runId}}\", \"healthCheck\": {\"name\": \"hc\", \"interval\": \"2s\", \"timeout\": \"1s\", \"unhealthyThreshold\": 3, \"healthyThreshold\": 2, \"tcp\": {\"port\": 80}}}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// AZD per-step: bearer from env 'jwtProjectEditorA'",
+                  "const __t = pm.environment.get('jwtProjectEditorA') || pm.variables.get('jwtProjectEditorA') || '';",
+                  "if (__t) {",
+                  "  pm.request.headers.upsert({key: 'Authorization', value: 'Bearer ' + __t});",
+                  "} else {",
+                  "  pm.request.headers.remove('Authorization');",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 403', () => pm.expect(pm.response.code).to.eql(403));",
+                  "pm.test('grpc code 7 (PERMISSION_DENIED)', () => {",
+                  "  const j = pm.response.json();",
+                  "  pm.expect(j.code, JSON.stringify(j)).to.eql(7);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
           "name": "setup-tg",
           "request": {
             "method": "POST",
@@ -1993,7 +2126,16 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('rejected (403)', () =>   pm.expect(pm.response.code).to.be.oneOf([200, 403]));"
+                  "pm.test('status 403', () => pm.expect(pm.response.code).to.eql(403));",
+                  "pm.test('grpc code 7 (PERMISSION_DENIED)', () => {",
+                  "  const j = pm.response.json();",
+                  "  pm.expect(j.code, JSON.stringify(j)).to.eql(7);",
+                  "});",
+                  "pm.test('denial references destination project scope', () => {",
+                  "  const m = (pm.response.json().message || '').toLowerCase();",
+                  "  pm.expect(m).to.include('not authorized');",
+                  "  pm.expect(m).to.include((pm.environment.get('_suiteProjectCrossId') || '').toLowerCase());",
+                  "});"
                 ]
               }
             }
