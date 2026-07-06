@@ -268,6 +268,9 @@ func (w *fakeLBWriter) AttachVIP(context.Context, string, domain.IPVersion, stri
 func (w *fakeLBWriter) SetStatusCAS(context.Context, string, domain.LBStatus, domain.LBStatus) (*kachorepo.LoadBalancerRecord, error) {
 	return nil, errors.New("fakeLBWriter.SetStatusCAS not implemented")
 }
+func (w *fakeLBWriter) MarkDeleting(context.Context, string) (*kachorepo.LoadBalancerRecord, error) {
+	return nil, errors.New("fakeLBWriter.MarkDeleting not implemented")
+}
 func (w *fakeLBWriter) MoveProject(context.Context, string, string) (*kachorepo.LoadBalancerRecord, error) {
 	return nil, errors.New("fakeLBWriter.MoveProject not implemented")
 }

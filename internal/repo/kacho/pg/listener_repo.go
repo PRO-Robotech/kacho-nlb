@@ -193,7 +193,14 @@ func (w *listenerWriter) Insert(ctx context.Context, l *domain.Listener) (*kacho
 	// listeners.project_id): либо INSERT блокируется до commit'а Move и через
 	// EvalPlanQual видит СВЕЖИЙ project, либо каскад Move видит уже закоммиченный
 	// листенер. Зеркалит guard в attached_tg_repo.go Attach.
-	// 0 rows → LB исчез (concurrent Delete) → FailedPrecondition.
+	//
+	// `AND lb.status <> $17` (DELETING) — DB-level guard против конкурентной
+	// Delete-саги: тот же FOR NO KEY UPDATE-lock сериализует INSERT с
+	// LoadBalancers.MarkDeleting. Либо mark успел первым и EvalPlanQual видит
+	// DELETING → 0 rows, либо INSERT первым и mark ловит NOT EXISTS(listeners).
+	// Иначе листенер, вставленный после mark, расклинил бы финальный Delete +
+	// free_ip_runner на FK-RESTRICT (sec-hardening r8b, DATA #1).
+	// 0 rows → LB исчез ИЛИ DELETING (concurrent Delete) → FailedPrecondition.
 	q := fmt.Sprintf(`
         INSERT INTO kacho_nlb.listeners
             (id, load_balancer_id, project_id, region_id, name, description, labels,
@@ -203,7 +210,7 @@ func (w *listenerWriter) Insert(ctx context.Context, l *domain.Listener) (*kacho
         SELECT $1, lb.id, lb.project_id, lb.region_id, $3, $4, $5::jsonb,
                $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16
           FROM kacho_nlb.load_balancers lb
-         WHERE lb.id = $2
+         WHERE lb.id = $2 AND lb.status <> $17
            FOR NO KEY UPDATE OF lb
         RETURNING %s`, listenerCols)
 	row := w.tx.QueryRow(ctx, q,
@@ -212,6 +219,7 @@ func (w *listenerWriter) Insert(ctx context.Context, l *domain.Listener) (*kacho
 		string(l.Protocol), int32(l.Port), int32(l.TargetPort), string(l.IPVersion),
 		dto.OptString(l.AddressID), string(l.AllocatedAddress), dto.OptString(l.SubnetID),
 		l.ProxyProtocolV2, dto.OptString(l.DefaultTargetGroupID), string(l.Status), vipOrigin,
+		string(domain.LBStatusDeleting),
 	)
 	rec, err := scanListener(row)
 	if err != nil {

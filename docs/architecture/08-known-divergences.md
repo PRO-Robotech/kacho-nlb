@@ -140,25 +140,26 @@ adapter-пакета в любом случае. Осознанный trade-off 
 формальная dependency-inversion» в пользу первого (sec-hardening r6, ARCH-finding
 «port ownership»). Композиционный wiring остаётся в `cmd/kacho-loadbalancer/main.go`.
 
-## Нет глобального `statement_timeout`/`lock_timeout` на DB-соединении
+## `statement_timeout=30s` энфорсится пулом (corelib), `cmd/migrator` освобождён
 
-**Что.** Пул создаётся из DSN без server-side per-statement bound
-(`statement_timeout`/`lock_timeout`/`idle_in_transaction_session_timeout` не
-заданы ни в DSN, ни в values). Верхняя граница выполнения запроса — только
-gRPC-context-deadline, пробрасываемый в pgx.
+**Что.** Пул приложения (`coredb.NewPool`, `cmd/kacho-loadbalancer/main.go:139`)
+ставит `statement_timeout=30000` (30 s) как `RuntimeParam` на КАЖДОМ соединении —
+это делает `kacho-corelib/db.NewPool` (`cfg.ConnConfig.RuntimeParams["statement_timeout"]
+= "30000"`). Server-side верхняя граница на любой request-path и фоновый
+reconcile-запрос сверх gRPC-context-deadline. `lock_timeout` /
+`idle_in_transaction_session_timeout` намеренно не заданы.
 
-**Почему принятый defense-in-depth-риск, а не глобальный GUC.** Blast radius
-ограничен: все list/read-пути keyset-пагинированы и клампятся
-(`pageSizeOrDefault` cap 1000, `ListTargets` — `MaxTargetsPerGroup`), contested
-write-пути — атомарные CAS/`FOR NO KEY UPDATE`/`SKIP LOCKED` (короткие). Наивная
-установка глобального `statement_timeout` на общий DSN опасна: тот же DSN
-использует `cmd/migrator` — жёсткий per-statement timeout может оборвать
-легитимный длинный DDL/`CREATE INDEX`/backfill на большой таблице (migration-abort
-хуже, чем удержанный коннект). Правильный фикс — **per-request server-side timeout
-interceptor** (unary/stream) на listener'е, не GUC на shared-DSN; он ограничивает
-именно request-path, не трогая migrator/DDL. До его появления полагаемся на
-context-deadline (sec-hardening r6, SEC-finding «no statement_timeout», принято как
-defense-in-depth-долг, не blocking-баг).
+**Почему by-design (targeting ровно тот, которого хотел прежний r6-долг).**
+`cmd/migrator` открывает СВОЁ `sql.Open("pgx", …)`-соединение (goose поверх него),
+а НЕ `coredb.NewPool` — поэтому легитимно-длинный DDL/`CREATE INDEX`/backfill НЕ
+обрывается 30-секундным лимитом (migration-abort был бы хуже удержанного коннекта).
+Request-path И фоновые reconcile-джобы (`free_ip_runner`/`target_drain` держат тот
+же app-pool `d.pool`) ограничены 30 s. `lock_timeout` не нужен: contested
+write-пути — короткие атомарные CAS/`FOR NO KEY UPDATE`/`SKIP LOCKED`, а read-пути
+keyset-клампятся (`pageSizeOrDefault` cap 1000, `ListTargets` — `MaxTargetsPerGroup`).
+NB: прежняя запись «нет `statement_timeout`» (r6) устарела после апгрейда
+`kacho-corelib` (pool теперь ставит 30 s) — факт исправлен как stale
+(sec-hardening r8b, DATA-finding «no statement_timeout» → resolved).
 
 ## update_mask known-set валидируется per-resource inline, не через corelib `validate.UpdateMask`
 
@@ -208,3 +209,52 @@ semaphore-слот на всё время подписки), которая не
 trade-off «stream-controlflow рядом со stream-объектом» в пользу когезии
 transport-owned жизненного цикла стрима (sec-hardening r7b, ARCH-finding «Subscribe
 orchestration in handler»).
+
+## Фоновые reconcile-джобы — raw `*pgxpool.Pool` в use-case-слое (минуя CQRS Repository)
+
+**Что.** Три фоновые джобы в `internal/apps/kacho/jobs/` (`free_ip_runner`,
+`target_drain_runner`, `viporigin_reconcile`) держат `*pgxpool.Pool` и исполняют
+hand-written SQL (`SELECT … FOR UPDATE SKIP LOCKED`, `DELETE`, INSERT в
+`nlb_outbox`/`fga_register_outbox`) напрямую, минуя `kacho.Repository`/
+`RepositoryWriter`, через который идут все per-RPC use-case'ы. Outbox-INSERT'ы в
+`free_ip_runner.emitReconcileFinalize` повторяют форму каноничных эмиттеров
+`pg.outboxEmitter`/`pg.fgaRegisterEmitter`.
+
+**Почему by-design (а не рефакторить через RepositoryWriter).** Это не
+request-path use-case'ы, а multi-replica admin-reconcilers: их суть — claim одной
+застрявшей строки под `FOR UPDATE SKIP LOCKED`, удержание row-lock'а на время
+внешнего release-вызова (network) и финализация — семантика, которая НЕ ложится на
+per-resource CQRS-порт (тот моделирует ресурс-мутации, а не scan-claim-reconcile).
+Паттерн — устоявшаяся конвенция сервиса (`TargetDrainRunner` той же формы; см.
+`jobs/doc.go` «admin-job поверх *pgxpool.Pool, минуя [repo]»). Джобы —
+**вне** dependency-rule request-path'а (нет доменных инвариантов ресурса, только
+housekeeping-VIP-release/target-drain). Дрейф дублированных outbox-INSERT'ов от
+каноничных эмиттеров закрыт тестами:
+`free_ip_runner_integration_test.go`/`target_drain_runner_integration_test.go`
+гоняют реальные INSERT'ы против той же схемы (NOT NULL/CHECK из миграций ловят
+рассинхрон колонок на CI). Осознанный trade-off «reconcile-controlflow рядом с
+raw-SQL» vs. слой косвенности через Repository, без выигрыша в тестируемости
+(sec-hardening r8b, ARCH-finding «jobs bypass CQRS»).
+
+## `domain/` импортирует сторонние value-библиотеки (не только stdlib + kacho-proto)
+
+**Что.** `architecture.md` предписывает `domain/` импортировать ТОЛЬКО stdlib +
+`kacho-proto`. Фактически `internal/domain/` импортирует
+`github.com/H-BF/corlib/pkg/{dict,option}` (`types.go`, `target.go`, `listener.go`),
+`go.uber.org/multierr` (`loadbalancer.go`, `target.go`, `health_check.go`,
+`target_group.go`, `listener.go`) и
+`github.com/PRO-Robotech/kacho-corelib/{errors,ids}` (`types.go`, `status.go`,
+`builders.go`).
+
+**Почему by-design (а не заменять на stdlib).** Все три — чистые value-библиотеки
+(`dict`/`option` — generic-контейнеры, `multierr` — агрегация ошибок, corelib
+`errors`/`ids` — in-org error-builder + ID-генерация); НИ pgx, НИ grpc-stubs, НИ
+sqlc-типов, НИ adapter-зависимостей domain не тянет — дух dependency-rule (нет
+утечки адаптера в entity-слой) соблюдён. `corelib/errors` даёт единый
+gRPC-совместимый `InvalidArgument().AddFieldViolation`-формат (часть
+error-контракта, см. `api-conventions.md`), а `option`/`dict` устраняют голые
+`*T`/`map`-обёртки в self-validating newtype'ах. Замена на stdlib-эквиваленты
+продублировала бы эти утилиты внутри сервиса без выигрыша в чистоте (те же
+value-типы, но hand-rolled). Sanctioned location для этого отклонения — здесь
+(git-youtrack.md «by-design → docs/architecture»), а не только inline-комментарий в
+`types.go` (sec-hardening r8b, ARCH-finding «domain imports third-party»).

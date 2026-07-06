@@ -593,6 +593,9 @@ func (fakeLBStub) AttachVIP(context.Context, string, domain.IPVersion, string, s
 func (fakeLBStub) SetStatusCAS(context.Context, string, domain.LBStatus, domain.LBStatus) (*kachorepo.LoadBalancerRecord, error) {
 	return nil, errors.New("not used")
 }
+func (fakeLBStub) MarkDeleting(context.Context, string) (*kachorepo.LoadBalancerRecord, error) {
+	return nil, errors.New("not used")
+}
 func (fakeLBStub) MoveProject(context.Context, string, string) (*kachorepo.LoadBalancerRecord, error) {
 	return nil, errors.New("not used")
 }

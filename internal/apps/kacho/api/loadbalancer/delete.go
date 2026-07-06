@@ -121,17 +121,11 @@ func (u *DeleteLoadBalancerUseCase) Execute(
 		return nil, mapDomainErr(err)
 	}
 
-	snap := vipBinding{
-		addressIDV4: string(cur.AddressIDV4),
-		addressIDV6: string(cur.AddressIDV6),
-		originV4:    cur.VipOriginV4,
-		originV6:    cur.VipOriginV6,
-	}
 	projectID := string(cur.ProjectID)
 	operations.Run(ctx, u.opsRepo, op.ID, func(workerCtx context.Context) (*anypb.Any, error) {
 		// Worker-ctx детачнут — восстанавливаем principal, чтобы release-вызовы в vpc
 		// (ClearReference/FreeIP) несли identity тенанта (иначе authz_no_principal).
-		return u.doDelete(operations.WithPrincipal(workerCtx, principal), id, projectID, snap)
+		return u.doDelete(operations.WithPrincipal(workerCtx, principal), id, projectID)
 	})
 
 	return &op, nil
@@ -145,13 +139,36 @@ type vipBinding struct {
 	originV6    domain.VipOrigin
 }
 
-// doDelete — worker: per-family release VIP (auto → FreeIP, byo → ClearReference;
-// идемпотентно по address_id) → Writer-TX: Delete + outbox DELETED + fga-unregister
-// → Commit. release-сбой (vpc Unavailable) → fail-closed error, строка остаётся
-// (повторный Delete идемпотентен — release по address_id трактует NotFound как успех).
-// FK 23503 backstop → ErrFailedPrecondition (листенер появился между sync-check и delete).
-func (u *DeleteLoadBalancerUseCase) doDelete(ctx context.Context, id, projectID string, vip vipBinding) (*anypb.Any, error) {
-	// Per-family release VIP до удаления строки (раздельно v4/v6).
+// doDelete — durable-handle Delete-сага (mark→release→delete):
+//
+//  1. MarkDeleting — атомарный guarded-переход в status=DELETING (unprotected +
+//     no children) ДО необратимого release VIP. Provал guard'а → fail БЕЗ release
+//     (строка цела, VIP не тронут). Пометка DELETING также делает строку видимой
+//     free_ip_runner'у.
+//  2. Per-family release VIP (auto → ClearReference→FreeIP, byo → ClearReference;
+//     идемпотентно по address_id, NotFound=успех).
+//  3. Writer-TX: DELETE строки + outbox DELETED + fga-unregister → Commit.
+//
+// Краш/release-сбой между 1 и 3 оставляет строку в DELETING → free_ip_runner
+// доводит release+DELETE (durable-handle self-heal). FK 23503 backstop на
+// финальном DELETE недостижим (mark-guard требует отсутствия детей, а
+// child-INSERT'ы отвергают DELETING-родителя), но `Delete` его сохраняет как
+// defense-in-depth.
+func (u *DeleteLoadBalancerUseCase) doDelete(ctx context.Context, id, projectID string) (*anypb.Any, error) {
+	// Шаг 1: атомарно пометить DELETING ДО release VIP.
+	marked, err := u.markDeleting(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	// VIP-binding — из строки под mark-lock (устойчиво к гонке с AttachVIP).
+	vip := vipBinding{
+		addressIDV4: string(marked.AddressIDV4),
+		addressIDV6: string(marked.AddressIDV6),
+		originV4:    marked.VipOriginV4,
+		originV6:    marked.VipOriginV6,
+	}
+
+	// Шаг 2: per-family release VIP (раздельно v4/v6).
 	if err := u.releaseVIP(ctx, vip.addressIDV4, vip.originV4); err != nil {
 		return nil, mapDomainErr(err)
 	}
@@ -159,16 +176,14 @@ func (u *DeleteLoadBalancerUseCase) doDelete(ctx context.Context, id, projectID 
 		return nil, mapDomainErr(err)
 	}
 
+	// Шаг 3: финальный DELETE + outbox DELETED + fga-unregister (одна TX).
 	w, err := u.repo.Writer(ctx)
 	if err != nil {
 		return nil, mapDomainErr(err)
 	}
 	defer w.Abort()
 
-	// Atomic guard на deletion_protection: конкурентный
-	// Update(deletion_protection=true) между sync-precheck и этим DELETE
-	// пресекается на DB-уровне (0 rows при защищённом LB → FailedPrecondition).
-	if err := w.LoadBalancers().DeleteIfUnprotected(ctx, id); err != nil {
+	if err := w.LoadBalancers().Delete(ctx, id); err != nil {
 		return nil, mapDomainErr(err)
 	}
 	if err := w.Outbox().Emit(ctx,
@@ -192,6 +207,28 @@ func (u *DeleteLoadBalancerUseCase) doDelete(ctx context.Context, id, projectID 
 		return nil, mapDomainErr(err)
 	}
 	return out, nil
+}
+
+// markDeleting — отдельная закоммиченная Writer-TX с атомарным MarkDeleting-guard'ом
+// (первый шаг Delete). DELETING обязан быть durable ДО release VIP: (а) при провале
+// guard'а VIP не трогается, (б) при краше после release строка в DELETING
+// самозалечивается free_ip_runner'ом. Конкурентный Update(deletion_protection=true)
+// или появившийся ребёнок между sync-precheck и этим guard'ом пресекается на
+// DB-уровне (0 rows → FailedPrecondition).
+func (u *DeleteLoadBalancerUseCase) markDeleting(ctx context.Context, id string) (*kachorepo.LoadBalancerRecord, error) {
+	w, err := u.repo.Writer(ctx)
+	if err != nil {
+		return nil, mapDomainErr(err)
+	}
+	defer w.Abort()
+	rec, err := w.LoadBalancers().MarkDeleting(ctx, id)
+	if err != nil {
+		return nil, mapDomainErr(err)
+	}
+	if err := w.Commit(); err != nil {
+		return nil, mapDomainErr(err)
+	}
+	return rec, nil
 }
 
 // releaseVIP — освобождает VIP одного семейства по address_id: owned (auto)

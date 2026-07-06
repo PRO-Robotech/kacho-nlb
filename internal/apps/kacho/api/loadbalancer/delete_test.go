@@ -124,6 +124,35 @@ func TestDelete_HasAttachedTG(t *testing.T) {
 	require.Contains(t, status.Convert(err).Message(), "attached target group")
 }
 
+// TestDelete_GuardFailure_DoesNotReleaseVIP — при провале атомарного
+// mark-DELETING guard'а (конкурентная re-protection / появившийся ребёнок между
+// sync-precheck и async-воркером) необратимый cross-domain release VIP НЕ должен
+// выполниться, а строка LB — уцелеть. Иначе живой LB остаётся с уже
+// освобождённым VIP, который никакой реконсайлер не лечит (регресс до
+// sec-hardening r8b: release шёл ДО guard'ов).
+func TestDelete_GuardFailure_DoesNotReleaseVIP(t *testing.T) {
+	t.Parallel()
+	repo := newFakeRepo()
+	lbID := seedLB(t, repo, "prj-a", "edge")
+	repo.lbs[lbID].AddressIDV4 = "adr-v4"
+	repo.lbs[lbID].VipOriginV4 = domain.VipOriginAuto
+	// Guard отвергает переход в DELETING (симулирует конкурентную защиту/ребёнка,
+	// проскочивших мимо sync-precheck).
+	repo.failOnMarkDeleting = kachorepo.ErrFailedPrecondition
+	opsRepo := newFakeOpsRepo()
+	addr := &fakeAddressClient{}
+	uc := NewDeleteLoadBalancerUseCase(repo, opsRepo, addr, slog.Default())
+	op, err := uc.Execute(context.Background(), &lbv1.DeleteNetworkLoadBalancerRequest{
+		NetworkLoadBalancerId: lbID,
+	})
+	require.NoError(t, err) // sync precheck passes; guard-miss всплывает в async-воркере
+	final := awaitOpDone(t, opsRepo, op.ID)
+	require.NotNil(t, final.Error, "guard-miss обязан провалить операцию")
+	require.Empty(t, addr.freed, "VIP не должен освобождаться при провале guard'а")
+	require.Empty(t, addr.cleared, "reference VIP не должен сниматься при провале guard'а")
+	require.Contains(t, repo.lbs, lbID, "строка LB обязана уцелеть при провале guard'а")
+}
+
 func TestDelete_NotFound(t *testing.T) {
 	t.Parallel()
 	uc := NewDeleteLoadBalancerUseCase(newFakeRepo(), newFakeOpsRepo(), &fakeAddressClient{}, nil)
