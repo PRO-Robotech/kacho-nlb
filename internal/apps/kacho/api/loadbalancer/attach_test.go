@@ -119,7 +119,7 @@ func TestAttach_EmptyTG(t *testing.T) {
 
 // TestAttach_DeniesUnauthorizedTargetGroup — a caller that passed the LB
 // interceptor (v_update on the LB) but lacks `viewer` on the TargetGroup must be
-// refused with PermissionDenied, and no attach may happen (audit SEC r3 #3).
+// refused with PermissionDenied, and no attach may happen.
 func TestAttach_DeniesUnauthorizedTargetGroup(t *testing.T) {
 	t.Parallel()
 	repo := newFakeRepo()

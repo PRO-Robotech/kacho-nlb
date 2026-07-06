@@ -35,7 +35,7 @@ func SubjectFromCtx(ctx context.Context) string {
 //     (fail-closed). Реальный FGAFilter вернёт Unauthenticated (enabled) либо
 //     BypassAll (disabled — enabled=false проверяется ДО subject); никакого
 //     short-circuit-bypass на пустом subject'е здесь НЕТ — это была
-//     cross-tenant enumeration дыра (audit SEC-high #1 / CWE-862): запрос,
+//     cross-tenant enumeration дыра (CWE-862): запрос,
 //     потерявший forwarded-principal, не должен перечислять чужой проект.
 //   - filter вернул BypassAll      → bypass (admin / wildcard-grant / fail-open /
 //     enabled=false).

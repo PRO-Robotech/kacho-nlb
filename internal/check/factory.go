@@ -62,7 +62,7 @@ func NewInterceptor(opts Options) (*authz.Interceptor, *authz.Cache, error) {
 	cache := authz.NewCache(opts.CacheTTL)
 
 	// Один источник истины для общих полей; ветки различаются ТОЛЬКО Client/
-	// Breakglass (см. audit LEAN #6 — раньше два byte-идентичных литерала легко
+	// Breakglass (раньше два byte-идентичных литерала легко
 	// расходились при добавлении нового поля в одну из копий).
 	base := authz.InterceptorOptions{
 		ServiceName:          opts.ServiceName,

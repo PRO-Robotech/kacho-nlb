@@ -11,7 +11,7 @@ import (
 )
 
 // operationToProto — тонкий делегатор к единому `shared.OperationToProto`
-// (один источник истины для всех use-case пакетов, см. audit LEAN #10).
+// (один источник истины для всех use-case пакетов).
 func operationToProto(op *operations.Operation) *operationpb.Operation {
 	return shared.OperationToProto(op)
 }

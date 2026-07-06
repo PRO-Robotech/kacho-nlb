@@ -184,7 +184,7 @@ func (w *listenerWriter) Insert(ctx context.Context, l *domain.Listener) (*kacho
 	// project_id/region_id — денормализованное зеркало родительского LB. Берём их
 	// НЕ из software-captured snapshot'а (`l.ProjectID`/`l.RegionID`, прочитанного
 	// в sync-фазе Create), а атомарно из строки load_balancers под locking-read
-	// `FOR NO KEY UPDATE OF lb`. Иначе TOCTOU (audit DATA #2, CWE-362, запрет #10):
+	// `FOR NO KEY UPDATE OF lb`. Иначе TOCTOU (CWE-362):
 	// LB мог сменить проект через LoadBalancer.MoveProject между sync-валидацией и
 	// этим async INSERT'ом — plain-INSERT берёт лишь FK KEY SHARE на LB-row, что НЕ
 	// конфликтует с `FOR NO KEY UPDATE` каскада Move → листенер персистится со
@@ -192,7 +192,7 @@ func (w *listenerWriter) Insert(ctx context.Context, l *domain.Listener) (*kacho
 	// с MoveProject (тот берёт FOR NO KEY UPDATE на ту же LB-row + каскадит
 	// listeners.project_id): либо INSERT блокируется до commit'а Move и через
 	// EvalPlanQual видит СВЕЖИЙ project, либо каскад Move видит уже закоммиченный
-	// листенер. Зеркалит guard в attached_tg_repo.go Attach (sec-hardening r6).
+	// листенер. Зеркалит guard в attached_tg_repo.go Attach.
 	// 0 rows → LB исчез (concurrent Delete) → FailedPrecondition.
 	q := fmt.Sprintf(`
         INSERT INTO kacho_nlb.listeners

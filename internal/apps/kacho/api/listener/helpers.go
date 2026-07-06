@@ -33,14 +33,14 @@ func listenerRecordToPb(rec *kachorepo.ListenerRecord) (*lbv1.Listener, error) {
 }
 
 // operationToProto — тонкий делегатор к единому `shared.OperationToProto`
-// (один источник истины для всех use-case пакетов, см. audit LEAN #10).
+// (один источник истины для всех use-case пакетов).
 func operationToProto(op *operations.Operation) *operationpb.Operation {
 	return shared.OperationToProto(op)
 }
 
 // mapDomainErr — translate domain-sentinel error → gRPC status. Делегирует
 // единому мапперу `shared.MapDomainErr` (один источник истины для всех use-case
-// пакетов kacho-nlb, см. audit ARCH-medium):
+// пакетов kacho-nlb):
 //
 //	ErrNotFound            → NOT_FOUND
 //	ErrAlreadyExists       → ALREADY_EXISTS

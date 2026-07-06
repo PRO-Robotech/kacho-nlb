@@ -261,7 +261,7 @@ func (u *DeleteUseCase) markFailedAndReturn(ctx context.Context, listenerID, pro
 			},
 		); emitErr != nil {
 			// FAILED-marker не записан: аудит/outbox-trail неполон. Логируем
-			// отдельным сигналом (audit READ #5, CWE-252) — не глотаем молча.
+			// отдельным сигналом (CWE-252) — не глотаем молча.
 			loggerOrDiscard(u.logger).Warn("listener.Delete FAILED-marker outbox emit failed; compensation trail incomplete",
 				"listener_id", listenerID, "emit_err", emitErr)
 		} else if commitErr := w.Commit(); commitErr != nil {

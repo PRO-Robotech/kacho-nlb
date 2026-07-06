@@ -20,7 +20,7 @@ import (
 
 // mapDomainErr транслирует sentinel-ошибки `domain` и `kacho`(repo) в gRPC-status.
 // Делегирует единому мапперу `shared.MapDomainErr` (один источник истины для всех
-// use-case пакетов, см. audit ARCH-medium).
+// use-case пакетов).
 func mapDomainErr(err error) error {
 	return shared.MapDomainErr(err)
 }
@@ -32,19 +32,17 @@ func stripSentinel(err error, fallback string) string {
 }
 
 // peerErrToStatus — тонкий делегатор к единому `shared.PeerErrToStatus`
-// (project/region precheck + per-target peer-validate; см. audit ARCH #7).
+// (project/region precheck + per-target peer-validate).
 func peerErrToStatus(err error, kind, id string) error {
 	return shared.PeerErrToStatus(err, kind, id)
 }
 
-// errInvalidArg — тонкий делегатор к единому `shared.ErrInvalidArg`
-// (см. audit LEAN #11).
+// errInvalidArg — тонкий делегатор к единому `shared.ErrInvalidArg`.
 func errInvalidArg(field, msg string) error {
 	return shared.ErrInvalidArg(field, msg)
 }
 
-// operationToProto — тонкий делегатор к единому `shared.OperationToProto`
-// (см. audit LEAN #10).
+// operationToProto — тонкий делегатор к единому `shared.OperationToProto`.
 func operationToProto(op *operations.Operation) *operationpb.Operation {
 	return shared.OperationToProto(op)
 }

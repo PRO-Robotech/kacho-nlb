@@ -29,8 +29,8 @@ import (
 // Sync prechecks:
 //   - LB exists (Get) и `TG.region_id == LB.region_id` (same-region constraint).
 //   - TG exists (Get).
-//   - caller holds `viewer` on the TargetGroup object (handler-side Check —
-//     audit SEC r3 #3): the per-RPC interceptor gates only the LB (v_update);
+//   - caller holds `viewer` on the TargetGroup object (handler-side Check):
+//     the per-RPC interceptor gates only the LB (v_update);
 //     without a TG-object Check a custom role granting v_update directly on one
 //     LB (without project-editor) could wire in a same-project TG the caller
 //     holds no grant on. The standard FGA cascade (project-editor ⇒ viewer on
@@ -104,7 +104,7 @@ func (u *AttachTargetGroupUseCase) Execute(
 			lb.ProjectID, tg.ProjectID)
 	}
 
-	// Target-group authorization (audit SEC r3 #3 / CWE-863): interceptor gated
+	// Target-group authorization (CWE-863): interceptor gated
 	// the LB only; the caller must ALSO hold `viewer` on the TG object it is
 	// wiring in, else a narrow custom v_update grant on the LB could attach a TG
 	// the caller has no authorization over.

@@ -89,7 +89,7 @@ type attachedTGWriter struct {
 // Attach — atomic conditional INSERT (idempotent). Возвращает (record, true)
 // если row реально вставлена; (existing-record, false) если pair уже был.
 //
-// Инвариант (workspace CLAUDE.md запрет #10, within-service refs на DB-уровне):
+// Инвариант (within-service refs на DB-уровне):
 // LB и TG обязаны быть в ОДНОМ проекте и регионе — cross-project attach запрещён
 // моделью. Sync-precheck в use-case'е (lb.ProjectID==tg.ProjectID, region match) —
 // только UX/fast-fail; здесь инвариант прибит атомарно: INSERT ... SELECT с JOIN,
@@ -99,8 +99,8 @@ type attachedTGWriter struct {
 //
 // `FOR NO KEY UPDATE OF lb, tg` — locking-read source-строк LB/TG. Без него
 // plain-read JOIN под READ COMMITTED видит stale (до-move) project конкурентного
-// незакоммиченного Move'а и вставлял бы cross-project attach (move-first порядок,
-// KAC sec-hardening r3 finding #1). Locking-read вместо этого блокируется на
+// незакоммиченного Move'а и вставлял бы cross-project attach (move-first порядок).
+// Locking-read вместо этого блокируется на
 // move'нутой row-е; после commit'а Move PostgreSQL через EvalPlanQual пере-
 // оценивает JOIN `tg.project_id = lb.project_id` на СВЕЖЕМ project → mismatch →
 // строка отфильтрована → 0 rows → guard-miss (FailedPrecondition). FOR NO KEY

@@ -17,7 +17,7 @@ import (
 	"github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho"
 )
 
-// defaultTGNotAttachedMsg — verbatim contract-текст композитного FK
+// defaultTGNotAttachedMsg — дословный contract-текст композитного FK
 // listeners_default_tg_attached_fk (часть API-контракта, меняется только осознанно).
 const defaultTGNotAttachedMsg = "default target group is not attached to this load balancer"
 
@@ -110,7 +110,7 @@ func TestListener_GWT_6_0_01_SetDefaultOnAttachedTG_Happy(t *testing.T) {
 
 // TestListener_GWT_6_0_02_SetDefaultOnUnattachedTG_FailedPrecondition — установка
 // default на TG, не приаттаченный к этому LB, отвергается композитным FK
-// (23503 → FailedPrecondition + verbatim).
+// (23503 → FailedPrecondition + точный текст контракта).
 func TestListener_GWT_6_0_02_SetDefaultOnUnattachedTG_FailedPrecondition(t *testing.T) {
 	repo, cleanup := newRepo(t, setupTestDB(t))
 	defer cleanup()

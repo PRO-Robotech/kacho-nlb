@@ -106,7 +106,7 @@ func (u *MoveLoadBalancerUseCase) Execute(
 		}
 	}
 
-	// Destination-project authorization (audit SEC-high #2 / CWE-862/863): the
+	// Destination-project authorization (CWE-862/863): the
 	// per-RPC interceptor authorizes the caller on the SOURCE LB only; the caller
 	// must ALSO hold `editor` on the destination project, else it could inject
 	// the LB into a victim's project. This is a handler-side Check by design (an

@@ -152,7 +152,7 @@ func TestListLoadBalancersFilter_NilFilterPassthrough(t *testing.T) {
 	require.Len(t, resp.GetNetworkLoadBalancers(), 2)
 }
 
-// SECURITY (audit SEC-high #1 / CWE-862): a system/empty-subject request (a
+// SECURITY (CWE-862): a system/empty-subject request (a
 // caller whose forwarded principal was dropped — anonymous peer, non-forwarder
 // mTLS, missing x-kacho-principal-* headers) MUST NOT bypass the per-object
 // filter on a List path. With an enabled filter it fails closed to an EMPTY

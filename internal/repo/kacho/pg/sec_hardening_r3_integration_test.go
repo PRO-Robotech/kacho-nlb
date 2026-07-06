@@ -27,7 +27,7 @@ import (
 // under CI/host load if the goroutine had not yet issued its locking query
 // before the main TX committed and released the lock — the intended race window
 // then never opened and a genuine lost-update/cross-project-attach regression
-// slipped through green (audit TEST #4, CWE-367). `observer` must be a pool
+// slipped through green (CWE-367). `observer` must be a pool
 // distinct from the transactions under test. Fails the test if no waiter appears
 // within deadline.
 func waitForLockWaiter(t *testing.T, ctx context.Context, observer *pgxpool.Pool, deadline time.Duration) {
@@ -58,14 +58,14 @@ func newObserverPool(t *testing.T, dsn string) *pgxpool.Pool {
 }
 
 // =============================================================================
-// Finding #1 (r3): TargetGroup.MoveProject TOCTOU — cross-project attach.
+// TargetGroup.MoveProject TOCTOU — cross-project attach.
 //
 // The model invariant "an attached TargetGroup must share the LoadBalancer's
 // project" is enforced by the Attach INSERT...SELECT project/region JOIN. But an
 // UNGUARDED TG.MoveProject can interleave with a concurrent Attach: Move updates
 // tg.project (uncommitted) while Attach's plain (non-locking) join still reads
 // the stale committed project → both commit → cross-project attach that no
-// FK/CHECK rejects. The fix is two-sided and DB-level (project-rule #10):
+// FK/CHECK rejects. The fix is two-sided and DB-level:
 //   - TG.MoveProject: atomic CAS guard `WHERE NOT EXISTS(attached_target_groups
 //     WHERE target_group_id=$1)` (closes the attach-committed-first ordering);
 //   - Attach INSERT...SELECT: `FOR NO KEY UPDATE OF lb, tg` locking read so a
@@ -188,7 +188,7 @@ func TestTGMoveAttach_MoveFirst_NoCrossProject(t *testing.T) {
 
 	// Deterministically wait until the attach goroutine has actually reached and
 	// blocked on the tg row lock wMove holds — proving the two TX overlap before
-	// we release the lock (replaces a fixed 600ms sleep, audit TEST #4).
+	// we release the lock (replaces a fixed 600ms sleep).
 	waitForLockWaiter(t, ctx, observer, 10*time.Second)
 	if moveErr == nil {
 		require.NoError(t, wMove.Commit())
@@ -269,7 +269,7 @@ func TestTGMoveAttach_Race_Concurrent(t *testing.T) {
 }
 
 // =============================================================================
-// Finding #2 (r3): lb_status_recompute trigger must not clobber a concurrent
+// lb_status_recompute trigger must not clobber a concurrent
 // explicit status transition. The trigger's final write must be a CAS against
 // the status snapshot it validated its guard on.
 // =============================================================================
@@ -334,7 +334,7 @@ func TestLBStatusRecompute_PreservesConcurrentStop(t *testing.T) {
 
 	// Deterministically wait until the detach goroutine's recompute UPDATE is
 	// actually blocked on the lb row lock wStat holds — proving overlap before we
-	// commit STOPPING (replaces a fixed 600ms sleep, audit TEST #4).
+	// commit STOPPING (replaces a fixed 600ms sleep).
 	waitForLockWaiter(t, ctx, observer, 10*time.Second)
 	require.NoError(t, wStat.Commit())
 	require.NoError(t, <-detachCh)
@@ -347,7 +347,7 @@ func TestLBStatusRecompute_PreservesConcurrentStop(t *testing.T) {
 		"explicit STOPPING must survive a concurrent recompute (no lost-update clobber)")
 }
 
-// NOTE on finding #6 (listener region-VIP uniqueness): the partial UNIQUE
+// NOTE on listener region-VIP uniqueness: the partial UNIQUE
 // listeners_region_vip_uniq that existed in migration 0001 was DELIBERATELY
 // dropped in migration 0009 ("VIP-уникальность переехала на LoadBalancer"). VIP
 // uniqueness is now a LoadBalancer-level invariant enforced by
@@ -355,4 +355,4 @@ func TestLBStatusRecompute_PreservesConcurrentStop(t *testing.T) {
 // load_balancer_vip_concurrent_integration_test.go. There is therefore no
 // listener-level region-VIP invariant left to test; the corrected/dead comment
 // in listener_integration_test.go and docs/architecture/known-divergences.md
-// record this by-design move. See sec-hardening r3 report.
+// record this by-design move.

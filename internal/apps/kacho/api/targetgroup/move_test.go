@@ -125,7 +125,7 @@ func TestMove_NotFound(t *testing.T) {
 	require.Equal(t, codes.NotFound, status.Code(err))
 }
 
-// SECURITY (audit SEC-high #2 / CWE-862/863): the caller must be authorized on
+// SECURITY (CWE-862/863): the caller must be authorized on
 // the DESTINATION project (editor on project:<dst>). A caller with editor on the
 // source TG but NO grant on the destination must be denied, else it injects its
 // TG into a victim's project. Deny → PermissionDenied and the TG must NOT move.

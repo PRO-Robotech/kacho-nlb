@@ -80,7 +80,7 @@ func TestResolve_NilFilterBypass(t *testing.T) {
 	}
 }
 
-// SECURITY (audit SEC-high #1 / CWE-862): a system/empty subject on a List path
+// SECURITY (CWE-862): a system/empty subject on a List path
 // (a request whose forwarded principal was dropped — anonymous peer, non-forwarder
 // mTLS peer, missing x-kacho-principal-* headers) MUST NOT short-circuit to
 // BypassAll. Resolve delegates to the filter, which is the sole per-object authz
@@ -105,7 +105,7 @@ func TestResolve_SystemSubjectDoesNotBypass(t *testing.T) {
 	}
 }
 
-// SECURITY (audit SEC-high #1): with the real enabled FGAFilter, an empty/system
+// SECURITY: with the real enabled FGAFilter, an empty/system
 // subject fails closed (Unauthenticated) and never queries iam — proving a
 // principal-less caller cannot enumerate another project's resources.
 func TestResolve_SystemSubjectFailClosed_RealFilter(t *testing.T) {

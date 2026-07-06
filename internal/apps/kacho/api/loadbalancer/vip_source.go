@@ -44,7 +44,7 @@ func (fs familyVIPSpec) origin() domain.VipOrigin {
 }
 
 // resolvePlacement — placement_type ↔ type coupling. INTERNAL требует явный
-// ZONAL|REGIONAL; EXTERNAL запрещает placement (§3.2, 8.1-12).
+// ZONAL|REGIONAL; EXTERNAL запрещает placement.
 func resolvePlacement(lbType domain.LBType, pb lbv1.NetworkLoadBalancer_PlacementType) (domain.PlacementType, error) {
 	set := pb != lbv1.NetworkLoadBalancer_PLACEMENT_TYPE_UNSPECIFIED
 	if lbType == domain.LBTypeInternal {
@@ -108,7 +108,7 @@ func resolveVipSources(v4, v6 *lbv1.VipSource) ([]familyVIPSpec, error) {
 	return out, nil
 }
 
-// validateSourceTypeMatrix — subnet_id ⟹ INTERNAL; public {} ⟹ EXTERNAL (§3.3).
+// validateSourceTypeMatrix — subnet_id ⟹ INTERNAL; public {} ⟹ EXTERNAL.
 // Несоответствие → каноничный field-текст (не generic — это форма запроса, не oracle).
 func validateSourceTypeMatrix(specs []familyVIPSpec, lbType domain.LBType) error {
 	for _, fs := range specs {

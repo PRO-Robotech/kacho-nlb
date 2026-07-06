@@ -80,7 +80,7 @@ func (u *CreateLoadBalancerUseCase) Execute(
 		return nil, err
 	}
 
-	// placement_type ↔ type coupling (§3.2).
+	// placement_type ↔ type coupling.
 	placement, err := resolvePlacement(lbType, req.GetPlacementType())
 	if err != nil {
 		return nil, err
@@ -92,7 +92,7 @@ func (u *CreateLoadBalancerUseCase) Execute(
 		return nil, err
 	}
 
-	// source × type матрица (§3.3): subnet⟹INTERNAL, public⟹EXTERNAL.
+	// source × type матрица: subnet⟹INTERNAL, public⟹EXTERNAL.
 	if err := validateSourceTypeMatrix(specs, lbType); err != nil {
 		return nil, err
 	}
@@ -124,12 +124,12 @@ func (u *CreateLoadBalancerUseCase) Execute(
 		return nil, mapDomainErr(err)
 	}
 
-	// disabled_announce_zones (§3.4): REGIONAL-only + зоны ∈ регион + не все зоны (geo).
+	// disabled_announce_zones: REGIONAL-only + зоны ∈ регион + не все зоны (geo).
 	if err := u.validateDisabledAnnounceZones(ctx, lb); err != nil {
 		return nil, err
 	}
 
-	// Резолв источников (§3.3): placement подсети/адреса == placement LB;
+	// Резолв источников: placement подсети/адреса == placement LB;
 	// kind/family/ownership link'а; derived network + dualstack same-network.
 	if err := u.resolveSources(ctx, lb, specs); err != nil {
 		return nil, err
@@ -168,7 +168,7 @@ func (u *CreateLoadBalancerUseCase) validateDisabledAnnounceZones(ctx context.Co
 	return checkDisabledAnnounceZones(ctx, u.zoneClient, lb.PlacementType, string(lb.RegionID), lb.DisabledAnnounceZones)
 }
 
-// resolveSources — резолв каждого источника через peer-API (§3.3): placement
+// resolveSources — резолв каждого источника через peer-API: placement
 // подсети/адреса == placement LB; link kind/family/ownership; derived network +
 // dualstack same-network. Заполняет specs[i].networkID (INTERNAL).
 func (u *CreateLoadBalancerUseCase) resolveSources(ctx context.Context, lb domain.LoadBalancer, specs []familyVIPSpec) error {
@@ -530,7 +530,7 @@ func (u *CreateLoadBalancerUseCase) compensateCreate(ctx context.Context, lbID s
 	}
 }
 
-// releaseAddress — release одного Address по origin (§3.9): owned (auto) →
+// releaseAddress — release одного Address по origin: owned (auto) →
 // two-step ClearReference → FreeIP (иначе FreeIP==Delete упрётся в собственный
 // guard); linked → ClearReference без Delete. Идемпотентно.
 func (u *CreateLoadBalancerUseCase) releaseAddress(ctx context.Context, addressID string, origin domain.VipOrigin) error {

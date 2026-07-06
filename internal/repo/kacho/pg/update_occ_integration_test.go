@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: BUSL-1.1
 
 // update_occ_integration_test.go — optimistic-concurrency (xmin) coverage for the
-// mutable-field Update of LoadBalancer / Listener / TargetGroup (5th-audit DATA
-// finding: lost update on concurrent partial-mask Update).
+// mutable-field Update of LoadBalancer / Listener / TargetGroup (guards against
+// lost update on concurrent partial-mask Update).
 //
 // Before the fix writer.Update issued `UPDATE ... WHERE id=$1` and rewrote ALL
 // mutable columns from a stale read-modify-write snapshot, so two concurrent
@@ -241,7 +241,7 @@ func TestTargetGroup_Update_OCC_StaleXminConflict(t *testing.T) {
 // listener xmin CAS (parity with TestLB_Update_OCC_ConcurrentExactlyOneWins): two
 // Updates share one xmin snapshot; exactly one commits, the other is OCC-rejected
 // (never a silent double-success that would lose a field). The xmin CAS SQL is the
-// same shape across resources, but per rule #10/#12 each contested write path
+// same shape across resources, but each contested write path
 // carries its own concurrent-goroutine test so a listener-specific regression
 // (e.g. widening writer.Update into a read-then-write) is caught GREEN→RED here.
 // Errors are collected and asserted on the MAIN goroutine (never require.* inside a
@@ -312,7 +312,7 @@ func TestListener_Update_OCC_ConcurrentExactlyOneWins(t *testing.T) {
 // TestTargetGroup_Update_OCC_ConcurrentExactlyOneWins — real goroutine race for the
 // target-group xmin CAS (parity with TestLB_Update_OCC_ConcurrentExactlyOneWins):
 // two Updates share one xmin snapshot; exactly one commits, the other is
-// OCC-rejected. Rule #10/#12 mandates a per-path concurrent test even though the CAS
+// OCC-rejected. A per-path concurrent test is required even though the CAS
 // SQL is shared — a regression in targetGroupWriter.Update alone must not ship GREEN.
 // Errors are collected and asserted on the MAIN goroutine.
 func TestTargetGroup_Update_OCC_ConcurrentExactlyOneWins(t *testing.T) {

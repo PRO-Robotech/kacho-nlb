@@ -14,7 +14,7 @@ import (
 
 // MapDomainErr — единый sentinel-error→gRPC-status маппер для всех use-case
 // пакетов kacho-nlb (loadbalancer / listener / targetgroup). Раньше был
-// продублирован в трёх местах и успел разойтись (audit ARCH-medium: pass-through
+// продублирован в трёх местах и успел разойтись (pass-through
 // guard без codes.Unknown-проверки в loadbalancer, две несовместимые сигнатуры
 // stripSentinel). Здесь — один источник истины.
 //
