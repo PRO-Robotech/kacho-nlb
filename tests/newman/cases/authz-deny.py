@@ -139,21 +139,46 @@ CASES.append(Case(
     title="NLB.Move: editor on src + viewer on dst → PERMISSION_DENIED (Verifies REQ-AZD-NLB-MV-SCOPE)",
     classes=["AZD"], priority="P0",
     steps=[
+        # Determinism guard (SEC): the whole point of this P0 is that the caller
+        # (editor A) holds `editor` on the SOURCE project but has NO `editor`
+        # grant on the DESTINATION (cross) project. The suite fixture binds
+        # jwtProjectEditorA to existingProjectId only and jwtProjectEditorB to
+        # existingProjectCrossId only (env description), so editor A MUST be
+        # denied a direct Create in the cross project — the same
+        # `editor on project:<cross>` Check that Move.authorizeDestination
+        # performs. Asserting it here makes the deny GUARANTEED, not
+        # lenient-tolerated: if the fixture is ever mis-seeded so editor A gains
+        # editor on cross, this fails LOUDLY instead of the Move silently
+        # succeeding (a cross-tenant bypass). A denied Create writes nothing, so
+        # there is no resource to clean up.
+        Step(name="precond-editorA-denied-on-dst", method="POST", path=_NLB,
+             auth="jwtProjectEditorA",
+             body={"projectId": "{{_suiteProjectCrossId}}", "regionId": "{{_suiteRegionId}}",
+                   "name": "azd-mvpc-{{runId}}", "type": "EXTERNAL", "v4Source": {"public": {}}},
+             test_script=[*assert_status(403), *assert_grpc_code(7, "PERMISSION_DENIED")]),
         Step(name="setup-cr", method="POST", path=_NLB, auth="jwtProjectEditorA",
              body={"projectId": "{{_suiteProjectId}}", "regionId": "{{_suiteRegionId}}",
                    "name": "azd-mv-{{runId}}", "type": "EXTERNAL", "v4Source": {"public": {}}},
              test_script=[*assert_status(200), *save_from_response("j.id", "opId"),
                           *save_from_response("j.metadata && j.metadata.networkLoadBalancerId", "nlbId")]),
         poll_operation_until_done(),
-        # Subject jwtProjectEditorA: editor on src, NOT editor on cross. (Editor B has the other side.)
+        # Subject jwtProjectEditorA: editor on src, NOT editor on cross. (Editor B
+        # has the other side.) authorizeDestination (move.go) MUST deny with a
+        # SYNC PERMISSION_DENIED (403 / grpc 7) referencing the destination
+        # project. STRICT assertion (never 200): a regression that drops the
+        # dst-scope Check would let Execute proceed and return 200 (async
+        # Operation) — that cross-tenant bypass now turns this case RED.
         Step(name="mv-as-src-editor-only", method="POST", path=f"{_NLB}/{{{{nlbId}}}}:move",
              auth="jwtProjectEditorA",
              body={"destinationProjectId": "{{_suiteProjectCrossId}}"},
              test_script=[
-                 "pm.test('rejected (403)', () => "
-                 "  pm.expect(pm.response.code).to.be.oneOf([200, 403]));",
-                 "if (pm.response.code === 403) pm.test('grpc 7', () => "
-                 "  pm.expect(pm.response.json().code).to.eql(7));",
+                 *assert_status(403),
+                 *assert_grpc_code(7, "PERMISSION_DENIED"),
+                 "pm.test('denial references destination project scope', () => {",
+                 "  const m = (pm.response.json().message || '').toLowerCase();",
+                 "  pm.expect(m).to.include('not authorized');",
+                 "  pm.expect(m).to.include((pm.environment.get('_suiteProjectCrossId') || '').toLowerCase());",
+                 "});",
              ]),
         Step(name="cleanup", method="DELETE", path=f"{_NLB}/{{{{nlbId}}}}",
              auth="jwtProjectEditorA",
@@ -172,8 +197,15 @@ CASES.append(Case(
              auth="jwtProjectEditorA",
              body={"targetGroupId": "{{garbageTgrId}}", "priority": 100},
              test_script=[
-                 "pm.test('rejected (403/404)', () => "
-                 "  pm.expect(pm.response.code).to.be.oneOf([200, 403, 404]));",
+                 # STRICT deny (never 200): the caller holds no tuple on the
+                 # referenced LB/TG, so attach MUST be refused. Hide-existence
+                 # maps a denied verb-bearing resource to NotFound (404 / grpc 5);
+                 # an explicit refusal is PermissionDenied (403 / grpc 7). Either
+                 # is acceptable — 200 (attach succeeded) is an authz bypass.
+                 "pm.test('rejected (403/404, never 200)', () => "
+                 "  pm.expect(pm.response.code).to.be.oneOf([403, 404]));",
+                 "pm.test('grpc deny code (5 NotFound or 7 PermissionDenied)', () => "
+                 "  pm.expect(pm.response.json().code).to.be.oneOf([5, 7]));",
              ]),
     ],
 ))
@@ -281,6 +313,19 @@ CASES.append(Case(
     title="TGR.Move with editor on src + viewer on dst → PERMISSION_DENIED",
     classes=["AZD"], priority="P0",
     steps=[
+        # Determinism guard (SEC) — parity with AZD-NLB-MV-SCOPE-DST-DENIED.
+        # editor A is editor on src only; a direct Create in the cross project
+        # (same `editor on project:<cross>` Check that Move.authorizeDestination
+        # runs) MUST be denied, so the Move dst-scope deny is guaranteed and a
+        # mis-seed fails loudly here rather than as a silent 200 on the Move.
+        Step(name="precond-editorA-denied-on-dst", method="POST", path=_TGR,
+             auth="jwtProjectEditorA",
+             body={"projectId": "{{_suiteProjectCrossId}}", "regionId": "{{_suiteRegionId}}",
+                   "name": "azd-tgrmvpc-{{runId}}",
+                   "healthCheck": {"name": "hc", "interval": "2s", "timeout": "1s",
+                                   "unhealthyThreshold": 3, "healthyThreshold": 2,
+                                   "tcp": {"port": 80}}},
+             test_script=[*assert_status(403), *assert_grpc_code(7, "PERMISSION_DENIED")]),
         Step(name="setup-tg", method="POST", path=_TGR, auth="jwtProjectEditorA",
              body={"projectId": "{{_suiteProjectId}}", "regionId": "{{_suiteRegionId}}",
                    "name": "azd-tgrmv-{{runId}}",
@@ -290,12 +335,21 @@ CASES.append(Case(
              test_script=[*assert_status(200), *save_from_response("j.id", "opId"),
                           *save_from_response("j.metadata && j.metadata.targetGroupId", "tgId")]),
         poll_operation_until_done(),
+        # editor on src, NOT on cross → authorizeDestination (targetgroup/move.go)
+        # MUST deny with SYNC PERMISSION_DENIED (403 / grpc 7). STRICT (never
+        # 200): dropping the dst-scope Check would return 200 (async Operation)
+        # and this case turns RED.
         Step(name="mv-no-dst-editor", method="POST", path=f"{_TGR}/{{{{tgId}}}}:move",
              auth="jwtProjectEditorA",
              body={"destinationProjectId": "{{_suiteProjectCrossId}}"},
              test_script=[
-                 "pm.test('rejected (403)', () => "
-                 "  pm.expect(pm.response.code).to.be.oneOf([200, 403]));",
+                 *assert_status(403),
+                 *assert_grpc_code(7, "PERMISSION_DENIED"),
+                 "pm.test('denial references destination project scope', () => {",
+                 "  const m = (pm.response.json().message || '').toLowerCase();",
+                 "  pm.expect(m).to.include('not authorized');",
+                 "  pm.expect(m).to.include((pm.environment.get('_suiteProjectCrossId') || '').toLowerCase());",
+                 "});",
              ]),
         Step(name="cleanup", method="DELETE", path=f"{_TGR}/{{{{tgId}}}}",
              auth="jwtProjectEditorA",
