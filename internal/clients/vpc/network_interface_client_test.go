@@ -112,3 +112,47 @@ func TestNetworkInterfaceClient_Get_EmptyID(t *testing.T) {
 }
 
 func TestNetworkInterfaceClient_NilConn(t *testing.T) { assert.Nil(t, NewNetworkInterfaceClient(nil)) }
+
+// blockingNICService — fake NetworkInterfaceServiceServer that never returns
+// from Get until explicitly released (simulates a hung/stalled kacho-vpc peer).
+type blockingNICService struct {
+	vpcpb.UnimplementedNetworkInterfaceServiceServer
+	release chan struct{}
+}
+
+func (f *blockingNICService) Get(
+	_ context.Context, _ *vpcpb.GetNetworkInterfaceRequest,
+) (*vpcpb.NetworkInterface, error) {
+	<-f.release
+	return &vpcpb.NetworkInterface{Id: "e9b-nic-1"}, nil
+}
+
+// TestNetworkInterfaceClient_Get_HangingPeer_BoundsToConfiguredTimeout —
+// regression for the missing per-call deadline (round-6 audit finding 2,
+// sibling client): a stalled kacho-vpc peer must not park the calling
+// goroutine forever. Get is called with a deadline-less caller ctx
+// (context.Background()) — the client itself must bound the call to ~its
+// configured per-call timeout and fail closed (DeadlineExceeded ->
+// domain.ErrUnavailable), not hang.
+func TestNetworkInterfaceClient_Get_HangingPeer_BoundsToConfiguredTimeout(t *testing.T) {
+	fake := &blockingNICService{release: make(chan struct{})}
+	conn := startFakeVPC(t, nil, fake, nil, nil, nil)
+
+	const configuredTimeout = 100 * time.Millisecond
+	c := NewNetworkInterfaceClientWithTimeout(conn, configuredTimeout)
+
+	start := time.Now()
+	_, err := c.Get(context.Background(), "e9b-nic-1")
+	elapsed := time.Since(start)
+	// Release the still-in-flight fake handler goroutine synchronously (NOT
+	// via t.Cleanup: startFakeVPC's own GracefulStop cleanup runs LIFO and
+	// would deadlock waiting on this still-blocked handler otherwise).
+	close(fake.release)
+
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, domain.ErrUnavailable),
+		"expected fail-closed domain.ErrUnavailable on peer hang; got %v", err)
+	assert.Less(t, elapsed, 2*time.Second,
+		"Get must bound to the configured per-call timeout (~%s), not hang on an unresponsive peer; took %s",
+		configuredTimeout, elapsed)
+}

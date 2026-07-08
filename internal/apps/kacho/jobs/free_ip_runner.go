@@ -186,6 +186,19 @@ type stuckLB struct {
 // LOCKED держит row-lock на время release (network) → ровно одна реплика
 // освобождает VIP и удаляет handle. release-ошибка (vpc Unavailable) → rollback,
 // строка остаётся → retry на следующем тике (идемпотентно).
+//
+// Row-lock hold window (round-6 audit finding 1): releaseFamily вызывает
+// ClearReference/FreeIP (до 4 outbound vpc-звонков — v4+v6, каждый up to
+// two-step ClearReference→FreeIP) НА raw process-lifetime ctx этого reconciler'а
+// (без deadline). Каждый из этих клиентских методов теперь несёт свой
+// собственный context.WithTimeout(DefaultInternalAddressCallTimeout) внутри
+// (vpc.internalAddressClient.withCallTimeout) — зависший (не отвечающий) vpc-
+// peer больше не парковал бы эту горутину (и tx + row-lock) навсегда: худший
+// случай — row-lock держится ~4×DefaultInternalAddressCallTimeout, затем
+// releaseFamily возвращает DeadlineExceeded→domain.ErrUnavailable, tx
+// rollback'ится, строка остаётся на retry следующим тиком. Полный вынос
+// release-вызовов за границы транзакции — отдельный (более рискованный)
+// рефактор, не предпринят без детерминированного теста на его race-профиль.
 func (r *FreeIPRunner) reconcileOne(ctx context.Context) (bool, error) {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {

@@ -6,6 +6,7 @@ package vpc
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -17,6 +18,11 @@ import (
 
 	"github.com/PRO-Robotech/kacho-nlb/internal/domain"
 )
+
+// DefaultSubnetGetTimeout — per-call deadline применяемый к SubnetService.Get,
+// когда client построен без явного timeout'а (round-6 audit sweep, см.
+// vpc.DefaultAddressGetTimeout для rationale).
+const DefaultSubnetGetTimeout = 5 * time.Second
 
 // Subnet — projection ресурса kacho-vpc.Subnet, ограниченная полями
 // необходимыми consumer'ам NLB (Listener.subnet_id / Target.ip_ref validation).
@@ -53,23 +59,44 @@ type SubnetClient interface {
 
 // subnetClient — реализация SubnetClient через gRPC.
 type subnetClient struct {
-	cli vpcpb.SubnetServiceClient
+	cli     vpcpb.SubnetServiceClient
+	timeout time.Duration
 }
 
 // NewSubnetClient оборачивает grpc-conn в typed adapter. conn — `clients.Build`.
+// Per-call timeout — DefaultSubnetGetTimeout.
 func NewSubnetClient(conn grpc.ClientConnInterface) SubnetClient {
+	return NewSubnetClientWithTimeout(conn, DefaultSubnetGetTimeout)
+}
+
+// NewSubnetClientWithTimeout — как NewSubnetClient, но с явным per-call
+// timeout'ом. timeout<=0 → DefaultSubnetGetTimeout.
+func NewSubnetClientWithTimeout(conn grpc.ClientConnInterface, timeout time.Duration) SubnetClient {
 	if conn == nil {
 		return nil
 	}
-	return &subnetClient{cli: vpcpb.NewSubnetServiceClient(conn)}
+	return &subnetClient{cli: vpcpb.NewSubnetServiceClient(conn), timeout: resolveSubnetTimeout(timeout)}
 }
 
 // NewSubnetClientFromStub — конструктор для тестов: принимает stub.
 func NewSubnetClientFromStub(cli vpcpb.SubnetServiceClient) SubnetClient {
+	return NewSubnetClientFromStubWithTimeout(cli, DefaultSubnetGetTimeout)
+}
+
+// NewSubnetClientFromStubWithTimeout — как NewSubnetClientFromStub, но с
+// явным per-call timeout'ом (используется тестами concurrency/timeout-фиксов).
+func NewSubnetClientFromStubWithTimeout(cli vpcpb.SubnetServiceClient, timeout time.Duration) SubnetClient {
 	if cli == nil {
 		return nil
 	}
-	return &subnetClient{cli: cli}
+	return &subnetClient{cli: cli, timeout: resolveSubnetTimeout(timeout)}
+}
+
+func resolveSubnetTimeout(d time.Duration) time.Duration {
+	if d <= 0 {
+		return DefaultSubnetGetTimeout
+	}
+	return d
 }
 
 // Get — см. контракт SubnetClient.Get.
@@ -79,6 +106,12 @@ func (c *subnetClient) Get(ctx context.Context, subnetID string) (*Subnet, error
 	}
 
 	ctx = auth.PropagateOutgoing(ctx)
+
+	// Per-call deadline — bounds the ENTIRE retry.OnUnavailable operation,
+	// independent of the caller's own ctx (architecture.md "Per-call deadline
+	// на КАЖДОМ внешнем вызове").
+	ctx, cancel := context.WithTimeout(ctx, c.timeout)
+	defer cancel()
 
 	var resp *vpcpb.Subnet
 	if err := retry.OnUnavailable(ctx, func(ctx context.Context) error {

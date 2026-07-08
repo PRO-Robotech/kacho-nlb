@@ -593,3 +593,168 @@ func TestInternalAddressClient_FreeIP_Unavailable(t *testing.T) {
 		t.Fatalf("expected ErrUnavailable or DeadlineExceeded; got %v", err)
 	}
 }
+
+// --- round-6 audit finding 2 sweep: hanging-peer regression tests ---
+//
+// The internal address client wires EVERY outbound call (SetAddressReference,
+// ClearAddressReference, AddressService.Create/Delete/Get, Operation.Get) through
+// c.withCallTimeout — a stalled kacho-vpc peer must fail closed within the
+// configured per-call timeout, not park the calling goroutine (and, for
+// free_ip_runner's reconcileOne, the FOR UPDATE SKIP LOCKED row-lock + tx)
+// forever. Each test below drives one call site with a blocking fake.
+
+// blockingInternalAddressService — fake InternalAddressServiceServer whose
+// SetAddressReference/ClearAddressReference never return until released
+// (simulates a hung/stalled kacho-vpc peer).
+type blockingInternalAddressService struct {
+	vpcpb.UnimplementedInternalAddressServiceServer
+	release chan struct{}
+}
+
+func (f *blockingInternalAddressService) SetAddressReference(
+	_ context.Context, _ *vpcpb.SetAddressReferenceRequest,
+) (*vpcpb.AddressReference, error) {
+	<-f.release
+	return &vpcpb.AddressReference{}, nil
+}
+
+func (f *blockingInternalAddressService) ClearAddressReference(
+	_ context.Context, _ *vpcpb.ClearAddressReferenceRequest,
+) (*vpcpb.ClearAddressReferenceResponse, error) {
+	<-f.release
+	return &vpcpb.ClearAddressReferenceResponse{}, nil
+}
+
+func TestInternalAddressClient_SetReference_HangingPeer_BoundsToConfiguredTimeout(t *testing.T) {
+	fake := &blockingInternalAddressService{release: make(chan struct{})}
+	conn := startFakeVPC(t, nil, nil, &fakeAddressForAlloc{}, fake, &fakeOperationService{})
+
+	const configuredTimeout = 100 * time.Millisecond
+	c := NewInternalAddressClientWithTimeout(conn, conn, configuredTimeout)
+
+	start := time.Now()
+	err := c.SetReference(context.Background(), "e9b-ip-1", AddressOwner{Kind: "nlb_listener", ID: "lst-1"}, true)
+	elapsed := time.Since(start)
+	// Release the still-in-flight fake handler goroutine synchronously (NOT
+	// via t.Cleanup: startFakeVPC's own GracefulStop cleanup runs LIFO and
+	// would deadlock waiting on this still-blocked handler otherwise).
+	close(fake.release)
+
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, domain.ErrUnavailable),
+		"expected fail-closed domain.ErrUnavailable on peer hang; got %v", err)
+	assert.Less(t, elapsed, 2*time.Second,
+		"SetReference must bound to the configured per-call timeout (~%s), not hang; took %s",
+		configuredTimeout, elapsed)
+}
+
+func TestInternalAddressClient_ClearReference_HangingPeer_BoundsToConfiguredTimeout(t *testing.T) {
+	fake := &blockingInternalAddressService{release: make(chan struct{})}
+	conn := startFakeVPC(t, nil, nil, &fakeAddressForAlloc{}, fake, &fakeOperationService{})
+
+	const configuredTimeout = 100 * time.Millisecond
+	c := NewInternalAddressClientWithTimeout(conn, conn, configuredTimeout)
+
+	start := time.Now()
+	err := c.ClearReference(context.Background(), "e9b-ip-1")
+	elapsed := time.Since(start)
+	close(fake.release)
+
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, domain.ErrUnavailable),
+		"expected fail-closed domain.ErrUnavailable on peer hang; got %v", err)
+	assert.Less(t, elapsed, 2*time.Second,
+		"ClearReference must bound to the configured per-call timeout (~%s), not hang; took %s",
+		configuredTimeout, elapsed)
+}
+
+// blockingAddressForAlloc — fake AddressServiceServer whose Delete/Create
+// never return until released (simulates a hung/stalled kacho-vpc peer).
+type blockingAddressForAlloc struct {
+	vpcpb.UnimplementedAddressServiceServer
+	release chan struct{}
+}
+
+func (f *blockingAddressForAlloc) Delete(
+	_ context.Context, _ *vpcpb.DeleteAddressRequest,
+) (*operationpb.Operation, error) {
+	<-f.release
+	return &operationpb.Operation{Id: "op-del-1", Done: true, Result: &operationpb.Operation_Response{}}, nil
+}
+
+func (f *blockingAddressForAlloc) Create(
+	_ context.Context, _ *vpcpb.CreateAddressRequest,
+) (*operationpb.Operation, error) {
+	<-f.release
+	return &operationpb.Operation{Id: "op-create-1", Done: false}, nil
+}
+
+// TestInternalAddressClient_FreeIP_HangingPeer_BoundsToConfiguredTimeout —
+// regression for round-6 audit finding 1 (free_ip_runner holds a row-lock+tx
+// across exactly this call) + finding 2 (missing per-call deadline). A
+// stalled kacho-vpc peer on AddressService.Delete must not park the calling
+// goroutine (and, in free_ip_runner, the row-lock) forever.
+func TestInternalAddressClient_FreeIP_HangingPeer_BoundsToConfiguredTimeout(t *testing.T) {
+	fake := &blockingAddressForAlloc{release: make(chan struct{})}
+	conn := startFakeVPC(t, nil, nil, fake, &fakeInternalAddressService{}, &fakeOperationService{})
+
+	const configuredTimeout = 100 * time.Millisecond
+	c := NewInternalAddressClientWithTimeout(conn, conn, configuredTimeout)
+
+	start := time.Now()
+	err := c.FreeIP(context.Background(), "e9b-ip-1")
+	elapsed := time.Since(start)
+	close(fake.release)
+
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, domain.ErrUnavailable),
+		"expected fail-closed domain.ErrUnavailable on peer hang; got %v", err)
+	assert.Less(t, elapsed, 2*time.Second,
+		"FreeIP must bound to the configured per-call timeout (~%s), not hang; took %s",
+		configuredTimeout, elapsed)
+}
+
+// blockingOperationService — fake OperationServiceServer whose Get never
+// returns until released (simulates a hung/stalled kacho-vpc peer mid-poll).
+type blockingOperationService struct {
+	operationpb.UnimplementedOperationServiceServer
+	release chan struct{}
+}
+
+func (f *blockingOperationService) Get(
+	_ context.Context, _ *operationpb.GetOperationRequest,
+) (*operationpb.Operation, error) {
+	<-f.release
+	return &operationpb.Operation{Done: true}, nil
+}
+
+// TestInternalAddressClient_AllocateExternalIP_HangingPollPeer_BoundsToConfiguredTimeout —
+// regression for round-6 audit finding 2: waitOperation's per-iteration
+// Operation.Get must be bounded too (not just the initial Create), otherwise a
+// peer that stalls mid-poll (after acking Create with done=false) parks the
+// calling goroutine forever despite the client having "started" the call
+// with a per-call timeout on Create.
+func TestInternalAddressClient_AllocateExternalIP_HangingPollPeer_BoundsToConfiguredTimeout(t *testing.T) {
+	addrSvc := &fakeAddressForAllocPolling{}
+	opSvc := &blockingOperationService{release: make(chan struct{})}
+	conn := startFakeVPC(t, nil, nil, addrSvc, &fakeInternalAddressService{}, opSvc)
+
+	const configuredTimeout = 100 * time.Millisecond
+	c := NewInternalAddressClientWithTimeout(conn, conn, configuredTimeout)
+
+	start := time.Now()
+	_, err := c.AllocateExternalIP(context.Background(), AllocateExternalIPRequest{
+		ProjectID: "prj-1", ZoneID: "z", Owner: AddressOwner{Kind: "nlb_listener", ID: "lst-1"},
+	})
+	elapsed := time.Since(start)
+	close(opSvc.release)
+
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, domain.ErrUnavailable),
+		"expected fail-closed domain.ErrUnavailable on peer hang; got %v", err)
+	// vpcOpPollInterval (50ms) ticks + one bounded 100ms Get call; generous
+	// bound accounts for a few poll iterations before the deadline trips.
+	assert.Less(t, elapsed, 3*time.Second,
+		"AllocateExternalIP must bound the poll-loop's Get calls to the configured "+
+			"per-call timeout (~%s), not hang; took %s", configuredTimeout, elapsed)
+}

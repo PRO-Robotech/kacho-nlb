@@ -120,3 +120,45 @@ func TestProjectClient_NilConn(t *testing.T) {
 // (для конструктора FromStub). Используется в тестах sync-валидации без
 // раскручивания gRPC-server'а.
 type fakeProjectServiceStub struct{ iampb.ProjectServiceClient }
+
+// blockingProjectService — fake ProjectServiceServer that never returns from
+// Get until explicitly released (simulates a hung/stalled kacho-iam peer).
+type blockingProjectService struct {
+	iampb.UnimplementedProjectServiceServer
+	release chan struct{}
+}
+
+func (f *blockingProjectService) Get(_ context.Context, _ *iampb.GetProjectRequest) (*iampb.Project, error) {
+	<-f.release
+	return &iampb.Project{Id: "prj-abc"}, nil
+}
+
+// TestProjectClient_Get_HangingPeer_BoundsToConfiguredTimeout — regression for
+// the missing per-call deadline (round-6 audit finding 2, sibling client
+// check_client.go DefaultCheckTimeout): a stalled kacho-iam peer must not park
+// the calling goroutine forever. Get is called with a deadline-less caller
+// ctx (context.Background()) — the client itself must bound the call to ~its
+// configured per-call timeout and fail closed (DeadlineExceeded ->
+// domain.ErrUnavailable), not hang.
+func TestProjectClient_Get_HangingPeer_BoundsToConfiguredTimeout(t *testing.T) {
+	fake := &blockingProjectService{release: make(chan struct{})}
+	conn := startFakeIAM(t, fake, nil)
+
+	const configuredTimeout = 100 * time.Millisecond
+	c := NewProjectClientWithTimeout(conn, configuredTimeout)
+
+	start := time.Now()
+	_, err := c.Get(context.Background(), "prj-abc")
+	elapsed := time.Since(start)
+	// Release the still-in-flight fake handler goroutine synchronously (NOT
+	// via t.Cleanup: startFakeIAM's own GracefulStop cleanup runs LIFO and
+	// would deadlock waiting on this still-blocked handler otherwise).
+	close(fake.release)
+
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, domain.ErrUnavailable),
+		"expected fail-closed domain.ErrUnavailable on peer hang; got %v", err)
+	assert.Less(t, elapsed, 2*time.Second,
+		"Get must bound to the configured per-call timeout (~%s), not hang on an unresponsive peer; took %s",
+		configuredTimeout, elapsed)
+}
