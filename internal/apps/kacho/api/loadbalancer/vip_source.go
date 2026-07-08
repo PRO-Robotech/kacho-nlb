@@ -35,14 +35,6 @@ type familyVIPSpec struct {
 	networkID string
 }
 
-// origin — release-дискриминатор источника (auto owned / linked).
-func (fs familyVIPSpec) origin() domain.VipOrigin {
-	if fs.kind == srcAddressLink {
-		return domain.VipOriginLinked
-	}
-	return domain.VipOriginAuto
-}
-
 // resolvePlacement — placement_type ↔ type coupling. INTERNAL требует явный
 // ZONAL|REGIONAL; EXTERNAL запрещает placement.
 func resolvePlacement(lbType domain.LBType, pb lbv1.NetworkLoadBalancer_PlacementType) (domain.PlacementType, error) {

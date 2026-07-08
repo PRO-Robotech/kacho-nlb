@@ -23,12 +23,6 @@ func mapDomainErr(err error) error {
 	return shared.MapDomainErr(err)
 }
 
-// stripSentinel убирает sentinel-prefix `<text>: ` из ошибки. Тонкий wrapper над
-// `shared.StripSentinel` (сохранён для внутренних вызовов/тестов).
-func stripSentinel(err error, fallback string) string {
-	return shared.StripSentinel(err, fallback)
-}
-
 // peerErrToStatus — тонкий делегатор к единому `shared.PeerErrToStatus`
 // (project/region precheck + per-target peer-validate).
 func peerErrToStatus(err error, kind, id string) error {
