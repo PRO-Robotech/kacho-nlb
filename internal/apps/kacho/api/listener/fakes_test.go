@@ -858,24 +858,6 @@ func (c *fakeInternalAddressClient) AttachExisting(_ context.Context, req vpccli
 	return &vpcclient.AllocateResponse{AddressID: req.AddressID, Value: c.nextAllocValue}, nil
 }
 
-// fakeSubnetClient — minimal SubnetClient stub (not exercised in current
-// tests — Listener.Create defers to vpc.InternalAddressService.AllocateInternalIP
-// which itself proxies subnet_id; UseCase не зовёт subnets.Get напрямую).
-type fakeSubnetClient struct {
-	byID map[string]*vpcclient.Subnet
-}
-
-func newFakeSubnetClient() *fakeSubnetClient {
-	return &fakeSubnetClient{byID: map[string]*vpcclient.Subnet{}}
-}
-func (c *fakeSubnetClient) Get(_ context.Context, id string) (*vpcclient.Subnet, error) {
-	if s, ok := c.byID[id]; ok {
-		c := *s
-		return &c, nil
-	}
-	return nil, fmt.Errorf("%w: Subnet %s not found", domain.ErrInvalidArg, id)
-}
-
 // fakeFGARegisterOutbox records FGARegisterOutbox.Emit into the writer's
 // pending buffer (flushed to fakeRepo.fga on Commit, dropped on Abort).
 type fakeFGARegisterOutbox struct{ w *fakeWriter }
