@@ -410,18 +410,40 @@ func (w *loadBalancerWriter) SetStatusCAS(ctx context.Context, id string, expect
 // MarkDeleting — atomic guarded transition в status=DELETING (первый шаг
 // Delete-саги ДО release VIP). Guard'ы на DB-уровне:
 //
+//	SELECT 1 FROM load_balancers WHERE id=$1 FOR NO KEY UPDATE   -- lock-acquire
 //	UPDATE ... SET status='DELETING'
 //	 WHERE id=$1 AND deletion_protection=false
 //	   AND NOT EXISTS(listeners) AND NOT EXISTS(attached_target_groups)
 //	RETURNING ...
 //
-// Single-statement UPDATE берёт row-lock на LB → сериализуется с child-INSERT'ами
-// (Listener.Insert / Attach держат FOR NO KEY UPDATE OF lb и отвергают
-// DELETING-родителя): либо mark успевает первым и child-INSERT видит DELETING → 0
-// rows, либо child закоммитился первым и NOT EXISTS ловит его → 0 rows у mark.
-// Идемпотентно (уже DELETING, unprotected, без детей → re-mark). 0 rows:
-// disambig (LB нет → NotFound; защищён/есть дети → FailedPrecondition).
+// Два стейтмента, НЕ один. Row-lock (FOR NO KEY UPDATE на LB) сериализуется с
+// child-INSERT'ами (Listener.Insert / Attach держат FOR NO KEY UPDATE OF lb и
+// отвергают DELETING-родителя), но одного row-lock'а НЕДОСТАТОЧНО, если guard —
+// cross-table NOT EXISTS(children): single-statement UPDATE вычисляет подзапрос по
+// СВОЕМУ start-снапшоту; при разблокировке row-lock'а EvalPlanQual (READ COMMITTED)
+// пере-проверяет только целевую LB-строку, но НЕ пере-исполняет cross-table
+// подзапрос против свежего снапшота → mark не видит только что закоммиченного
+// child'а → mark и child-INSERT коммитятся ОБА (TOCTOU, реальный инцидент). Поэтому
+// сначала явный lock-acquire (блокируется до commit'а любого in-flight child-INSERT
+// на этой LB), затем guarded UPDATE ОТДЕЛЬНЫМ стейтментом — тот берёт свежий
+// READ COMMITTED снапшот, уже видящий закоммиченного child'а → NOT EXISTS ловит его
+// → 0 rows. Симметрично: если mark успел первым, его commit ставит DELETING, и
+// child-INSERT ловит `status <> DELETING` через EvalPlanQual целевой строки.
+// Идемпотентно (уже DELETING, unprotected, без детей → re-mark). 0 rows от UPDATE:
+// disambig (защищён/есть дети → FailedPrecondition); LB нет → NotFound (lock-acquire).
 func (w *loadBalancerWriter) MarkDeleting(ctx context.Context, id string) (*kacho.LoadBalancerRecord, error) {
+	// Lock-acquire: берём row-lock на LB, блокируясь до commit'а любого конкурентного
+	// child-INSERT'а (тот держит FOR NO KEY UPDATE OF lb). После разблокировки
+	// следующий стейтмент возьмёт свежий снапшот, видящий закоммиченного child'а.
+	var locked bool
+	if err := w.tx.QueryRow(ctx,
+		`SELECT true FROM kacho_nlb.load_balancers WHERE id = $1 FOR NO KEY UPDATE`, id,
+	).Scan(&locked); err != nil {
+		if pgxIsNoRows(err) {
+			return nil, fmt.Errorf("%w: NetworkLoadBalancer %s not found", kacho.ErrNotFound, id)
+		}
+		return nil, mapPgErr(err, "NetworkLoadBalancer", id)
+	}
 	q := fmt.Sprintf(`
         UPDATE kacho_nlb.load_balancers
            SET status = $2, updated_at = now()
