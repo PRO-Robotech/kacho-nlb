@@ -88,6 +88,48 @@ func TestRegionClient_Get_Unavailable(t *testing.T) {
 	}
 }
 
+// blockingRegionService — fake RegionServiceServer that never returns from
+// Get until explicitly released (simulates a hung/stalled kacho-geo peer).
+type blockingRegionService struct {
+	geopb.UnimplementedRegionServiceServer
+	release chan struct{}
+}
+
+func (f *blockingRegionService) Get(_ context.Context, _ *geopb.GetRegionRequest) (*geopb.Region, error) {
+	<-f.release
+	return &geopb.Region{Id: "ru-central1"}, nil
+}
+
+// TestRegionClient_Get_HangingPeer_BoundsToConfiguredTimeout — regression for
+// the missing per-call deadline (round-5 audit finding 1, sibling client): a
+// stalled kacho-geo peer must not park the calling goroutine forever. Get is
+// called with a deadline-less caller ctx (context.Background()) — the client
+// itself must bound the call to ~its configured per-call timeout and fail
+// closed (DeadlineExceeded -> domain.ErrUnavailable), not hang.
+func TestRegionClient_Get_HangingPeer_BoundsToConfiguredTimeout(t *testing.T) {
+	fake := &blockingRegionService{release: make(chan struct{})}
+	conn := startFakeGeo(t, fake)
+
+	const configuredTimeout = 100 * time.Millisecond
+	c := NewRegionClientWithTimeout(conn, configuredTimeout)
+
+	start := time.Now()
+	_, err := c.Get(context.Background(), "ru-central1")
+	elapsed := time.Since(start)
+	// Release the still-in-flight fake handler goroutine synchronously (see
+	// iam.TestCheckClient_HangingPeer_BoundsToConfiguredTimeout for why this
+	// must NOT be a t.Cleanup: startFakeGeo's own GracefulStop cleanup would
+	// run first (LIFO) and deadlock waiting on this still-blocked handler).
+	close(fake.release)
+
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, domain.ErrUnavailable),
+		"expected fail-closed domain.ErrUnavailable on peer hang; got %v", err)
+	assert.Less(t, elapsed, 2*time.Second,
+		"Get must bound to the configured per-call timeout (~%s), not hang on an unresponsive peer; took %s",
+		configuredTimeout, elapsed)
+}
+
 func TestRegionClient_Get_EmptyID(t *testing.T) {
 	c := NewRegionClient(startFakeGeo(t, &fakeRegionService{}))
 	_, err := c.Get(ctxBackground(), "")
