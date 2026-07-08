@@ -199,27 +199,3 @@ func (s TargetHealthStatus) Validate() error {
 		AddFieldViolation("status", "invalid Target health status").
 		Err()
 }
-
-// ---- HealthCheckProto ------------------------------------------------------
-// (тип probe внутри HealthCheck — 4-way oneof; конкретные option-структуры —
-// в health_check.go.)
-
-type HealthCheckProto string
-
-const (
-	HealthCheckProtoTCP   HealthCheckProto = "TCP"
-	HealthCheckProtoHTTP  HealthCheckProto = "HTTP"
-	HealthCheckProtoHTTPS HealthCheckProto = "HTTPS"
-	HealthCheckProtoGRPC  HealthCheckProto = "GRPC"
-)
-
-func (p HealthCheckProto) Validate() error {
-	switch p {
-	case HealthCheckProtoTCP, HealthCheckProtoHTTP, HealthCheckProtoHTTPS, HealthCheckProtoGRPC:
-		return nil
-	}
-	return coreerrors.InvalidArgument().
-		AddFieldViolation("health_check",
-			"health_check protocol must be one of: TCP, HTTP, HTTPS, GRPC").
-		Err()
-}

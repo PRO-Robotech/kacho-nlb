@@ -110,19 +110,3 @@ func TestTargetHealthStatus_Validate(t *testing.T) {
 		t.Error("unknown: expected error")
 	}
 }
-
-func TestHealthCheckProto_Validate(t *testing.T) {
-	t.Parallel()
-	good := []domain.HealthCheckProto{
-		domain.HealthCheckProtoTCP, domain.HealthCheckProtoHTTP,
-		domain.HealthCheckProtoHTTPS, domain.HealthCheckProtoGRPC,
-	}
-	for _, p := range good {
-		if err := p.Validate(); err != nil {
-			t.Errorf("%q: %v", p, err)
-		}
-	}
-	if err := domain.HealthCheckProto("UDP").Validate(); err == nil {
-		t.Error("UDP-as-healthcheck: expected error")
-	}
-}

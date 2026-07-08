@@ -107,30 +107,6 @@ func NewTargetGroup(
 	}
 }
 
-// NewDefaultHealthCheck — HC c safe-defaults для проб TCP/HTTP/HTTPS/GRPC.
-// Caller передаёт probe-pointer уже сконструированным (TCP/HTTP/...).
-// Defaults: Interval=2s, Timeout=1s, UnhealthyThreshold=2, HealthyThreshold=2.
-func NewDefaultHealthCheck(name LbName, proto HealthCheckProto, port LbPort) HealthCheck {
-	hc := HealthCheck{
-		Name:               name,
-		Interval:           DefaultHealthInterval,
-		Timeout:            DefaultHealthTimeout,
-		UnhealthyThreshold: DefaultUnhealthyThreshold,
-		HealthyThreshold:   DefaultHealthyThreshold,
-	}
-	switch proto {
-	case HealthCheckProtoTCP:
-		hc.TCP = &HealthCheckTCP{Port: port}
-	case HealthCheckProtoHTTP:
-		hc.HTTP = &HealthCheckHTTP{Port: port}
-	case HealthCheckProtoHTTPS:
-		hc.HTTPS = &HealthCheckHTTPS{Port: port}
-	case HealthCheckProtoGRPC:
-		hc.GRPC = &HealthCheckGRPC{Port: port}
-	}
-	return hc
-}
-
 // TruncateID возвращает первые ShortIDLen символов id (или весь, если короче).
 // Используется builder'ами derived-имён (`default-tg-<short>` и т.п.). Зеркалит
 // kacho-vpc/internal/domain.TruncateID.
