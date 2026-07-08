@@ -7,6 +7,9 @@ import (
 	"context"
 	"time"
 
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
 	lbv1 "github.com/PRO-Robotech/kacho-proto/gen/go/kacho/cloud/loadbalancer/v1"
 
 	"github.com/PRO-Robotech/kacho-nlb/internal/domain"
@@ -24,13 +27,17 @@ import (
 //
 // Возвращает TargetState: subnet_id / address / status / zone_shifted.
 type GetTargetStatesUseCase struct {
-	repo Repo
-	now  func() time.Time
+	repo        Repo
+	checkClient CheckClient
+	now         func() time.Time
 }
 
-// NewGetTargetStatesUseCase — конструктор. `now` для тестов (можно подменить).
-func NewGetTargetStatesUseCase(repo Repo) *GetTargetStatesUseCase {
-	return &GetTargetStatesUseCase{repo: repo, now: time.Now}
+// NewGetTargetStatesUseCase — конструктор. checkClient авторизует caller'а на
+// caller-supplied target_group_id (`viewer on lb_target_group:<tg>`); nil →
+// TG-authz пропускается (dev/unwired; breakglass также обходит source-check
+// interceptor'а). `now` для тестов (можно подменить).
+func NewGetTargetStatesUseCase(repo Repo, checkClient CheckClient) *GetTargetStatesUseCase {
+	return &GetTargetStatesUseCase{repo: repo, checkClient: checkClient, now: time.Now}
 }
 
 // Execute — sync read LB + TG (with health_check) + targets → compute per-target
@@ -67,6 +74,25 @@ func (u *GetTargetStatesUseCase) Execute(
 	if err != nil {
 		return nil, mapDomainErr(err)
 	}
+
+	// Object-scoped authz (CWE-863/639, round-7 audit BOLA finding): the
+	// per-RPC interceptor's StaticExtractor gates only the LB object
+	// (network_load_balancer_id) — without the checks below, a caller
+	// authorized on their own LB could read ANY caller-supplied TG's targets
+	// (instance/NIC ids, addresses, subnet ids), including a TG belonging to
+	// another project. Same-project is an unconditional invariant (checked
+	// even with checkClient nil); the FGA viewer-Check additionally covers
+	// narrowly-scoped custom grants within the same project. Mirrors
+	// AttachTargetGroup's guard (attach_target_group.go / tg_authz.go).
+	if string(lb.ProjectID) != string(tg.ProjectID) {
+		return nil, status.Errorf(codes.FailedPrecondition,
+			"project mismatch: NetworkLoadBalancer is in project %s, TargetGroup is in project %s",
+			lb.ProjectID, tg.ProjectID)
+	}
+	if err := checkTargetGroupViewer(ctx, u.checkClient, tgID); err != nil {
+		return nil, err
+	}
+
 	targets, err := rd.TargetGroups().ListTargets(ctx, tgID)
 	if err != nil {
 		return nil, mapDomainErr(err)

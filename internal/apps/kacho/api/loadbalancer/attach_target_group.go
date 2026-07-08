@@ -5,7 +5,6 @@ package loadbalancer
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 
@@ -13,12 +12,10 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/anypb"
 
-	"github.com/PRO-Robotech/kacho-corelib/authz"
 	"github.com/PRO-Robotech/kacho-corelib/ids"
 	"github.com/PRO-Robotech/kacho-corelib/operations"
 	lbv1 "github.com/PRO-Robotech/kacho-proto/gen/go/kacho/cloud/loadbalancer/v1"
 
-	"github.com/PRO-Robotech/kacho-nlb/internal/domain"
 	kachorepo "github.com/PRO-Robotech/kacho-nlb/internal/repo/kacho"
 )
 
@@ -107,8 +104,9 @@ func (u *AttachTargetGroupUseCase) Execute(
 	// Target-group authorization (CWE-863): interceptor gated
 	// the LB only; the caller must ALSO hold `viewer` on the TG object it is
 	// wiring in, else a narrow custom v_update grant on the LB could attach a TG
-	// the caller has no authorization over.
-	if err := u.authorizeTargetGroup(ctx, tgID); err != nil {
+	// the caller has no authorization over. Shared with GetTargetStates — see
+	// tg_authz.go.
+	if err := checkTargetGroupViewer(ctx, u.checkClient, tgID); err != nil {
 		return nil, err
 	}
 
@@ -133,46 +131,6 @@ func (u *AttachTargetGroupUseCase) Execute(
 		return u.doAttach(workerCtx, lbID, tgID, projectID)
 	})
 	return &op, nil
-}
-
-// authorizeTargetGroup авторизует caller'а на TG object (`viewer on
-// lb_target_group:<tg>`). nil checkClient или system/empty subject
-// (breakglass/dev — source-check тоже обойдён interceptor'ом) → пропуск.
-func (u *AttachTargetGroupUseCase) authorizeTargetGroup(ctx context.Context, tgID string) error {
-	if u.checkClient == nil {
-		return nil
-	}
-	p := operations.PrincipalFromContext(ctx)
-	subject := domain.FGASubjectFromPrincipal(p.Type, p.ID)
-	if subject == "" {
-		return nil
-	}
-	allowed, err := u.checkClient.Check(ctx, subject, domain.FGARelationViewer,
-		domain.FGAObjectRef(domain.FGAObjectTypeTargetGroup, tgID))
-	if err != nil {
-		return attachTGCheckErr(err, tgID)
-	}
-	if !allowed {
-		return status.Errorf(codes.PermissionDenied,
-			"caller is not authorized (viewer) on target group %s", tgID)
-	}
-	return nil
-}
-
-// attachTGCheckErr маппит ошибку TG-authz Check'а в gRPC-status (fail-closed).
-// no-path → PermissionDenied; iam недоступен → Unavailable; bad args →
-// InvalidArgument; прочее → Internal.
-func attachTGCheckErr(err error, tgID string) error {
-	switch {
-	case errors.Is(err, authz.ErrNoPath):
-		return status.Errorf(codes.PermissionDenied,
-			"caller is not authorized (viewer) on target group %s", tgID)
-	case errors.Is(err, domain.ErrUnavailable):
-		return status.Error(codes.Unavailable, "authorization check unavailable")
-	case errors.Is(err, domain.ErrInvalidArg):
-		return status.Errorf(codes.InvalidArgument, "authorization check: %v", err)
-	}
-	return status.Error(codes.Internal, "authorization check failed")
 }
 
 // doAttach — worker: Attach with ON CONFLICT DO NOTHING + outbox + commit.
