@@ -90,11 +90,16 @@ type LoadBalancerWriterIface interface {
 	// Create (там deletion_protection не может помешать откату).
 	Delete(ctx context.Context, id string) error
 
-	// DeleteIfUnprotected — atomic guarded delete для user-facing Delete-воркера:
-	// DELETE ... WHERE id=$1 AND deletion_protection=false. Инвариант «защищённый
-	// LB не удаляется» прибит на DB-уровне —
-	// sync-precheck в use-case'е только UX; конкурентный Update(protection=true)
-	// между precheck и apply здесь пресекается атомарно. 0 rows при существующем
-	// LB → ErrFailedPrecondition; row absent → ErrNotFound; FK-violation → ErrFailedPrecondition.
+	// DeleteIfUnprotected — atomic guarded delete-примитив: DELETE ... WHERE id=$1
+	// AND deletion_protection=false (single-statement, инвариант «защищённый LB не
+	// удаляется» прибит на DB-уровне под row-lock; конкурентный Update(protection=true)
+	// пресекается атомарно). 0 rows при существующем LB → ErrFailedPrecondition;
+	// row absent → ErrNotFound; FK-violation → ErrFailedPrecondition.
+	//
+	// NB: текущая user-facing Delete-сага его НЕ вызывает — она энфорсит protection
+	// раньше, атомарным MarkDeleting-переходом в DELETING (guard deletion_protection=false
+	// + childless), затем безусловным Delete после release VIP. DeleteIfUnprotected
+	// остаётся отдельным defense-in-depth guarded-delete примитивом (покрыт
+	// TestDeleteIfUnprotected_Guard).
 	DeleteIfUnprotected(ctx context.Context, id string) error
 }

@@ -27,6 +27,24 @@ func TestGetListener_MalformedID(t *testing.T) {
 	require.Contains(t, err.Error(), "invalid listener id")
 }
 
+// TestCreateListener_MalformedLoadBalancerID — malformed referenced
+// load_balancer_id должен дать sync InvalidArgument "invalid network load balancer
+// id '<X>'" ДО repo.Get, а не NotFound (api-conventions malformed-id discipline).
+func TestCreateListener_MalformedLoadBalancerID(t *testing.T) {
+	t.Parallel()
+	uc := newCreateUC(newFakeRepo(), newFakeOpsRepo())
+	_, err := uc.Run(context.Background(), &lbv1.CreateListenerRequest{
+		LoadBalancerId: "bogus-id",
+		Name:           "l1",
+		Protocol:       lbv1.Listener_TCP,
+		Port:           80,
+		TargetPort:     8080,
+	})
+	require.Error(t, err)
+	require.Equal(t, codes.InvalidArgument, status.Code(err))
+	require.Contains(t, err.Error(), "invalid network load balancer id")
+}
+
 // TestUpdateListener_MalformedID — malformed id на мутации тоже даёт sync
 // InvalidArgument (первым стейтментом), не NotFound.
 func TestUpdateListener_MalformedID(t *testing.T) {

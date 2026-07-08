@@ -16,3 +16,11 @@ import (
 func validateListenerID(id string) error {
 	return corevalidate.ResourceID("listener", ids.PrefixListener, id)
 }
+
+// validateLoadBalancerRefID — тот же malformed-id guard для ссылочного
+// load_balancer_id, который принимает Listener.Create: неизвестный 3-char prefix →
+// sync InvalidArgument "invalid network load balancer id '<X>'" (НЕ NotFound из
+// repo.Get). Пустой id пропускается — required-проверка отдельным стейтментом.
+func validateLoadBalancerRefID(id string) error {
+	return corevalidate.ResourceID("network load balancer", ids.PrefixLoadBalancer, id)
+}

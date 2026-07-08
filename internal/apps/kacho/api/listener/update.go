@@ -39,11 +39,17 @@ import (
 //     query); cross-region → FailedPrecondition фиксированный текст.
 //  6. opsRepo.CreateWithPrincipal + operations.Run.
 //
-// Async worker:
-//  1. Listener.SetStatusCAS(ACTIVE → UPDATING) — атомарный transient guard.
-//  2. repo.Writer.Listeners.Update + outbox emit `nlb_listener:<id> UPDATED`.
-//  3. SetStatusCAS(UPDATING → ACTIVE).
-//  4. ops.MarkDone(response=Listener).
+// Async worker (одна writer-TX, без status-CAS transition):
+//  1. repo.Writer.Listeners.Update (OCC по expectedXmin) — concurrent-modify
+//     между sync Get и worker-Update → FailedPrecondition.
+//  2. outbox emit `nlb_listener:<id> UPDATED`.
+//  3. FGA-register mirror-feed re-emit — ТОЛЬКО когда меняются labels (emitMirror);
+//     иначе mirror-no-op.
+//  4. Commit; operations-framework помечает Operation done (response=Listener).
+//
+// UPDATING как persisted-статус НЕ выставляется: одно-tx Update проще и атомарен,
+// а UPDATING был бы лишь transient-проекцией in-flight Operation (caller поллит
+// Operation.done). См. inline-комментарий в doUpdate.
 type UpdateUseCase struct {
 	repo    RepoFactory
 	opsRepo OperationsRepo
