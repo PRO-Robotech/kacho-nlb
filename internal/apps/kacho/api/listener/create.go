@@ -68,6 +68,11 @@ func (u *CreateUseCase) Run(ctx context.Context, req *lbv1.CreateListenerRequest
 	if lbID == "" {
 		return nil, status.Error(codes.InvalidArgument, "load_balancer_id required")
 	}
+	// Malformed referenced load_balancer_id → sync InvalidArgument first (before
+	// repo.Get), not NotFound (api-conventions malformed-id discipline).
+	if err := validateLoadBalancerRefID(lbID); err != nil {
+		return nil, err
+	}
 
 	// Sync read parent LB. Verifies LB exists, not DELETING; пробрасывает
 	// project_id/region_id для denormalisation и семейства для vestigial ip_version.
