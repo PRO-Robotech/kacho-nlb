@@ -85,7 +85,7 @@ func NewHandler(
 		move:            NewMoveLoadBalancerUseCase(repo, opsRepo, peerProject, peerCheck, logger),
 		attachTG:        NewAttachTargetGroupUseCase(repo, opsRepo, peerCheck, logger),
 		detachTG:        NewDetachTargetGroupUseCase(repo, opsRepo, logger),
-		getTargetStates: NewGetTargetStatesUseCase(repo),
+		getTargetStates: NewGetTargetStatesUseCase(repo, peerCheck),
 		listOps:         NewListOperationsUseCase(opsRepo),
 	}
 }

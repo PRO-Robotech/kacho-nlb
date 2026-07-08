@@ -21,14 +21,14 @@ import (
 
 func TestGetTargetStates_RequiresIDs(t *testing.T) {
 	t.Parallel()
-	uc := NewGetTargetStatesUseCase(newFakeRepo())
+	uc := NewGetTargetStatesUseCase(newFakeRepo(), nil)
 	_, err := uc.Execute(context.Background(), &lbv1.GetTargetStatesRequest{})
 	require.Equal(t, codes.InvalidArgument, status.Code(err))
 }
 
 func TestGetTargetStates_LBNotFound(t *testing.T) {
 	t.Parallel()
-	uc := NewGetTargetStatesUseCase(newFakeRepo())
+	uc := NewGetTargetStatesUseCase(newFakeRepo(), nil)
 	_, err := uc.Execute(context.Background(), &lbv1.GetTargetStatesRequest{
 		NetworkLoadBalancerId: "nlb-x",
 		TargetGroupId:         "tgr-y",
@@ -41,12 +41,90 @@ func TestGetTargetStates_HappyPath_EmptyTargets(t *testing.T) {
 	repo := newFakeRepo()
 	lbID := seedLB(t, repo, "prj-a", "edge")
 	tgID := seedTG(t, repo, "prj-a", "ru-central1", "tg")
-	uc := NewGetTargetStatesUseCase(repo)
+	uc := NewGetTargetStatesUseCase(repo, nil)
 	resp, err := uc.Execute(context.Background(), &lbv1.GetTargetStatesRequest{
 		NetworkLoadBalancerId: lbID, TargetGroupId: tgID,
 	})
 	require.NoError(t, err)
 	require.Empty(t, resp.GetTargetStates(), "fake.ListTargets returns nil → empty states")
+}
+
+// TestGetTargetStates_DeniesCrossProjectTargetGroup — CWE-863/639 guard
+// (round-7 audit, BOLA finding): the per-RPC interceptor's StaticExtractor
+// scopes its FGA Check to the LB object only (`GetNetworkLoadBalancerId`),
+// so a caller authorized on their own LB (project prj-a) must NOT be able to
+// read another project's TargetGroup (prj-b) by passing its id in
+// target_group_id — refused (mirrors TestAttach_ProjectMismatch) before any
+// target data (instance/NIC ids, addresses, subnet ids) is returned, even
+// with checkClient nil (dev/unwired — the same-project invariant is
+// unconditional, not just an authz nicety).
+func TestGetTargetStates_DeniesCrossProjectTargetGroup(t *testing.T) {
+	t.Parallel()
+	repo := newFakeRepo()
+	lbID := seedLB(t, repo, "prj-a", "edge")
+	tgID := seedTG(t, repo, "prj-b", "ru-central1", "tg")
+	uc := NewGetTargetStatesUseCase(repo, nil)
+
+	resp, err := uc.Execute(context.Background(), &lbv1.GetTargetStatesRequest{
+		NetworkLoadBalancerId: lbID, TargetGroupId: tgID,
+	})
+	require.Nil(t, resp)
+	require.Equal(t, codes.FailedPrecondition, status.Code(err))
+}
+
+// TestGetTargetStates_DeniesUnauthorizedSameProjectTargetGroup — same-project
+// TG is not automatically viewable: a narrowly-scoped custom grant on the LB
+// (without project-editor ⇒ TG-viewer cascade) must still be refused.
+func TestGetTargetStates_DeniesUnauthorizedSameProjectTargetGroup(t *testing.T) {
+	t.Parallel()
+	repo := newFakeRepo()
+	lbID := seedLB(t, repo, "prj-a", "edge")
+	tgID := seedTG(t, repo, "prj-a", "ru-central1", "tg")
+	chk := &fakeCheckClient{allowed: false}
+	uc := NewGetTargetStatesUseCase(repo, chk)
+
+	_, err := uc.Execute(ctxWithUser("usr_attacker"), &lbv1.GetTargetStatesRequest{
+		NetworkLoadBalancerId: lbID, TargetGroupId: tgID,
+	})
+	require.Equal(t, codes.PermissionDenied, status.Code(err))
+	require.Equal(t, 1, chk.calls)
+	require.Equal(t, "user:usr_attacker", chk.gotSubject)
+	require.Equal(t, domain.FGARelationViewer, chk.gotRelation)
+	require.Equal(t, "lb_target_group:"+tgID, chk.gotObject)
+}
+
+// TestGetTargetStates_AllowsAuthorizedTargetGroup — a same-project caller
+// holding viewer on the TG passes the handler-side gate and gets the states.
+func TestGetTargetStates_AllowsAuthorizedTargetGroup(t *testing.T) {
+	t.Parallel()
+	repo := newFakeRepo()
+	lbID := seedLB(t, repo, "prj-a", "edge")
+	tgID := seedTG(t, repo, "prj-a", "ru-central1", "tg")
+	chk := &fakeCheckClient{allowed: true}
+	uc := NewGetTargetStatesUseCase(repo, chk)
+
+	resp, err := uc.Execute(ctxWithUser("usr_owner"), &lbv1.GetTargetStatesRequest{
+		NetworkLoadBalancerId: lbID, TargetGroupId: tgID,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	require.Equal(t, 1, chk.calls)
+}
+
+// TestGetTargetStates_CheckUnavailableFailsClosed — IAM unavailable during
+// the TG-authz check → fail-closed Unavailable, never a silent allow.
+func TestGetTargetStates_CheckUnavailableFailsClosed(t *testing.T) {
+	t.Parallel()
+	repo := newFakeRepo()
+	lbID := seedLB(t, repo, "prj-a", "edge")
+	tgID := seedTG(t, repo, "prj-a", "ru-central1", "tg")
+	chk := &fakeCheckClient{err: domain.ErrUnavailable}
+	uc := NewGetTargetStatesUseCase(repo, chk)
+
+	_, err := uc.Execute(ctxWithUser("usr_owner"), &lbv1.GetTargetStatesRequest{
+		NetworkLoadBalancerId: lbID, TargetGroupId: tgID,
+	})
+	require.Equal(t, codes.Unavailable, status.Code(err))
 }
 
 // computeTargetState — directly test deterministic ramp matrix.
