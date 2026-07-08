@@ -6,6 +6,7 @@ package compute
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -17,6 +18,13 @@ import (
 
 	"github.com/PRO-Robotech/kacho-nlb/internal/domain"
 )
+
+// DefaultInstanceGetTimeout — per-call deadline применяемый к
+// InstanceService.Get, когда client построен без явного timeout'а. Тот же
+// класс проблемы, что DefaultCheckTimeout (iam) / DefaultRegionGetTimeout
+// (geo): без него зависший (не отвечающий, не Unavailable) compute-peer
+// парковал бы вызывающую горутину навсегда.
+const DefaultInstanceGetTimeout = 5 * time.Second
 
 // Instance — projection ресурса kacho-compute.Instance, ограниченная полями
 // необходимыми consumer'ам NLB (Target.instance_id resolve в TG.AddTargets).
@@ -46,25 +54,45 @@ type InstanceClient interface {
 
 // instanceClient — реализация InstanceClient через gRPC.
 type instanceClient struct {
-	cli computepb.InstanceServiceClient
+	cli     computepb.InstanceServiceClient
+	timeout time.Duration
 }
 
 // NewInstanceClient оборачивает grpc-conn в typed adapter. conn —
 // `clients.Build`. InstanceService живёт на public-listener
-// kacho-compute (`:9090`).
+// kacho-compute (`:9090`). Per-call timeout — DefaultInstanceGetTimeout.
 func NewInstanceClient(conn grpc.ClientConnInterface) InstanceClient {
+	return NewInstanceClientWithTimeout(conn, DefaultInstanceGetTimeout)
+}
+
+// NewInstanceClientWithTimeout — как NewInstanceClient, но с явным per-call
+// timeout'ом. timeout<=0 → DefaultInstanceGetTimeout.
+func NewInstanceClientWithTimeout(conn grpc.ClientConnInterface, timeout time.Duration) InstanceClient {
 	if conn == nil {
 		return nil
 	}
-	return &instanceClient{cli: computepb.NewInstanceServiceClient(conn)}
+	return &instanceClient{cli: computepb.NewInstanceServiceClient(conn), timeout: resolveInstanceTimeout(timeout)}
 }
 
 // NewInstanceClientFromStub — конструктор для тестов: принимает stub.
 func NewInstanceClientFromStub(cli computepb.InstanceServiceClient) InstanceClient {
+	return NewInstanceClientFromStubWithTimeout(cli, DefaultInstanceGetTimeout)
+}
+
+// NewInstanceClientFromStubWithTimeout — как NewInstanceClientFromStub, но с
+// явным per-call timeout'ом (используется тестами concurrency/timeout-фиксов).
+func NewInstanceClientFromStubWithTimeout(cli computepb.InstanceServiceClient, timeout time.Duration) InstanceClient {
 	if cli == nil {
 		return nil
 	}
-	return &instanceClient{cli: cli}
+	return &instanceClient{cli: cli, timeout: resolveInstanceTimeout(timeout)}
+}
+
+func resolveInstanceTimeout(d time.Duration) time.Duration {
+	if d <= 0 {
+		return DefaultInstanceGetTimeout
+	}
+	return d
 }
 
 // Get — см. контракт InstanceClient.Get.
@@ -74,6 +102,13 @@ func (c *instanceClient) Get(ctx context.Context, instanceID string) (*Instance,
 	}
 
 	ctx = auth.PropagateOutgoing(ctx)
+
+	// Per-call deadline — bounds the ENTIRE retry.OnUnavailable operation,
+	// independent of the caller's own ctx (architecture.md "Per-call deadline
+	// на КАЖДОМ внешнем вызове"; see check_client.go DefaultCheckTimeout for
+	// the sibling rationale).
+	ctx, cancel := context.WithTimeout(ctx, c.timeout)
+	defer cancel()
 
 	var resp *computepb.Instance
 	if err := retry.OnUnavailable(ctx, func(ctx context.Context) error {

@@ -6,6 +6,7 @@ package geo
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -17,6 +18,14 @@ import (
 
 	"github.com/PRO-Robotech/kacho-nlb/internal/domain"
 )
+
+// DefaultRegionGetTimeout — per-call deadline применяемый к
+// RegionService.Get, когда client построен без явного timeout'а. Без него
+// retry.OnUnavailable не бывает бесконечным (MaxElapsed 30s), но НИ один из
+// его retry-попыток не ограничен по времени сам по себе — зависший
+// (не отвечающий, не Unavailable) peer парковал бы вызывающую горутину
+// навсегда (см. check_client.go DefaultCheckTimeout — тот же класс проблемы).
+const DefaultRegionGetTimeout = 5 * time.Second
 
 // Region — lean projection ресурса kacho-geo.Region. Используется sync-валидацией
 // NetworkLoadBalancer.region_id / TargetGroup.region_id. Зоны региона не
@@ -44,24 +53,44 @@ type RegionClient interface {
 // один geo.RegionService.Get-вызов под retry.OnUnavailable, без кэша.
 type regionClient struct {
 	regions geopb.RegionServiceClient
+	timeout time.Duration
 }
 
 // NewRegionClient оборачивает grpc-conn в typed adapter. conn — `clients.Build`.
 // RegionService живёт на public-listener kacho-geo (9090) — публичный read-only
-// справочник Geography.
+// справочник Geography. Per-call timeout — DefaultRegionGetTimeout.
 func NewRegionClient(conn grpc.ClientConnInterface) RegionClient {
+	return NewRegionClientWithTimeout(conn, DefaultRegionGetTimeout)
+}
+
+// NewRegionClientWithTimeout — как NewRegionClient, но с явным per-call
+// timeout'ом. timeout<=0 → DefaultRegionGetTimeout.
+func NewRegionClientWithTimeout(conn grpc.ClientConnInterface, timeout time.Duration) RegionClient {
 	if conn == nil {
 		return nil
 	}
-	return &regionClient{regions: geopb.NewRegionServiceClient(conn)}
+	return &regionClient{regions: geopb.NewRegionServiceClient(conn), timeout: resolveRegionTimeout(timeout)}
 }
 
 // NewRegionClientFromStubs — конструктор для тестов: принимает напрямую stub.
 func NewRegionClientFromStubs(regions geopb.RegionServiceClient) RegionClient {
+	return NewRegionClientFromStubsWithTimeout(regions, DefaultRegionGetTimeout)
+}
+
+// NewRegionClientFromStubsWithTimeout — как NewRegionClientFromStubs, но с
+// явным per-call timeout'ом (используется тестами concurrency/timeout-фиксов).
+func NewRegionClientFromStubsWithTimeout(regions geopb.RegionServiceClient, timeout time.Duration) RegionClient {
 	if regions == nil {
 		return nil
 	}
-	return &regionClient{regions: regions}
+	return &regionClient{regions: regions, timeout: resolveRegionTimeout(timeout)}
+}
+
+func resolveRegionTimeout(d time.Duration) time.Duration {
+	if d <= 0 {
+		return DefaultRegionGetTimeout
+	}
+	return d
 }
 
 // Get — см. контракт RegionClient.Get.
@@ -69,6 +98,13 @@ func (c *regionClient) Get(ctx context.Context, regionID string) (*Region, error
 	if regionID == "" {
 		return nil, fmt.Errorf("%w: region_id is empty", domain.ErrInvalidArg)
 	}
+
+	// Per-call deadline — bounds the ENTIRE retry.OnUnavailable operation,
+	// independent of the caller's own ctx (architecture.md "Per-call deadline
+	// на КАЖДОМ внешнем вызове"; see check_client.go DefaultCheckTimeout for
+	// the sibling rationale).
+	ctx, cancel := context.WithTimeout(ctx, c.timeout)
+	defer cancel()
 
 	var resp *geopb.Region
 	if err := retry.OnUnavailable(ctx, func(ctx context.Context) error {

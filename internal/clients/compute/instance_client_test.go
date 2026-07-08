@@ -114,6 +114,50 @@ func TestInstanceClient_Get_Unavailable(t *testing.T) {
 	}
 }
 
+// blockingInstanceService — fake InstanceServiceServer that never returns
+// from Get until explicitly released (simulates a hung/stalled kacho-compute
+// peer).
+type blockingInstanceService struct {
+	computepb.UnimplementedInstanceServiceServer
+	release chan struct{}
+}
+
+func (f *blockingInstanceService) Get(_ context.Context, _ *computepb.GetInstanceRequest) (*computepb.Instance, error) {
+	<-f.release
+	return &computepb.Instance{Id: "epd-1"}, nil
+}
+
+// TestInstanceClient_Get_HangingPeer_BoundsToConfiguredTimeout — regression
+// for the missing per-call deadline (round-5 audit finding 1, sibling
+// client): a stalled kacho-compute peer must not park the calling goroutine
+// forever. Get is called with a deadline-less caller ctx
+// (context.Background()) — the client itself must bound the call to ~its
+// configured per-call timeout and fail closed (DeadlineExceeded ->
+// domain.ErrUnavailable), not hang.
+func TestInstanceClient_Get_HangingPeer_BoundsToConfiguredTimeout(t *testing.T) {
+	fake := &blockingInstanceService{release: make(chan struct{})}
+	conn := startFakeCompute(t, fake)
+
+	const configuredTimeout = 100 * time.Millisecond
+	c := NewInstanceClientWithTimeout(conn, configuredTimeout)
+
+	start := time.Now()
+	_, err := c.Get(context.Background(), "epd-1")
+	elapsed := time.Since(start)
+	// Release the still-in-flight fake handler goroutine synchronously (see
+	// iam.TestCheckClient_HangingPeer_BoundsToConfiguredTimeout for why this
+	// must NOT be a t.Cleanup: startFakeCompute's own GracefulStop cleanup
+	// would run first (LIFO) and deadlock waiting on this still-blocked handler).
+	close(fake.release)
+
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, domain.ErrUnavailable),
+		"expected fail-closed domain.ErrUnavailable on peer hang; got %v", err)
+	assert.Less(t, elapsed, 2*time.Second,
+		"Get must bound to the configured per-call timeout (~%s), not hang on an unresponsive peer; took %s",
+		configuredTimeout, elapsed)
+}
+
 func TestInstanceClient_Get_EmptyID(t *testing.T) {
 	c := NewInstanceClient(startFakeCompute(t, &fakeInstanceService{}))
 	_, err := c.Get(ctxBackground(), "")

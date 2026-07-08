@@ -613,7 +613,11 @@ func dialPeers(
 		peers.Project = iamclient.NewProjectClient(iamPublicConn)
 	}
 	if iamInternalConn != nil {
-		peers.Check = iamclient.NewCheckClient(iamInternalConn)
+		// Same per-call timeout source as the authz interceptor
+		// (check.Options.CheckTimeout below) — handler-side direct Check
+		// calls (attach_target_group.go, move.go) run OUTSIDE the
+		// interceptor's own bounded ctx, so the client must bound itself.
+		peers.Check = iamclient.NewCheckClientWithTimeout(iamInternalConn, cfg.Authz.IAM.RequestTimeout)
 		// FGA-proxy: register-drainer applies owner-tuple intents through
 		// InternalIAMService.RegisterResource / UnregisterResource (Internal-only
 		// :9091). Replaces the former direct WriteCreatorTuple (Issue N5).
