@@ -30,6 +30,18 @@ const (
 	vpcOpPollTimeout  = 15 * time.Second
 )
 
+// DefaultInternalAddressCallTimeout — per-call deadline применяемый к КАЖДОМу
+// outbound gRPC-вызову этого client'а (Create/Delete/Get на AddressService,
+// Set/ClearAddressReference на InternalAddressService, Operation.Get на poll-
+// итерации), когда client построен без явного timeout'а. Тот же класс
+// проблемы, что DefaultAddressGetTimeout (address_client.go): без него
+// зависший (не отвечающий, не Unavailable) vpc-peer парковал бы вызывающую
+// горутину навсегда — в частности free_ip_runner.reconcileOne держит
+// FOR UPDATE SKIP LOCKED row-lock + tx через ровно эти вызовы (round-6 audit
+// finding: leak/MEDIUM free_ip_runner + sibling finding 2). Каждый sibling-
+// метод обязан применять один и тот же configured-timeout (architecture.md).
+const DefaultInternalAddressCallTimeout = 5 * time.Second
+
 // AllocateExternalIPRequest — параметры аллокации внешнего VIP под Listener.
 type AllocateExternalIPRequest struct {
 	ProjectID string // folder owning the Address row
@@ -108,10 +120,11 @@ type InternalAddressClient interface {
 	// used_by (linked, tenant-owned). Семантика ошибок:
 	//   - AlreadyExists (address уже занят другим owner) → domain.ErrFailedPrecondition
 	//   - NotFound                                       → domain.ErrInvalidArg
+	//   - Unavailable/DeadlineExceeded                   → domain.ErrUnavailable
 	SetReference(ctx context.Context, addressID string, owner AddressOwner, owned bool) error
 
 	// ClearReference — снимает used_by с Address (Listener.Delete release BYO).
-	// Идемпотентно: NotFound → успех.
+	// Идемпотентно: NotFound → успех. Unavailable/DeadlineExceeded → domain.ErrUnavailable.
 	ClearReference(ctx context.Context, addressID string) error
 }
 
@@ -128,7 +141,8 @@ type internalAddressClient struct {
 	// logger — для наблюдаемости best-effort компенсаций (напр. failed
 	// compensating FreeIP → leaked Address в kacho-vpc). Никогда не nil:
 	// конструкторы дефолтят на slog.Default() (main.go делает slog.SetDefault).
-	logger *slog.Logger
+	logger  *slog.Logger
+	timeout time.Duration
 }
 
 // NewInternalAddressClient оборачивает grpc-conn'ы в typed adapter.
@@ -138,7 +152,17 @@ type internalAddressClient struct {
 // internalConn — kacho-vpc internal listener (`:9091`); содержит
 // InternalAddressService (SetReference / ClearReference — не публикуются на
 // external endpoint, Internal-only).
+// Per-call timeout — DefaultInternalAddressCallTimeout.
 func NewInternalAddressClient(publicConn, internalConn grpc.ClientConnInterface) InternalAddressClient {
+	return NewInternalAddressClientWithTimeout(publicConn, internalConn, DefaultInternalAddressCallTimeout)
+}
+
+// NewInternalAddressClientWithTimeout — как NewInternalAddressClient, но с
+// явным per-call timeout'ом (применяется к КАЖДОМУ outbound-вызову клиента).
+// timeout<=0 → DefaultInternalAddressCallTimeout.
+func NewInternalAddressClientWithTimeout(
+	publicConn, internalConn grpc.ClientConnInterface, timeout time.Duration,
+) InternalAddressClient {
 	if publicConn == nil || internalConn == nil {
 		return nil
 	}
@@ -147,6 +171,7 @@ func NewInternalAddressClient(publicConn, internalConn grpc.ClientConnInterface)
 		internal: vpcpb.NewInternalAddressServiceClient(internalConn),
 		ops:      operationpb.NewOperationServiceClient(publicConn),
 		logger:   slog.Default(),
+		timeout:  resolveInternalAddressTimeout(timeout),
 	}
 }
 
@@ -156,10 +181,41 @@ func NewInternalAddressClientFromStubs(
 	internal vpcpb.InternalAddressServiceClient,
 	ops operationpb.OperationServiceClient,
 ) InternalAddressClient {
+	return NewInternalAddressClientFromStubsWithTimeout(addrs, internal, ops, DefaultInternalAddressCallTimeout)
+}
+
+// NewInternalAddressClientFromStubsWithTimeout — как
+// NewInternalAddressClientFromStubs, но с явным per-call timeout'ом
+// (используется тестами concurrency/timeout-фиксов).
+func NewInternalAddressClientFromStubsWithTimeout(
+	addrs vpcpb.AddressServiceClient,
+	internal vpcpb.InternalAddressServiceClient,
+	ops operationpb.OperationServiceClient,
+	timeout time.Duration,
+) InternalAddressClient {
 	if addrs == nil || internal == nil || ops == nil {
 		return nil
 	}
-	return &internalAddressClient{addrs: addrs, internal: internal, ops: ops, logger: slog.Default()}
+	return &internalAddressClient{
+		addrs: addrs, internal: internal, ops: ops,
+		logger: slog.Default(), timeout: resolveInternalAddressTimeout(timeout),
+	}
+}
+
+func resolveInternalAddressTimeout(d time.Duration) time.Duration {
+	if d <= 0 {
+		return DefaultInternalAddressCallTimeout
+	}
+	return d
+}
+
+// withCallTimeout — деривирует ctx с client'ом configured per-call timeout'ом.
+// Caller обязан вызвать возвращённый cancel (defer). Единая точка для ВСЕХ
+// outbound-вызовов этого client'а (Create/Delete/Get/SetReference/
+// ClearReference/Operation.Get) — architecture.md "все sibling-методы клиента
+// обязаны применять один и тот же configured-timeout".
+func (c *internalAddressClient) withCallTimeout(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(ctx, c.timeout)
 }
 
 // AllocateExternalIP — см. контракт InternalAddressClient.AllocateExternalIP.
@@ -312,8 +368,9 @@ func (c *internalAddressClient) FreeIP(ctx context.Context, addressID string) er
 		return fmt.Errorf("%w: address_id is empty", domain.ErrInvalidArg)
 	}
 
+	callCtx, cancel := c.withCallTimeout(ctx)
 	var op *operationpb.Operation
-	if err := retry.OnUnavailable(ctx, func(ctx context.Context) error {
+	err := retry.OnUnavailable(callCtx, func(ctx context.Context) error {
 		var rerr error
 		op, rerr = c.addrs.Delete(auth.PropagateOutgoing(ctx), &vpcpb.DeleteAddressRequest{AddressId: addressID})
 		if rerr != nil {
@@ -325,7 +382,9 @@ func (c *internalAddressClient) FreeIP(ctx context.Context, addressID string) er
 			return rerr
 		}
 		return nil
-	}); err != nil {
+	})
+	cancel()
+	if err != nil {
 		return mapAllocErr(addressID, err)
 	}
 	if op == nil {
@@ -353,7 +412,9 @@ func (c *internalAddressClient) SetReference(
 		return fmt.Errorf("%w: owner.ID is empty", domain.ErrInvalidArg)
 	}
 
-	return retry.OnUnavailable(ctx, func(ctx context.Context) error {
+	callCtx, cancel := c.withCallTimeout(ctx)
+	defer cancel()
+	return retry.OnUnavailable(callCtx, func(ctx context.Context) error {
 		_, rerr := c.internal.SetAddressReference(auth.PropagateOutgoing(ctx), &vpcpb.SetAddressReferenceRequest{
 			AddressId:    addressID,
 			ReferrerType: owner.Kind,
@@ -375,6 +436,10 @@ func (c *internalAddressClient) SetReference(
 			return fmt.Errorf("%w: address %s not found", domain.ErrInvalidArg, addressID)
 		case codes.InvalidArgument:
 			return fmt.Errorf("%w: vpc set address reference %s: %s", domain.ErrInvalidArg, addressID, st.Message())
+		case codes.Unavailable, codes.DeadlineExceeded:
+			// fail-closed для мутации (api-conventions.md); также покрывает
+			// DeadlineExceeded от per-call c.withCallTimeout на зависшем peer'е.
+			return fmt.Errorf("%w: vpc set address reference %s: %s", domain.ErrUnavailable, addressID, st.Message())
 		default:
 			return fmt.Errorf("vpc set address reference %q: %w", addressID, rerr)
 		}
@@ -387,7 +452,9 @@ func (c *internalAddressClient) ClearReference(ctx context.Context, addressID st
 		return fmt.Errorf("%w: address_id is empty", domain.ErrInvalidArg)
 	}
 
-	return retry.OnUnavailable(ctx, func(ctx context.Context) error {
+	callCtx, cancel := c.withCallTimeout(ctx)
+	defer cancel()
+	return retry.OnUnavailable(callCtx, func(ctx context.Context) error {
 		_, rerr := c.internal.ClearAddressReference(auth.PropagateOutgoing(ctx), &vpcpb.ClearAddressReferenceRequest{
 			AddressId: addressID,
 		})
@@ -404,6 +471,10 @@ func (c *internalAddressClient) ClearReference(ctx context.Context, addressID st
 			return nil
 		case codes.InvalidArgument:
 			return fmt.Errorf("%w: vpc clear address reference %s: %s", domain.ErrInvalidArg, addressID, st.Message())
+		case codes.Unavailable, codes.DeadlineExceeded:
+			// fail-closed для мутации (api-conventions.md); также покрывает
+			// DeadlineExceeded от per-call c.withCallTimeout на зависшем peer'е.
+			return fmt.Errorf("%w: vpc clear address reference %s: %s", domain.ErrUnavailable, addressID, st.Message())
 		default:
 			return fmt.Errorf("vpc clear address reference %q: %w", addressID, rerr)
 		}
@@ -424,7 +495,8 @@ func (c *internalAddressClient) AttachExisting(
 	// Атомарный CAS-referrer в vpc (та же tx, что и запись used_by). Mismatch /
 	// not-found → generic InvalidArgument (анти-oracle: не раскрываем чужой
 	// ownership/семейство/несуществование адреса).
-	if err := retry.OnUnavailable(ctx, func(ctx context.Context) error {
+	setCtx, setCancel := c.withCallTimeout(ctx)
+	err := retry.OnUnavailable(setCtx, func(ctx context.Context) error {
 		_, rerr := c.internal.SetAddressReference(auth.PropagateOutgoing(ctx), &vpcpb.SetAddressReferenceRequest{
 			AddressId:    req.AddressID,
 			ReferrerType: req.Owner.Kind,
@@ -443,10 +515,16 @@ func (c *internalAddressClient) AttachExisting(
 			return fmt.Errorf("%w: address %s already used by another resource", domain.ErrFailedPrecondition, req.AddressID)
 		case codes.NotFound, codes.InvalidArgument, codes.PermissionDenied:
 			return fmt.Errorf("%w: Illegal argument addressId", domain.ErrInvalidArg)
+		case codes.Unavailable, codes.DeadlineExceeded:
+			// fail-closed для мутации (api-conventions.md); также покрывает
+			// DeadlineExceeded от per-call c.withCallTimeout на зависшем peer'е.
+			return fmt.Errorf("%w: vpc set address reference %s: %s", domain.ErrUnavailable, req.AddressID, st.Message())
 		default:
 			return fmt.Errorf("vpc set address reference %q: %w", req.AddressID, rerr)
 		}
-	}); err != nil {
+	})
+	setCancel()
+	if err != nil {
 		return nil, err
 	}
 
@@ -461,8 +539,10 @@ func (c *internalAddressClient) AttachExisting(
 // resolveAddressValue — Get Address + извлечение resolved IP-строки (любое
 // семейство). Используется после успешной BYO-привязки.
 func (c *internalAddressClient) resolveAddressValue(ctx context.Context, addressID string) (string, error) {
+	callCtx, cancel := c.withCallTimeout(ctx)
+	defer cancel()
 	var resp *vpcpb.Address
-	if err := retry.OnUnavailable(ctx, func(ctx context.Context) error {
+	if err := retry.OnUnavailable(callCtx, func(ctx context.Context) error {
 		var rerr error
 		resp, rerr = c.addrs.Get(auth.PropagateOutgoing(ctx), &vpcpb.GetAddressRequest{AddressId: addressID})
 		return rerr
@@ -487,12 +567,15 @@ func (c *internalAddressClient) resolveAddressValue(ctx context.Context, address
 func (c *internalAddressClient) createAddressAndWait(
 	ctx context.Context, req *vpcpb.CreateAddressRequest,
 ) (*vpcpb.Address, error) {
+	createCtx, createCancel := c.withCallTimeout(ctx)
 	var op *operationpb.Operation
-	if err := retry.OnUnavailable(ctx, func(ctx context.Context) error {
+	err := retry.OnUnavailable(createCtx, func(ctx context.Context) error {
 		var rerr error
 		op, rerr = c.addrs.Create(auth.PropagateOutgoing(ctx), req)
 		return rerr
-	}); err != nil {
+	})
+	createCancel()
+	if err != nil {
 		return nil, mapAllocErr("", err)
 	}
 	resp, err := c.waitOperation(ctx, op)
@@ -528,11 +611,14 @@ func (c *internalAddressClient) waitOperation(
 		case <-ticker.C:
 		}
 		var got *operationpb.Operation
-		if err := retry.OnUnavailable(ctx, func(ctx context.Context) error {
+		getCtx, getCancel := c.withCallTimeout(ctx)
+		err := retry.OnUnavailable(getCtx, func(ctx context.Context) error {
 			var rerr error
 			got, rerr = c.ops.Get(auth.PropagateOutgoing(ctx), &operationpb.GetOperationRequest{OperationId: id})
 			return rerr
-		}); err != nil {
+		})
+		getCancel()
+		if err != nil {
 			return nil, err
 		}
 		if got.GetDone() {

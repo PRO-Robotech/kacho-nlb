@@ -6,6 +6,7 @@ package vpc
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -17,6 +18,11 @@ import (
 
 	"github.com/PRO-Robotech/kacho-nlb/internal/domain"
 )
+
+// DefaultNetworkInterfaceGetTimeout — per-call deadline применяемый к
+// NetworkInterfaceService.Get, когда client построен без явного timeout'а
+// (round-6 audit sweep, см. vpc.DefaultAddressGetTimeout для rationale).
+const DefaultNetworkInterfaceGetTimeout = 5 * time.Second
 
 // NetworkInterface — projection NIC, ограниченная полями необходимыми consumer'ам
 // NLB (Target.nic_id resolve в TG.AddTargets).
@@ -46,23 +52,50 @@ type NetworkInterfaceClient interface {
 
 // networkInterfaceClient — реализация NetworkInterfaceClient через gRPC.
 type networkInterfaceClient struct {
-	cli vpcpb.NetworkInterfaceServiceClient
+	cli     vpcpb.NetworkInterfaceServiceClient
+	timeout time.Duration
 }
 
-// NewNetworkInterfaceClient оборачивает grpc-conn в typed adapter.
+// NewNetworkInterfaceClient оборачивает grpc-conn в typed adapter. Per-call
+// timeout — DefaultNetworkInterfaceGetTimeout.
 func NewNetworkInterfaceClient(conn grpc.ClientConnInterface) NetworkInterfaceClient {
+	return NewNetworkInterfaceClientWithTimeout(conn, DefaultNetworkInterfaceGetTimeout)
+}
+
+// NewNetworkInterfaceClientWithTimeout — как NewNetworkInterfaceClient, но с
+// явным per-call timeout'ом. timeout<=0 → DefaultNetworkInterfaceGetTimeout.
+func NewNetworkInterfaceClientWithTimeout(conn grpc.ClientConnInterface, timeout time.Duration) NetworkInterfaceClient {
 	if conn == nil {
 		return nil
 	}
-	return &networkInterfaceClient{cli: vpcpb.NewNetworkInterfaceServiceClient(conn)}
+	return &networkInterfaceClient{
+		cli:     vpcpb.NewNetworkInterfaceServiceClient(conn),
+		timeout: resolveNICTimeout(timeout),
+	}
 }
 
 // NewNetworkInterfaceClientFromStub — конструктор для тестов.
 func NewNetworkInterfaceClientFromStub(cli vpcpb.NetworkInterfaceServiceClient) NetworkInterfaceClient {
+	return NewNetworkInterfaceClientFromStubWithTimeout(cli, DefaultNetworkInterfaceGetTimeout)
+}
+
+// NewNetworkInterfaceClientFromStubWithTimeout — как
+// NewNetworkInterfaceClientFromStub, но с явным per-call timeout'ом
+// (используется тестами concurrency/timeout-фиксов).
+func NewNetworkInterfaceClientFromStubWithTimeout(
+	cli vpcpb.NetworkInterfaceServiceClient, timeout time.Duration,
+) NetworkInterfaceClient {
 	if cli == nil {
 		return nil
 	}
-	return &networkInterfaceClient{cli: cli}
+	return &networkInterfaceClient{cli: cli, timeout: resolveNICTimeout(timeout)}
+}
+
+func resolveNICTimeout(d time.Duration) time.Duration {
+	if d <= 0 {
+		return DefaultNetworkInterfaceGetTimeout
+	}
+	return d
 }
 
 // Get — см. контракт NetworkInterfaceClient.Get.
@@ -72,6 +105,12 @@ func (c *networkInterfaceClient) Get(ctx context.Context, nicID string) (*Networ
 	}
 
 	ctx = auth.PropagateOutgoing(ctx)
+
+	// Per-call deadline — bounds the ENTIRE retry.OnUnavailable operation,
+	// independent of the caller's own ctx (architecture.md "Per-call deadline
+	// на КАЖДОМ внешнем вызове").
+	ctx, cancel := context.WithTimeout(ctx, c.timeout)
+	defer cancel()
 
 	var resp *vpcpb.NetworkInterface
 	if err := retry.OnUnavailable(ctx, func(ctx context.Context) error {

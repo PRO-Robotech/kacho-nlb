@@ -16,14 +16,18 @@ import (
 )
 
 // startFakeGeo поднимает gRPC server in-memory (TCP loopback :0).
-// nil-fake — service не регистрируется.
-func startFakeGeo(t *testing.T, regions geopb.RegionServiceServer) *grpc.ClientConn {
+// nil-fake — service не регистрируется. zones — variadic, чтобы не трогать
+// существующие call-site'ы (region-only тесты продолжают звать startFakeGeo(t, regions)).
+func startFakeGeo(t *testing.T, regions geopb.RegionServiceServer, zones ...geopb.ZoneServiceServer) *grpc.ClientConn {
 	t.Helper()
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	srv := grpc.NewServer()
 	if regions != nil {
 		geopb.RegisterRegionServiceServer(srv, regions)
+	}
+	if len(zones) > 0 && zones[0] != nil {
+		geopb.RegisterZoneServiceServer(srv, zones[0])
 	}
 	go func() { _ = srv.Serve(lis) }()
 	t.Cleanup(func() { srv.GracefulStop() })

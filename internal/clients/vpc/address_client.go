@@ -6,6 +6,7 @@ package vpc
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -17,6 +18,14 @@ import (
 
 	"github.com/PRO-Robotech/kacho-nlb/internal/domain"
 )
+
+// DefaultAddressGetTimeout — per-call deadline применяемый к AddressService.Get,
+// когда client построен без явного timeout'а. Тот же класс проблемы, что
+// DefaultCheckTimeout (iam) / DefaultRegionGetTimeout (geo) / DefaultInstanceGetTimeout
+// (compute): без него зависший (не отвечающий, не Unavailable) vpc-peer парковал бы
+// вызывающую горутину навсегда (round-6 audit sweep — architecture.md "per-call
+// deadline на КАЖДОМ внешнем вызове").
+const DefaultAddressGetTimeout = 5 * time.Second
 
 // Family enum для Address (минимальный набор для NLB — только v4 / v6).
 const (
@@ -67,23 +76,44 @@ type AddressClient interface {
 
 // addressClient — реализация AddressClient через gRPC.
 type addressClient struct {
-	cli vpcpb.AddressServiceClient
+	cli     vpcpb.AddressServiceClient
+	timeout time.Duration
 }
 
-// NewAddressClient оборачивает grpc-conn в typed adapter.
+// NewAddressClient оборачивает grpc-conn в typed adapter. Per-call timeout —
+// DefaultAddressGetTimeout.
 func NewAddressClient(conn grpc.ClientConnInterface) AddressClient {
+	return NewAddressClientWithTimeout(conn, DefaultAddressGetTimeout)
+}
+
+// NewAddressClientWithTimeout — как NewAddressClient, но с явным per-call
+// timeout'ом. timeout<=0 → DefaultAddressGetTimeout.
+func NewAddressClientWithTimeout(conn grpc.ClientConnInterface, timeout time.Duration) AddressClient {
 	if conn == nil {
 		return nil
 	}
-	return &addressClient{cli: vpcpb.NewAddressServiceClient(conn)}
+	return &addressClient{cli: vpcpb.NewAddressServiceClient(conn), timeout: resolveAddressTimeout(timeout)}
 }
 
 // NewAddressClientFromStub — конструктор для тестов.
 func NewAddressClientFromStub(cli vpcpb.AddressServiceClient) AddressClient {
+	return NewAddressClientFromStubWithTimeout(cli, DefaultAddressGetTimeout)
+}
+
+// NewAddressClientFromStubWithTimeout — как NewAddressClientFromStub, но с
+// явным per-call timeout'ом (используется тестами concurrency/timeout-фиксов).
+func NewAddressClientFromStubWithTimeout(cli vpcpb.AddressServiceClient, timeout time.Duration) AddressClient {
 	if cli == nil {
 		return nil
 	}
-	return &addressClient{cli: cli}
+	return &addressClient{cli: cli, timeout: resolveAddressTimeout(timeout)}
+}
+
+func resolveAddressTimeout(d time.Duration) time.Duration {
+	if d <= 0 {
+		return DefaultAddressGetTimeout
+	}
+	return d
 }
 
 // Get — см. контракт AddressClient.Get.
@@ -93,6 +123,13 @@ func (c *addressClient) Get(ctx context.Context, addressID string) (*Address, er
 	}
 
 	ctx = auth.PropagateOutgoing(ctx)
+
+	// Per-call deadline — bounds the ENTIRE retry.OnUnavailable operation,
+	// independent of the caller's own ctx (architecture.md "Per-call deadline
+	// на КАЖДОМ внешнем вызове"; see iam.DefaultCheckTimeout for the sibling
+	// rationale).
+	ctx, cancel := context.WithTimeout(ctx, c.timeout)
+	defer cancel()
 
 	var resp *vpcpb.Address
 	if err := retry.OnUnavailable(ctx, func(ctx context.Context) error {
