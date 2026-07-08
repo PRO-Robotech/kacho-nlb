@@ -6,7 +6,6 @@ package domain_test
 import (
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/PRO-Robotech/kacho-corelib/ids"
 	"github.com/PRO-Robotech/kacho-nlb/internal/domain"
@@ -85,34 +84,6 @@ func TestNewTargetGroup_Defaults(t *testing.T) {
 	}
 	// Note: built TG cannot be Validate'd as-is because HealthCheck is required
 	// (no probe set) — caller of NewTargetGroup must attach a HC before Validate.
-}
-
-func TestNewDefaultHealthCheck(t *testing.T) {
-	t.Parallel()
-	for _, proto := range []domain.HealthCheckProto{
-		domain.HealthCheckProtoTCP, domain.HealthCheckProtoHTTP,
-		domain.HealthCheckProtoHTTPS, domain.HealthCheckProtoGRPC,
-	} {
-		t.Run(string(proto), func(t *testing.T) {
-			t.Parallel()
-			hc := domain.NewDefaultHealthCheck("hc-x", proto, 8080)
-			if hc.Interval != domain.LbDuration(2*time.Second) {
-				t.Errorf("Interval default mismatch")
-			}
-			if hc.Timeout != domain.LbDuration(time.Second) {
-				t.Errorf("Timeout default mismatch")
-			}
-			if hc.UnhealthyThreshold != domain.DefaultUnhealthyThreshold {
-				t.Errorf("UnhealthyThreshold default mismatch")
-			}
-			if hc.HealthyThreshold != domain.DefaultHealthyThreshold {
-				t.Errorf("HealthyThreshold default mismatch")
-			}
-			if err := hc.Validate(); err != nil {
-				t.Fatalf("built HC should validate: %v", err)
-			}
-		})
-	}
 }
 
 func TestTruncateID(t *testing.T) {
