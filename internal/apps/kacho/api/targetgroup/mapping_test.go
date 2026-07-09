@@ -80,11 +80,12 @@ func TestRegionFromZone(t *testing.T) {
 	cases := []struct {
 		zone, region string
 	}{
-		{"ru-central1-a", "ru-central1"},
-		{"ru-central2-b", "ru-central2"},
-		{"eu-west1-c", "eu-west1"},
-		{"", ""},
-		{"no-dash", "no-dash"}, // unparseable → as-is
+		{"alpha1-a", "alpha1"}, // <region>-<suffix> → <region>
+		{"beta2-xyz", "beta2"}, // 3-char suffix parseable
+		{"", ""},               // empty → cannot derive
+		{"flat", ""},           // no dash → cannot derive (deferred to geo)
+		{"gamma-wxyz", ""},     // suffix >3 → cannot derive
+		{"delta-", ""},         // trailing dash → cannot derive
 	}
 	for _, c := range cases {
 		assert.Equalf(t, c.region, regionFromZone(c.zone), "zone=%q", c.zone)
