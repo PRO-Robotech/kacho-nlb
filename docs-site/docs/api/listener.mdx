@@ -1,0 +1,178 @@
+---
+id: listener
+sidebar_position: 3
+title: Listener
+---
+
+import { ApiOperation } from '@site/src/components/commonBlocks/ApiOperation'
+import CodeBlock from '@theme/CodeBlock'
+import dedent from 'ts-dedent'
+
+# Listener
+
+**Listener** — точка приёма трафика балансировщика. Он отвечает на вопрос «на каком порту и
+протоколе принимать соединения и на какой порт таргета их пересылать». Бизнес-смысл: один
+[NetworkLoadBalancer](/api/network-load-balancer) с одним VIP может обслуживать несколько
+портов/протоколов — каждый описывается отдельным листенером (например, `TCP:80` и `TCP:443`).
+
+Listener — **самостоятельный ресурс** (собственный ID `lst`, свой FGA-объект и своя история
+операций), но живёт под конкретным балансировщиком (`loadBalancerId`, FK) и **наследует его
+VIP** — собственного адреса листенер не несёт. Это осознанное решение Kachō: один anycast-VIP
+на балансировщик на семейство, а листенеры мультиплексируются по портам.
+
+## Поля
+
+<table>
+  <thead><tr><th>Поле</th><th>Тип</th><th>Изменяемость</th><th>Описание</th></tr></thead>
+  <tbody>
+    <tr><td><code>id</code></td><td>string</td><td>output-only</td><td>Серверный идентификатор (<code>lst</code>-префикс)</td></tr>
+    <tr><td><code>loadBalancerId</code></td><td>string</td><td>immutable</td><td>Родительский балансировщик (FK)</td></tr>
+    <tr><td><code>projectId</code></td><td>string</td><td>output-only</td><td>Денормализован из родителя; синхронизируется при Move балансировщика</td></tr>
+    <tr><td><code>name</code></td><td>string</td><td>mutable</td><td>Имя. Уникально в рамках балансировщика</td></tr>
+    <tr><td><code>description</code></td><td>string</td><td>mutable</td><td>Описание (≤256)</td></tr>
+    <tr><td><code>labels</code></td><td>map&lt;string,string&gt;</td><td>mutable</td><td>Метки</td></tr>
+    <tr><td><code>protocol</code></td><td>enum</td><td>immutable</td><td><code>TCP</code> / <code>UDP</code></td></tr>
+    <tr><td><code>port</code></td><td>int64</td><td>immutable</td><td>Входящий порт (1–65535)</td></tr>
+    <tr><td><code>targetPort</code></td><td>int64</td><td>mutable</td><td>Порт таргета для форвардинга (1–65535)</td></tr>
+    <tr><td><code>proxyProtocolV2</code></td><td>bool</td><td>mutable</td><td>PROXY-protocol v2 на принимаемых соединениях</td></tr>
+    <tr><td><code>defaultTargetGroupId</code></td><td>string</td><td>mutable</td><td>Группа по умолчанию (soft-ссылка на TG, привязанную к родителю)</td></tr>
+    <tr><td><code>status</code></td><td>enum</td><td>output-only</td><td><code>CREATING</code> / <code>ACTIVE</code> / <code>UPDATING</code> / <code>DELETING</code></td></tr>
+    <tr><td><code>createdAt</code></td><td>timestamp</td><td>output-only</td><td>Момент создания (RFC 3339, усечён до секунд)</td></tr>
+  </tbody>
+</table>
+
+:::note Статус независим от балансировщика
+`Listener.status` отделён от `NetworkLoadBalancer.status`: листенер может быть `UPDATING`, пока
+родительский балансировщик остаётся `ACTIVE`.
+:::
+
+## Методы
+
+Чтение (`Get` / `List` / `ListOperations`) — синхронное. Все мутации асинхронны и возвращают
+[`Operation`](/api/operations).
+
+### Get — получить листенер
+
+<ApiOperation method="GET" endpoint="/nlb/v1/listeners/{id}">
+
+Возвращает листенер по идентификатору.
+
+<CodeBlock language="json">
+  {dedent`
+    {
+      "id": "lst...",
+      "loadBalancerId": "nlb...",
+      "projectId": "prj-1",
+      "name": "http",
+      "protocol": "TCP",
+      "port": 80,
+      "targetPort": 80,
+      "defaultTargetGroupId": "tgr...",
+      "status": "ACTIVE",
+      "createdAt": "2026-06-24T10:00:00Z"
+    }
+  `}
+</CodeBlock>
+
+</ApiOperation>
+
+### List — список листенеров
+
+<ApiOperation method="GET" endpoint="/nlb/v1/listeners">
+
+Возвращает листенеры проекта (`projectId` обязателен). Опциональный `loadBalancerId`
+ограничивает выборку одним балансировщиком. Результат фильтруется по доступу (viewer ∪
+`v_list`). `filter` поддерживает `name = "..."`.
+
+<CodeBlock language="bash">
+  {dedent`
+    curl 'http://localhost:18080/nlb/v1/listeners?projectId=prj-1&loadBalancerId=nlb...' \\
+      -H 'Authorization: Bearer <JWT>'
+  `}
+</CodeBlock>
+
+</ApiOperation>
+
+### Create — создать листенер
+
+<ApiOperation method="POST" endpoint="/nlb/v1/listeners" async>
+
+Создаёт листенер под указанным балансировщиком. `loadBalancerId`, `protocol`, `port`,
+`targetPort` обязательны; порты — в диапазоне 1–65535 (0 недопустим). Листенер наследует VIP
+балансировщика.
+
+<CodeBlock language="bash">
+  {dedent`
+    curl -X POST 'http://localhost:18080/nlb/v1/listeners' \\
+      -H 'Authorization: Bearer <JWT>' \\
+      -H 'Content-Type: application/json' \\
+      -d '{
+            "loadBalancerId": "nlb...",
+            "name": "https",
+            "protocol": "TCP",
+            "port": 443,
+            "targetPort": 8443,
+            "proxyProtocolV2": true,
+            "defaultTargetGroupId": "tgr..."
+          }'
+  `}
+</CodeBlock>
+
+</ApiOperation>
+
+### Update — изменить листенер
+
+<ApiOperation method="PATCH" endpoint="/nlb/v1/listeners/{id}" async>
+
+Меняет изменяемые поля (`name`, `description`, `labels`, `targetPort`, `proxyProtocolV2`,
+`defaultTargetGroupId`). Immutable-поля (`loadBalancerId`, `protocol`, `port`) в `updateMask`
+отклоняются (`InvalidArgument`).
+
+<CodeBlock language="bash">
+  {dedent`
+    curl -X PATCH 'http://localhost:18080/nlb/v1/listeners/lst...' \\
+      -H 'Authorization: Bearer <JWT>' \\
+      -H 'Content-Type: application/json' \\
+      -d '{ "updateMask": "targetPort", "targetPort": 9000 }'
+  `}
+</CodeBlock>
+
+</ApiOperation>
+
+### Delete — удалить листенер
+
+<ApiOperation method="DELETE" endpoint="/nlb/v1/listeners/{id}" async>
+
+Удаляет листенер.
+
+<CodeBlock language="bash">
+  {dedent`
+    curl -X DELETE 'http://localhost:18080/nlb/v1/listeners/lst...' \\
+      -H 'Authorization: Bearer <JWT>'
+  `}
+</CodeBlock>
+
+</ApiOperation>
+
+### ListOperations — история операций
+
+<ApiOperation method="GET" endpoint="/nlb/v1/listeners/{id}/operations">
+
+Возвращает историю асинхронных операций листенера (cursor-пагинация). Формат элемента —
+[`Operation`](/api/operations).
+
+</ApiOperation>
+
+## Ошибки и граничные случаи
+
+<table>
+  <thead><tr><th>Ситуация</th><th>Код</th><th>Поведение</th></tr></thead>
+  <tbody>
+    <tr><td>Get/Delete несуществующего листенера</td><td><code>NOT_FOUND</code></td><td><code>"Listener &lt;id&gt; not found"</code></td></tr>
+    <tr><td>Malformed id</td><td><code>INVALID_ARGUMENT</code></td><td><code>"invalid lst id '&lt;X&gt;'"</code></td></tr>
+    <tr><td>Create под несуществующим балансировщиком</td><td><code>NOT_FOUND</code> / <code>INVALID_ARGUMENT</code></td><td>Родитель не найден</td></tr>
+    <tr><td>Имя не уникально в рамках балансировщика</td><td><code>ALREADY_EXISTS</code></td><td>UNIQUE(load_balancer_id, name)</td></tr>
+    <tr><td>Порт вне диапазона (в т.ч. 0)</td><td><code>INVALID_ARGUMENT</code></td><td>1–65535</td></tr>
+    <tr><td>Попытка изменить <code>protocol</code> / <code>port</code> / <code>loadBalancerId</code></td><td><code>INVALID_ARGUMENT</code></td><td>Immutable-поле в updateMask</td></tr>
+  </tbody>
+</table>

@@ -1,0 +1,209 @@
+---
+id: getting-started
+sidebar_position: 2
+title: Быстрый старт
+---
+
+import CodeBlock from '@theme/CodeBlock'
+import dedent from 'ts-dedent'
+
+# Быстрый старт
+
+Эта страница проводит путь от нуля до работающего балансировщика: собрать бинарь и мигратор,
+накатить схему, запустить сервис и по шагам создать TargetGroup → NetworkLoadBalancer →
+Listener, а затем опросить состояние таргетов. Все примеры используют нейтральные
+идентификаторы топологии (`region-1`, `region-1-a`) и REST через `api-gateway`.
+
+:::info Что нужно
+Go-тулчейн (сборка из исходников), доступный PostgreSQL и `curl`. Для реальных ссылок
+(`subnetId`, `instanceId`, `regionId`) нужны запущенные соседние сервисы (kacho-vpc,
+kacho-compute, kacho-geo) и kacho-iam для авторизации. REST-примеры идут через `api-gateway`
+(порт `18080` — подставьте свой).
+:::
+
+## 1. Собрать сервис и мигратор
+
+В репозитории две сборочные цели: API-сервер и отдельный бинарь миграций (`cmd/migrator`).
+
+<CodeBlock language="bash">
+  {dedent`
+    # API-сервер → bin/kacho-loadbalancer
+    make build-api
+
+    # мигратор → bin/kacho-migrator
+    make build-migrator
+
+    # обе цели сразу
+    make build
+  `}
+</CodeBlock>
+
+## 2. Накатить миграции
+
+Схема `kacho_nlb` создаётся набором goose-миграций (`internal/migrations`): таблицы
+балансировщиков, листенеров, групп таргетов, pivot членства, `operations` (LRO) и
+outbox-таблицы (lifecycle-feed + FGA register). Мигратор — отдельный бинарь; DSN он берёт по
+приоритету `--dsn` > ENV `KACHO_NLB_REPOSITORY__POSTGRES__URL` > `config.yaml`.
+
+<CodeBlock language="bash">
+  {dedent`
+    export KACHO_NLB_REPOSITORY__POSTGRES__URL='postgres://kacho:secret@localhost:5432/kacho_nlb?sslmode=disable&search_path=kacho_nlb,public'
+
+    make migrate-up        # bin/kacho-migrator up
+    make migrate-status    # bin/kacho-migrator status
+  `}
+</CodeBlock>
+
+:::warning Применённую миграцию не редактировать
+Изменение схемы — только новой миграцией. Уже применённый файл не редактируется (конвенция
+Kachō). Полный список ключей подключения — на странице [Конфигурация](/install/configuration).
+:::
+
+## 3. Запустить сервис
+
+API-сервер поднимает **два listener'а**: публичный (`:9090`, клиенты через api-gateway) и
+cluster-internal (`:9091`, peer-сервисы). В dev-режиме (`mode: dev`) TLS необязателен и
+breakglass допустим; production требует TLS и сконфигурированный адрес kacho-iam.
+
+<CodeBlock language="bash">
+  {dedent`
+    make run     # build-api + bin/kacho-loadbalancer с локальным config.yaml
+  `}
+</CodeBlock>
+
+Минимальный `config.yaml` для локального запуска — в
+[`deploy/configmap-sample.yaml`](/install/configuration): `mode: dev` и валидный
+`repository.postgres.url` достаточны, чтобы сервис стартовал.
+
+## 4. Создать TargetGroup
+
+Балансировщику нужен пул бэкендов. Группа несёт **единый** health-check (обязателен) и набор
+таргетов. Мутация асинхронна — ответ содержит `operation.Operation`.
+
+<CodeBlock language="bash">
+  {dedent`
+    curl -X POST 'http://localhost:18080/nlb/v1/targetGroups' \\
+      -H 'Authorization: Bearer <JWT>' \\
+      -H 'Content-Type: application/json' \\
+      -d '{
+            "projectId": "prj-1",
+            "name": "web-backends",
+            "regionId": "region-1",
+            "healthCheck": {
+              "name": "tcp-80",
+              "tcpOptions": { "port": 80 }
+            },
+            "targets": [
+              { "ipRef": { "subnetId": "sub-1", "address": "10.0.0.11" }, "weight": 100 }
+            ]
+          }'
+  `}
+</CodeBlock>
+
+<CodeBlock language="json">
+  {dedent`
+    {
+      "id": "iop...",
+      "description": "create target group",
+      "done": false,
+      "metadata": { "targetGroupId": "tgr..." }
+    }
+  `}
+</CodeBlock>
+
+Поллите `OperationService.Get`, пока `done=true`; в `response` будет готовый `TargetGroup`
+(см. [Операции](/api/operations)).
+
+## 5. Создать NetworkLoadBalancer
+
+Балансировщик задаёт **тип** (EXTERNAL / INTERNAL), для INTERNAL — **размещение**
+(ZONAL / REGIONAL) и **источник VIP** пофамильно (`v4Source` / `v6Source`). Ниже — внутренний
+зональный балансировщик с авто-аллокацией VIP из подсети.
+
+<CodeBlock language="bash">
+  {dedent`
+    curl -X POST 'http://localhost:18080/nlb/v1/networkLoadBalancers' \\
+      -H 'Authorization: Bearer <JWT>' \\
+      -H 'Content-Type: application/json' \\
+      -d '{
+            "projectId": "prj-1",
+            "name": "web-lb",
+            "regionId": "region-1",
+            "type": "INTERNAL",
+            "placementType": "ZONAL",
+            "v4Source": { "subnetId": "sub-1" }
+          }'
+  `}
+</CodeBlock>
+
+Ответ — `Operation`; в `metadata.networkLoadBalancerId` — id создаваемого балансировщика. Пока
+`status=CREATING`, поля `v4AddressId` / `v6AddressId` ещё пусты — VIP привязывается воркером.
+Сам IP лежит в связанном vpc `Address` (`vpc.AddressService.Get`).
+
+## 6. Привязать группу к балансировщику
+
+Членство «балансировщик ↔ группа» управляется отдельными RPC. Тело — **вложенное**
+(`attachedTargetGroup`).
+
+<CodeBlock language="bash">
+  {dedent`
+    curl -X POST 'http://localhost:18080/nlb/v1/networkLoadBalancers/nlb...:attachTargetGroup' \\
+      -H 'Authorization: Bearer <JWT>' \\
+      -H 'Content-Type: application/json' \\
+      -d '{ "attachedTargetGroup": { "targetGroupId": "tgr..." } }'
+  `}
+</CodeBlock>
+
+## 7. Создать Listener
+
+Листенер вешается на существующий балансировщик (`loadBalancerId`), задаёт протокол и порты и
+наследует VIP балансировщика.
+
+<CodeBlock language="bash">
+  {dedent`
+    curl -X POST 'http://localhost:18080/nlb/v1/listeners' \\
+      -H 'Authorization: Bearer <JWT>' \\
+      -H 'Content-Type: application/json' \\
+      -d '{
+            "loadBalancerId": "nlb...",
+            "name": "http",
+            "protocol": "TCP",
+            "port": 80,
+            "targetPort": 80,
+            "defaultTargetGroupId": "tgr..."
+          }'
+  `}
+</CodeBlock>
+
+## 8. Опросить состояние таргетов
+
+Синхронный (без Operation) детерминированный снимок здоровья таргетов балансировщика:
+
+<CodeBlock language="bash">
+  {dedent`
+    curl 'http://localhost:18080/nlb/v1/networkLoadBalancers/nlb.../targetStates' \\
+      -H 'Authorization: Bearer <JWT>'
+  `}
+</CodeBlock>
+
+<CodeBlock language="json">
+  {dedent`
+    {
+      "targetStates": [
+        { "subnetId": "sub-1", "address": "10.0.0.11", "status": "HEALTHY", "zoneShifted": false }
+      ]
+    }
+  `}
+</CodeBlock>
+
+## Дальше
+
+- Конвенции, порты, формат ошибок и пагинация — [Обзор API](/api/overview).
+- Поля и все методы ресурсов — [NetworkLoadBalancer](/api/network-load-balancer),
+  [Listener](/api/listener), [TargetGroup](/api/target-group).
+- Async-модель — [Операции](/api/operations).
+- VIP-модель и размещение ZONAL/REGIONAL — [VIP и размещение](/architecture/vip-model).
+- Внутреннее устройство (clean architecture, схема БД, authz, outbox) —
+  [Архитектура](/architecture/overview).
+- Конфигурация и развёртывание — [Конфигурация](/install/configuration),
+  [Развёртывание](/install/deploy).
