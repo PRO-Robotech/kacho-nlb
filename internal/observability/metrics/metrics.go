@@ -51,6 +51,9 @@ type Metrics struct {
 	outboxPoisonCur *prometheus.GaugeVec
 	outboxPoisonTot *prometheus.CounterVec
 
+	// free-ip reconciler (застрявшие LoadBalancer'ы)
+	freeIPPoisoned prometheus.Counter
+
 	// readiness mirror
 	dependencyUp *prometheus.GaugeVec
 }
@@ -102,6 +105,10 @@ func New(version, commit string) *Metrics {
 			Name: "kacho_nlb_outbox_poisoned_total",
 			Help: "Monotonic register-outbox poison events (lost owner-tuple delivery), by table.",
 		}, []string{"table"}),
+		freeIPPoisoned: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "kacho_nlb_free_ip_poisoned_total",
+			Help: "Monotonic count of stuck LoadBalancers isolated by the free-ip reconciler due to a permanent VIP-release failure (VIP still allocated, no longer head-of-line-blocking the queue).",
+		}),
 		dependencyUp: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Name: "kacho_nlb_dependency_up",
 			Help: "Readiness mirror: 1 if the dependency is up, 0 if down, by dependency.",
@@ -127,6 +134,7 @@ func New(version, commit string) *Metrics {
 		m.terminalRetries, m.terminalFailures, m.orphans,
 		m.reconcileRuns, m.reconcileErrors,
 		m.outboxBacklog, m.outboxOldest, m.outboxPoisonCur, m.outboxPoisonTot,
+		m.freeIPPoisoned,
 		m.dependencyUp, buildInfo, lroActive,
 	)
 	return m
@@ -177,6 +185,12 @@ func (m *Metrics) SetPoisonedCount(table string, count float64) {
 
 // IncPoisoned инкрементит монотонный poison-счётчик (drainer poison-observer).
 func (m *Metrics) IncPoisoned(table string) { m.outboxPoisonTot.WithLabelValues(table).Inc() }
+
+// ---- free-ip reconciler ----
+
+// IncFreeIPPoisoned инкрементит счётчик изолированных free-ip reconciler'ом
+// ядовитых LoadBalancer'ов (permanent VIP-release failure; poison-observer).
+func (m *Metrics) IncFreeIPPoisoned() { m.freeIPPoisoned.Inc() }
 
 // ---- readiness mirror ----
 

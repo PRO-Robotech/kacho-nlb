@@ -81,6 +81,22 @@ type FreeIPRunner struct {
 	logger       *slog.Logger
 	interval     time.Duration
 	ageThreshold time.Duration
+
+	// onPoison — опциональный observer, вызываемый когда reconciler изолирует
+	// ядовитую (permanent-release-failure) строку (nil в дефолте). Прод-wiring
+	// инкрементит poison-метрику (mirror corelib drainer.WithPoisonObserver).
+	onPoison func(lbID string)
+}
+
+// FreeIPOption конфигурирует FreeIPRunner (functional-options).
+type FreeIPOption func(*FreeIPRunner)
+
+// WithPoisonObserver регистрирует callback, вызываемый КАЖДЫЙ раз когда
+// reconciler изолирует ядовитую строку (permanent VIP-release failure). Прод —
+// инкремент poison-метрики; тест — детерминированная фиксация факта изоляции.
+// Зеркалит corelib drainer.WithPoisonObserver.
+func WithPoisonObserver(fn func(lbID string)) FreeIPOption {
+	return func(r *FreeIPRunner) { r.onPoison = fn }
 }
 
 // NewFreeIPRunner создаёт reconciler. interval — период тиков; ageThreshold —
@@ -88,7 +104,7 @@ type FreeIPRunner struct {
 // Невалидные (<=0) значения подменяются безопасными дефолтами. addrs допускается
 // nil (vpc не сконфигурирован) — тогда reconciler no-op (без release нельзя
 // безопасно удалять handle, иначе утечка).
-func NewFreeIPRunner(pool *pgxpool.Pool, addrs vpcclient.InternalAddressClient, logger *slog.Logger, interval, ageThreshold time.Duration) *FreeIPRunner {
+func NewFreeIPRunner(pool *pgxpool.Pool, addrs vpcclient.InternalAddressClient, logger *slog.Logger, interval, ageThreshold time.Duration, opts ...FreeIPOption) *FreeIPRunner {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -98,13 +114,17 @@ func NewFreeIPRunner(pool *pgxpool.Pool, addrs vpcclient.InternalAddressClient, 
 	if ageThreshold <= 0 {
 		ageThreshold = 5 * time.Minute
 	}
-	return &FreeIPRunner{
+	r := &FreeIPRunner{
 		pool:         pool,
 		addrs:        addrs,
 		logger:       logger,
 		interval:     interval,
 		ageThreshold: ageThreshold,
 	}
+	for _, opt := range opts {
+		opt(r)
+	}
+	return r
 }
 
 // Run блокирует goroutine до отмены ctx. Каждые r.interval — tick reconcile;
@@ -149,23 +169,40 @@ func (r *FreeIPRunner) tick(ctx context.Context) {
 	}
 }
 
+// reconcileOutcome — исход одной итерации reconcileOne.
+type reconcileOutcome int
+
+const (
+	outcomeIdle       reconcileOutcome = iota // нет claimable-строки старше age-порога
+	outcomeReconciled                         // VIP освобождён + handle финализирован/удалён
+	outcomePoisoned                           // permanent-release failure → строка изолирована (updated_at bumped)
+)
+
 // reconcileOnce реконсилит застрявшие строки до исчерпания (или до
-// freeIPMaxPerTick). addrs==nil → no-op. Возвращает число реконсилированных
-// строк; первая транзиентная ошибка прерывает тик.
+// freeIPMaxPerTick). addrs==nil → no-op. Возвращает число РЕКОНСИЛИРОВАННЫХ
+// (успешно освобождённых) строк; первая транзиентная ошибка прерывает тик.
+// Ядовитая строка (permanent-release failure) изолируется (bump updated_at) и
+// НЕ прерывает тик — иначе одна строка head-of-line-блокирует всю очередь
+// (selectStuckSQL ORDER BY updated_at ASC переизбирал бы её первой каждый тик).
 func (r *FreeIPRunner) reconcileOnce(ctx context.Context) (int, error) {
 	if r.addrs == nil {
 		return 0, nil
 	}
 	reconciled := 0
 	for i := 0; i < freeIPMaxPerTick; i++ {
-		processed, err := r.reconcileOne(ctx)
+		outcome, err := r.reconcileOne(ctx)
 		if err != nil {
 			return reconciled, err
 		}
-		if !processed {
+		switch outcome {
+		case outcomeReconciled:
+			reconciled++
+		case outcomePoisoned:
+			// Строка изолирована (updated_at bumped, выпала из age-порога) —
+			// продолжаем свип к следующему кандидату, не прерывая тик.
+		case outcomeIdle:
 			return reconciled, nil
 		}
-		reconciled++
 	}
 	return reconciled, nil
 }
@@ -184,8 +221,11 @@ type stuckLB struct {
 
 // reconcileOne — claim+release+finalize одной строки в одной TX. FOR UPDATE SKIP
 // LOCKED держит row-lock на время release (network) → ровно одна реплика
-// освобождает VIP и удаляет handle. release-ошибка (vpc Unavailable) → rollback,
-// строка остаётся → retry на следующем тике (идемпотентно).
+// освобождает VIP и удаляет handle. Транзиентная release-ошибка (vpc Unavailable)
+// → rollback, строка остаётся → retry на следующем тике (идемпотентно).
+// Permanent release-ошибка (ErrInvalidArg/ErrFailedPrecondition) → строка
+// изолируется (handleReleaseErr: bump updated_at), чтобы не head-of-line-
+// блокировать очередь; см. handleReleaseErr. Возвращает reconcileOutcome.
 //
 // Row-lock hold window (round-6 audit finding 1): releaseFamily вызывает
 // ClearReference/FreeIP (до 4 outbound vpc-звонков — v4+v6, каждый up to
@@ -199,10 +239,10 @@ type stuckLB struct {
 // rollback'ится, строка остаётся на retry следующим тиком. Полный вынос
 // release-вызовов за границы транзакции — отдельный (более рискованный)
 // рефактор, не предпринят без детерминированного теста на его race-профиль.
-func (r *FreeIPRunner) reconcileOne(ctx context.Context) (bool, error) {
+func (r *FreeIPRunner) reconcileOne(ctx context.Context) (reconcileOutcome, error) {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
-		return false, fmt.Errorf("begin reconcile tx: %w", err)
+		return outcomeIdle, fmt.Errorf("begin reconcile tx: %w", err)
 	}
 	committed := false
 	defer func() {
@@ -216,19 +256,21 @@ func (r *FreeIPRunner) reconcileOne(ctx context.Context) (bool, error) {
 		&lb.id, &lb.projectID, &lb.regionID,
 		&lb.addressIDV4, &lb.addressIDV6, &lb.originV4, &lb.originV6, &lb.status)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return false, nil
+		return outcomeIdle, nil
 	}
 	if err != nil {
-		return false, fmt.Errorf("claim stuck load balancer: %w", err)
+		return outcomeIdle, fmt.Errorf("claim stuck load balancer: %w", err)
 	}
 
 	// Per-family release VIP по address_id (детерминированно, раздельно v4/v6).
-	// Idempotent: NotFound трактуется клиентом как успех.
+	// Idempotent: NotFound трактуется клиентом как успех. Транзиентная ошибка
+	// (peer недоступен) прерывает тик (retry); permanent-ошибка изолирует
+	// ядовитую строку, не блокируя очередь (см. handleReleaseErr).
 	if err := r.releaseFamily(ctx, lb.addressIDV4, lb.originV4); err != nil {
-		return false, fmt.Errorf("release vip v4 %s (origin=%s): %w", lb.addressIDV4, lb.originV4, err)
+		return r.handleReleaseErr(ctx, tx, &committed, lb, "v4", lb.addressIDV4, lb.originV4, err)
 	}
 	if err := r.releaseFamily(ctx, lb.addressIDV6, lb.originV6); err != nil {
-		return false, fmt.Errorf("release vip v6 %s (origin=%s): %w", lb.addressIDV6, lb.originV6, err)
+		return r.handleReleaseErr(ctx, tx, &committed, lb, "v6", lb.addressIDV6, lb.originV6, err)
 	}
 	if lb.addressIDV4 == "" && lb.addressIDV6 == "" {
 		r.logger.WarnContext(ctx,
@@ -237,7 +279,7 @@ func (r *FreeIPRunner) reconcileOne(ctx context.Context) (bool, error) {
 	}
 
 	if _, err := tx.Exec(ctx, `DELETE FROM kacho_nlb.load_balancers WHERE id = $1`, lb.id); err != nil {
-		return false, fmt.Errorf("delete stuck load balancer %s: %w", lb.id, err)
+		return outcomeIdle, fmt.Errorf("delete stuck load balancer %s: %w", lb.id, err)
 	}
 
 	// DELETING — finalize то, что сделал бы успешный Delete (DELETED + fga-unregister).
@@ -245,18 +287,71 @@ func (r *FreeIPRunner) reconcileOne(ctx context.Context) (bool, error) {
 	// (CREATED/fga-register не эмитились) → ничего не эмитим.
 	if lb.status == string(domain.LBStatusDeleting) {
 		if err := emitReconcileFinalize(ctx, tx, lb.id, lb.projectID); err != nil {
-			return false, err
+			return outcomeIdle, err
 		}
 	}
 
 	if err := tx.Commit(ctx); err != nil {
-		return false, fmt.Errorf("commit reconcile %s: %w", lb.id, err)
+		return outcomeIdle, fmt.Errorf("commit reconcile %s: %w", lb.id, err)
 	}
 	committed = true
 	r.logger.InfoContext(ctx, "free_ip_runner reconciled stuck load balancer",
 		"load_balancer_id", lb.id, "status", lb.status,
 		"address_id_v4", lb.addressIDV4, "address_id_v6", lb.addressIDV6)
-	return true, nil
+	return outcomeReconciled, nil
+}
+
+// handleReleaseErr классифицирует ошибку release VIP и решает судьбу тика:
+//
+//   - ТРАНЗИЕНТНАЯ (domain.ErrUnavailable — peer недоступен; ctx-отмена при
+//     shutdown): rollback, вернуть ошибку. Строка остаётся с нетронутым
+//     updated_at → быстрый retry следующим тиком (self-heal при восстановлении
+//     vpc-peer'а). tick() глотает non-ctx ошибку (логирует), ctx-ошибку — тихо.
+//
+//   - ПЕРМАНЕНТНАЯ (domain.ErrInvalidArg / domain.ErrFailedPrecondition — напр.
+//     stray referrer не даёт удалить owned-Address, malformed/invalid address_id):
+//     ядовитая строка. НЕ прерываем тик — иначе одна строка head-of-line-
+//     блокирует всю очередь (selectStuckSQL ORDER BY updated_at ASC переизбирал
+//     бы её первой каждый тик → unbounded VIP-leak за одной строкой). Изолируем:
+//     bump updated_at=now() в ЭТОЙ же tx и commit → строка тонет в хвост очереди
+//     и выпадает из age-порога на ~ageThreshold (back-off) → следующий SELECT
+//     берёт другого кандидата. VIP остаётся аллоцированным (наблюдаемо через
+//     onPoison-обсервер/Warn-лог), но утечка больше не растёт неограниченно.
+func (r *FreeIPRunner) handleReleaseErr(
+	ctx context.Context, tx pgx.Tx, committed *bool, lb stuckLB, family, addressID, origin string, releaseErr error,
+) (reconcileOutcome, error) {
+	if isTransientReleaseErr(releaseErr) {
+		return outcomeIdle, fmt.Errorf("release vip %s %s (origin=%s): %w", family, addressID, origin, releaseErr)
+	}
+
+	// Permanent → изолировать ядовитую строку (bump updated_at, commit).
+	if _, err := tx.Exec(ctx,
+		`UPDATE kacho_nlb.load_balancers SET updated_at = now() WHERE id = $1`, lb.id); err != nil {
+		return outcomeIdle, fmt.Errorf("isolate poison load balancer %s: %w", lb.id, err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return outcomeIdle, fmt.Errorf("commit poison isolation %s: %w", lb.id, err)
+	}
+	*committed = true
+	r.logger.WarnContext(ctx,
+		"free_ip_runner: permanent VIP release failure — isolating poison load balancer (updated_at bumped, tick continues)",
+		"load_balancer_id", lb.id, "status", lb.status,
+		"family", family, "address_id", addressID, "vip_origin", origin, "err", releaseErr)
+	if r.onPoison != nil {
+		r.onPoison(lb.id)
+	}
+	return outcomePoisoned, nil
+}
+
+// isTransientReleaseErr — ошибка release, при которой строку НЕ изолируем
+// (self-heal на следующем тике): peer недоступен (domain.ErrUnavailable —
+// покрывает и per-call DeadlineExceeded, замапленный клиентом в ErrUnavailable)
+// либо отмена ctx (shutdown). Всё прочее (ErrInvalidArg/ErrFailedPrecondition) —
+// permanent → poison.
+func isTransientReleaseErr(err error) bool {
+	return errors.Is(err, domain.ErrUnavailable) ||
+		errors.Is(err, context.Canceled) ||
+		errors.Is(err, context.DeadlineExceeded)
 }
 
 // releaseFamily освобождает VIP одного семейства (§3.9): пустой address_id → no-op;
