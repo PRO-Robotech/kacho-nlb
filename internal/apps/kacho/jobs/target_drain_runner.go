@@ -90,7 +90,7 @@ type TargetDrainRunner struct {
 	// onTickErr — test-only observation hook (nil в проде), вызывается с
 	// non-ctx ошибкой tick'а. Позволяет integration-тесту детерминированно
 	// дождаться реально произошедшей transient-ошибки вместо wall-clock sleep
-	// (audit TEST #7, CWE-367). Зеркалит FreeIPRunner.onFirstFree-паттерн.
+	// (audit TEST #7, CWE-367).
 	onTickErr func(error)
 }
 
