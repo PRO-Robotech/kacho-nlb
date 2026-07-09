@@ -35,10 +35,10 @@ type (
 	// ProjectID — id ресурса kacho-iam Project, "prj" + 17.
 	ProjectID string
 
-	// RegionID — semantic id, "ru-central1"-style; owner — kacho-compute.
+	// RegionID — семантический id региона (напр. "<region>"); владелец Geography — kacho-geo.
 	RegionID string
 
-	// ZoneID — semantic id, "ru-central1-a"-style; owner — kacho-compute.
+	// ZoneID — семантический id зоны (напр. "<region>-<zone-suffix>"); владелец Geography — kacho-geo.
 	ZoneID string
 
 	// SubnetID, AddressID, NicID, InstanceID — type-aliases для ResourceID.

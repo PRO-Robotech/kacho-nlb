@@ -321,23 +321,27 @@ func addressInAnyCIDR(addr netip.Addr, cidrs []string) bool {
 	return false
 }
 
-// regionFromZone — derive region из zone-id by stripping trailing "-<letter>".
-// `ru-central1-a` → `ru-central1`; `ru-central2-b` → `ru-central2`. Если формат
-// не подходит — возвращает zone as-is (caller тогда матчит как regional zone).
+// regionFromZone — best-effort структурный pre-filter: derive region из zone-id,
+// отбрасывая trailing "-<zone-suffix>" (1..3 символа), напр. "<region>-<suffix>" →
+// "<region>". Это НЕ авторитетный region-guard — владелец Geography (Region/Zone)
+// это kacho-geo (ребро nlb→geo); zone→region резолвится там. Если shape не
+// распознан (нет dash / suffix длиннее 3 / пустой), возвращает "" (cannot-derive),
+// и caller ПРОПУСКАЕТ best-effort match вместо ложного отклонения легитимного
+// same-region таргета (авторитетная проверка остаётся за geo).
 func regionFromZone(zone string) string {
 	if zone == "" {
 		return ""
 	}
 	i := strings.LastIndex(zone, "-")
 	if i <= 0 || i == len(zone)-1 {
-		return zone
+		return ""
 	}
 	suffix := zone[i+1:]
-	// region-zone у kacho выглядит как "<region>-<letter>" — 1-3 char suffix.
+	// region-zone у kacho выглядит как "<region>-<zone-suffix>" — 1-3 char suffix.
 	if len(suffix) >= 1 && len(suffix) <= 3 {
 		return zone[:i]
 	}
-	return zone
+	return ""
 }
 
 // isInstanceTarget / isNicTarget — small predicates для switch (option Maybe
