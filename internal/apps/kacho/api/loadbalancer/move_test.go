@@ -41,6 +41,45 @@ func TestMove_HappyPath(t *testing.T) {
 	require.Equal(t, "project:prj-src", repo.fga[1].Intent.Tuples[0].SubjectID)
 }
 
+// TestMove_RegisterDstCarriesLabelsAndParent — regression: the register(dst)
+// FGA intent must mirror lbMirrorIntent semantics (Labels from the moved record +
+// ParentProjectID=dst), NOT reuse the bare lbUnregisterIntent (which drops both).
+// Previously Move emitted register(dst) with Labels=nil / ParentProjectID="",
+// wiping the kacho-iam resource_mirror row feeding the γ label/parent selector →
+// label-based grants and parent-scoped queries silently excluded the moved LB in
+// the destination project until an unrelated Update repaired the mirror.
+func TestMove_RegisterDstCarriesLabelsAndParent(t *testing.T) {
+	t.Parallel()
+	repo := newFakeRepo()
+	lbID := seedLB(t, repo, "prj-src", "edge")
+	repo.lbs[lbID].Labels = domain.LabelsFromMap(map[string]string{"env": "prod"})
+	opsRepo := newFakeOpsRepo()
+	uc := NewMoveLoadBalancerUseCase(repo, opsRepo, &fakeProjectClient{}, nil, slog.Default())
+	op, err := uc.Execute(context.Background(), &lbv1.MoveNetworkLoadBalancerRequest{
+		NetworkLoadBalancerId: lbID,
+		DestinationProjectId:  "prj-dst",
+	})
+	require.NoError(t, err)
+	final := awaitOpDone(t, opsRepo, op.ID)
+	require.Nil(t, final.Error)
+	require.Len(t, repo.fga, 2)
+
+	// register(dst) must carry the mirror fields for the destination.
+	reg := repo.fga[0]
+	require.Equal(t, domain.FGAEventRegister, reg.EventType)
+	require.Equal(t, "prj-dst", reg.Intent.ParentProjectID,
+		"register(dst) must set ParentProjectID=dst for the γ parent selector")
+	require.Equal(t, map[string]string{"env": "prod"}, reg.Intent.Labels,
+		"register(dst) must carry the moved LB's labels for the γ label selector")
+
+	// unregister(src) stays bare (IAM uses only object+source_version on unregister).
+	unreg := repo.fga[1]
+	require.Equal(t, domain.FGAEventUnregister, unreg.EventType)
+	require.Equal(t, "project:prj-src", unreg.Intent.Tuples[0].SubjectID)
+	require.Empty(t, unreg.Intent.ParentProjectID)
+	require.Nil(t, unreg.Intent.Labels)
+}
+
 func TestMove_SameProject(t *testing.T) {
 	t.Parallel()
 	repo := newFakeRepo()
