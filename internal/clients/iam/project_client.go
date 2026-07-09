@@ -27,16 +27,12 @@ import (
 const DefaultProjectGetTimeout = 5 * time.Second
 
 // Project — projection ресурса kacho-iam.Project, ограниченная полями
-// необходимыми consumer'ам (NLB не оперирует labels/description).
+// необходимыми consumer'ам. NLB зовёт ProjectClient.Get только как
+// existence-precheck (все callers отбрасывают результат в `_`), поэтому
+// проекция несёт лишь ID/Name — по образцу sibling geo.Region.
 type Project struct {
-	ID        string
-	Name      string
-	AccountID string
-	// Status — текущий жизненный статус Project. kacho-iam proto не несёт
-	// явного status-поля для Project (всегда "ACTIVE" если возвращается
-	// успешно из Get; иначе NotFound). Поле оставлено для будущей
-	// proto-эволюции (KAC-iam status-tracking) — сейчас всегда "ACTIVE".
-	Status string
+	ID   string
+	Name string
 }
 
 // ProjectClient — port-интерфейс для service-слоя; реализуется adapter'ом
@@ -127,10 +123,8 @@ func (c *projectClient) Get(ctx context.Context, projectID string) (*Project, er
 		return nil, mapProjectErr(projectID, err)
 	}
 	return &Project{
-		ID:        resp.GetId(),
-		Name:      resp.GetName(),
-		AccountID: resp.GetAccountId(),
-		Status:    "ACTIVE",
+		ID:   resp.GetId(),
+		Name: resp.GetName(),
 	}, nil
 }
 

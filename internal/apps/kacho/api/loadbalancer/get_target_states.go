@@ -80,17 +80,21 @@ func (u *GetTargetStatesUseCase) Execute(
 	// (network_load_balancer_id) — without the checks below, a caller
 	// authorized on their own LB could read ANY caller-supplied TG's targets
 	// (instance/NIC ids, addresses, subnet ids), including a TG belonging to
-	// another project. Same-project is an unconditional invariant (checked
-	// even with checkClient nil); the FGA viewer-Check additionally covers
-	// narrowly-scoped custom grants within the same project. Mirrors
-	// AttachTargetGroup's guard (attach_target_group.go / tg_authz.go).
+	// another project. The FGA viewer-Check runs FIRST (before the project
+	// branch): an unauthorized caller passing a cross-project TG must get a
+	// generic PermissionDenied — running the project-mismatch branch first would
+	// leak the victim TG's owning project id and confirm its existence
+	// (existence-oracle, inconsistent with the codebase's existence-hiding
+	// stance). The same-project equality is an unconditional invariant checked
+	// even with checkClient nil (dev/unwired). Mirrors AttachTargetGroup's guard
+	// (attach_target_group.go / tg_authz.go).
+	if err := checkTargetGroupViewer(ctx, u.checkClient, tgID); err != nil {
+		return nil, err
+	}
 	if string(lb.ProjectID) != string(tg.ProjectID) {
 		return nil, status.Errorf(codes.FailedPrecondition,
 			"project mismatch: NetworkLoadBalancer is in project %s, TargetGroup is in project %s",
 			lb.ProjectID, tg.ProjectID)
-	}
-	if err := checkTargetGroupViewer(ctx, u.checkClient, tgID); err != nil {
-		return nil, err
 	}
 
 	targets, err := rd.TargetGroups().ListTargets(ctx, tgID)

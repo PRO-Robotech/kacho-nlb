@@ -686,7 +686,7 @@ func (f *fakeProjectClient) Get(ctx context.Context, projectID string) (*iam.Pro
 	if f.getFunc != nil {
 		return f.getFunc(ctx, projectID)
 	}
-	return &iam.Project{ID: projectID, Name: "fake-project", Status: "ACTIVE"}, nil
+	return &iam.Project{ID: projectID, Name: "fake-project"}, nil
 }
 
 // fakeCheckClient — in-memory CheckClient (iam.InternalIAMService.Check) двойник.
