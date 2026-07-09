@@ -1,0 +1,219 @@
+---
+id: overview
+sidebar_position: 1
+title: Обзор API
+---
+
+import CodeBlock from '@theme/CodeBlock'
+import dedent from 'ts-dedent'
+
+# Обзор API
+
+Эта страница описывает **конвенции**, общие для всего API Kachō NLB: ресурсы, два порта
+(public / internal), REST-пути и `:verb`-действия, формат JSON, аутентификацию и авторизацию,
+формат ошибок, пагинацию, async-модель `Operation` и точность временных меток. Поля и операции
+каждого ресурса — на отдельных страницах ([NetworkLoadBalancer](/api/network-load-balancer),
+[Listener](/api/listener), [TargetGroup](/api/target-group)).
+
+:::info Единый контракт — gRPC, REST — проекция
+Источник истины — Protocol Buffers в `kacho-proto` (домен `kacho.cloud.loadbalancer.v1`).
+REST-поверхность строится через **grpc-gateway**: каждый RPC аннотирован `google.api.http`.
+Семантика (коды ошибок, валидация) одинакова для gRPC и REST; примеры ниже — в REST-форме
+(через `api-gateway`).
+:::
+
+:::tip Сначала — практика
+Если вы только знакомитесь с сервисом, начните с [Быстрого старта](/getting-started). Эта
+страница — справочник по конвенциям, общим для трёх ресурсов.
+:::
+
+## Ресурсы и их назначение
+
+Все три ресурса — плоские (flat): domain-поля на верхнем уровне сообщения, без K8s-envelope.
+Каждый принадлежит проекту (`projectId`) и региону (`regionId`).
+
+<table>
+  <thead><tr><th>Ресурс</th><th>ID-префикс</th><th>Бизнес-назначение</th></tr></thead>
+  <tbody>
+    <tr><td><strong>NetworkLoadBalancer</strong></td><td><code>nlb</code></td><td>L4-балансировщик: тип (EXTERNAL/INTERNAL), размещение (ZONAL/REGIONAL), один VIP на семейство адресов</td></tr>
+    <tr><td><strong>Listener</strong></td><td><code>lst</code></td><td>Точка приёма трафика балансировщика: протокол, входящий порт, порт таргета</td></tr>
+    <tr><td><strong>TargetGroup</strong></td><td><code>tgr</code></td><td>Пул L4-бэкендов с единым health-check; M:N-привязка к балансировщику</td></tr>
+  </tbody>
+</table>
+
+Постраничный справочник: [NetworkLoadBalancer](/api/network-load-balancer),
+[Listener](/api/listener), [TargetGroup](/api/target-group).
+
+## Два порта: public (9090) и internal (9091)
+
+Сервис слушает **два независимых listener'а** с разной поверхностью и доверительной границей:
+
+<table>
+  <thead><tr><th>Порт</th><th>Listener</th><th>Кто ходит</th><th>Назначение</th></tr></thead>
+  <tbody>
+    <tr><td><code>:9090</code></td><td>public</td><td>Tenant-клиенты через <code>api-gateway</code></td><td>Публичный CRUD + lifecycle всех трёх ресурсов</td></tr>
+    <tr><td><code>:9091</code></td><td>internal</td><td>Peer-сервисы (cluster-internal, mTLS)</td><td>Internal-сервисы: приём lifecycle-стрима FGA-синхронизации и служебные ребра</td></tr>
+  </tbody>
+</table>
+
+Authz проверяется на **обоих** listener'ах — internal не считается доверенным
+(defense-in-depth). Подробнее — [Авторизация](/architecture/authz).
+
+## REST-пути и `:verb`-действия
+
+Ресурсы доступны по единому шаблону `/nlb/v1/<resource>`. Стандартные методы — `Get`/`List`
+(sync) и `Create`/`Update`/`Delete` (async `Operation`). Дополнительные действия оформлены как
+suffix-`:verb` на конкретном ресурсе (`.../{id}:start`), а под-коллекции — как вложенный путь
+(`.../{id}/operations`).
+
+<table>
+  <thead><tr><th>Действие</th><th>HTTP</th><th>Шаблон пути</th><th>Тип</th></tr></thead>
+  <tbody>
+    <tr><td><code>Get</code></td><td><code>GET</code></td><td><code>/nlb/v1/networkLoadBalancers/&#123;id&#125;</code></td><td>sync</td></tr>
+    <tr><td><code>List</code></td><td><code>GET</code></td><td><code>/nlb/v1/networkLoadBalancers</code></td><td>sync</td></tr>
+    <tr><td><code>Create</code></td><td><code>POST</code></td><td><code>/nlb/v1/networkLoadBalancers</code></td><td>async · Operation</td></tr>
+    <tr><td><code>Update</code></td><td><code>PATCH</code></td><td><code>/nlb/v1/networkLoadBalancers/&#123;id&#125;</code></td><td>async · Operation</td></tr>
+    <tr><td><code>Delete</code></td><td><code>DELETE</code></td><td><code>/nlb/v1/networkLoadBalancers/&#123;id&#125;</code></td><td>async · Operation</td></tr>
+    <tr><td><code>Start</code></td><td><code>POST</code></td><td><code>/nlb/v1/networkLoadBalancers/&#123;id&#125;:start</code></td><td>async · Operation</td></tr>
+    <tr><td><code>AttachTargetGroup</code></td><td><code>POST</code></td><td><code>/nlb/v1/networkLoadBalancers/&#123;id&#125;:attachTargetGroup</code></td><td>async · Operation</td></tr>
+    <tr><td><code>GetTargetStates</code></td><td><code>GET</code></td><td><code>/nlb/v1/networkLoadBalancers/&#123;id&#125;/targetStates</code></td><td>sync</td></tr>
+  </tbody>
+</table>
+
+Полная таблица по всем сервисам — [в конце страницы](#сводка-сервисов-и-rpc).
+
+## Формат JSON
+
+Тело запроса и ответа — **JSON с camelCase-ключами** (`projectId`, `regionId`,
+`targetGroupId`, `createdAt`). Это grpc-gateway-проекция proto-полей (в `.proto` —
+`snake_case`). Enum'ы сериализуются строковыми константами (`ACTIVE`, `INTERNAL`, `TCP`).
+Временные метки — RFC 3339 (`2026-06-24T10:00:00Z`).
+
+## Аутентификация
+
+Все внешние запросы проходят через **`api-gateway`**, который проверяет **JWT** в заголовке
+`Authorization: Bearer <token>`. Отсутствующий или невалидный токен → `UNAUTHENTICATED`
+(HTTP `401`) — до того, как запрос дойдёт до доменного сервиса. Транспорт service→service —
+**mTLS** (verified client-cert).
+
+## Авторизация
+
+Авторизация — **per-RPC, ReBAC** через **OpenFGA**, проверяется через `InternalIAMService.Check`
+в kacho-iam. Каждый RPC несёт в proto аннотации `permission` и `required_relation`, а также
+`scope_extractor` (по какому объекту проверять доступ). Verb-bearing relations:
+
+- **read** (`Get`, `GetTargetStates`) — `v_get`; `ListOperations` — `v_list`;
+- **mutations** (`Update`/`Delete`/`Start`/`Stop`/`Move`/`Attach…`/`Add…`) — `v_update` /
+  `v_delete` на самом ресурсе;
+- **create** — `editor` на родителе (проект — для NLB и TargetGroup; родительский
+  балансировщик — для Listener).
+
+`List`-RPC освобождены от единого project-scope Check (`<exempt>`): handler фильтрует результат
+через `AuthorizeService.ListObjects` (viewer ∪ `v_list`, per-object) — отдаётся **только**
+доступное. При недоступности kacho-iam List → `UNAVAILABLE` (fail-closed, не нефильтрованный
+ответ). Подробнее — [Авторизация](/architecture/authz).
+
+## Формат ошибок
+
+Ошибки возвращаются в формате **`google.rpc.Status`** — `{code, message, details[]}` —
+единообразно для gRPC и REST. `code` — числовой gRPC-код (REST мапит его на HTTP-статус),
+`message` — текст в стабильной формулировке Kachō, `details[]` — массив структурированных
+деталей (обычно пустой).
+
+<CodeBlock language="json">
+  {dedent`
+    {
+      "code": 5,
+      "message": "NetworkLoadBalancer nlb-x not found",
+      "details": []
+    }
+  `}
+</CodeBlock>
+
+<table>
+  <thead><tr><th>gRPC-код</th><th>HTTP</th><th>Когда</th></tr></thead>
+  <tbody>
+    <tr><td><code>INVALID_ARGUMENT</code></td><td>400</td><td>Нарушение формата / валидации (malformed id, порт вне диапазона, ссылка на несуществующий peer-ресурс)</td></tr>
+    <tr><td><code>NOT_FOUND</code></td><td>404</td><td>Корректный по формату, но несуществующий ресурс</td></tr>
+    <tr><td><code>ALREADY_EXISTS</code></td><td>409</td><td>Нарушение UNIQUE (например, имя листенера не уникально в рамках балансировщика)</td></tr>
+    <tr><td><code>FAILED_PRECONDITION</code></td><td>409</td><td>Состояние не позволяет (перенос группы, привязанной к балансировщику; deletion protection)</td></tr>
+    <tr><td><code>UNAVAILABLE</code></td><td>503</td><td>Peer (vpc / compute / geo / iam) недоступен — fail-closed для мутаций</td></tr>
+    <tr><td><code>UNAUTHENTICATED</code></td><td>401</td><td>Нет / невалиден JWT</td></tr>
+    <tr><td><code>PERMISSION_DENIED</code></td><td>403</td><td>Нет нужного отношения в authz-Check</td></tr>
+    <tr><td><code>INTERNAL</code></td><td>500</td><td>Внутренняя ошибка (фиксированный текст, без утечки SQL)</td></tr>
+  </tbody>
+</table>
+
+Malformed id отклоняется первым стейтментом RPC (`invalid <res> id '<X>'`, `InvalidArgument`);
+well-formed-но-несуществующий — `NOT_FOUND` через repo.
+
+## Пагинация — cursor-based
+
+`List`-RPC используют **курсорную** пагинацию. Запрос принимает `pageSize` (0 → дефолт,
+максимум 1000) и `pageToken`; ответ возвращает `nextPageToken` (пустая строка — последняя
+страница). `pageToken` — opaque-значение, передавать как есть. `filter` поддерживает
+`name = "..."`.
+
+<CodeBlock language="bash">
+  {dedent`
+    curl 'http://localhost:18080/nlb/v1/networkLoadBalancers?projectId=prj-1&pageSize=50' \\
+      -H 'Authorization: Bearer <JWT>'
+    # следующая страница — подставить nextPageToken из ответа
+    curl 'http://localhost:18080/nlb/v1/networkLoadBalancers?projectId=prj-1&pageSize=50&pageToken=<nextPageToken>' \\
+      -H 'Authorization: Bearer <JWT>'
+  `}
+</CodeBlock>
+
+## Async-модель — мутации возвращают Operation
+
+Все `Create`/`Update`/`Delete` и `:verb`-действия **асинхронны**: RPC возвращает
+`operation.Operation`, а не ресурс. Клиент поллит `OperationService.Get(id)` до `done=true`;
+в `response` — итоговый ресурс, в `error` — `google.rpc.Status` при неудаче. Watch-RPC не
+существует — только полл. Синхронны только `Get`/`List`, `GetTargetStates` и `ListOperations`.
+Подробнее — [Операции](/api/operations).
+
+## Точность временных меток
+
+Все `createdAt` в proto-ответе **усечены до секунд** (`Truncate(time.Second)`) — конвенция
+Kachō. БД хранит микросекунды, но клиент видит секундную точность (`2026-06-24T10:00:00Z`).
+
+## Сводка сервисов и RPC
+
+<table>
+  <thead><tr><th>Сервис</th><th>RPC</th><th>REST</th><th>Тип</th></tr></thead>
+  <tbody>
+    <tr><td rowSpan="12"><code>NetworkLoadBalancerService</code></td><td><code>Get</code></td><td><code>GET /nlb/v1/networkLoadBalancers/&#123;id&#125;</code></td><td>sync</td></tr>
+    <tr><td><code>List</code></td><td><code>GET /nlb/v1/networkLoadBalancers</code></td><td>sync</td></tr>
+    <tr><td><code>Create</code></td><td><code>POST /nlb/v1/networkLoadBalancers</code></td><td>async</td></tr>
+    <tr><td><code>Update</code></td><td><code>PATCH /nlb/v1/networkLoadBalancers/&#123;id&#125;</code></td><td>async</td></tr>
+    <tr><td><code>Delete</code></td><td><code>DELETE /nlb/v1/networkLoadBalancers/&#123;id&#125;</code></td><td>async</td></tr>
+    <tr><td><code>Start</code></td><td><code>POST /nlb/v1/networkLoadBalancers/&#123;id&#125;:start</code></td><td>async</td></tr>
+    <tr><td><code>Stop</code></td><td><code>POST /nlb/v1/networkLoadBalancers/&#123;id&#125;:stop</code></td><td>async</td></tr>
+    <tr><td><code>Move</code></td><td><code>POST /nlb/v1/networkLoadBalancers/&#123;id&#125;:move</code></td><td>async</td></tr>
+    <tr><td><code>AttachTargetGroup</code></td><td><code>POST /nlb/v1/networkLoadBalancers/&#123;id&#125;:attachTargetGroup</code></td><td>async</td></tr>
+    <tr><td><code>DetachTargetGroup</code></td><td><code>POST /nlb/v1/networkLoadBalancers/&#123;id&#125;:detachTargetGroup</code></td><td>async</td></tr>
+    <tr><td><code>GetTargetStates</code></td><td><code>GET /nlb/v1/networkLoadBalancers/&#123;id&#125;/targetStates</code></td><td>sync</td></tr>
+    <tr><td><code>ListOperations</code></td><td><code>GET /nlb/v1/networkLoadBalancers/&#123;id&#125;/operations</code></td><td>sync</td></tr>
+    <tr><td rowSpan="6"><code>ListenerService</code></td><td><code>Get</code></td><td><code>GET /nlb/v1/listeners/&#123;id&#125;</code></td><td>sync</td></tr>
+    <tr><td><code>List</code></td><td><code>GET /nlb/v1/listeners</code></td><td>sync</td></tr>
+    <tr><td><code>Create</code></td><td><code>POST /nlb/v1/listeners</code></td><td>async</td></tr>
+    <tr><td><code>Update</code></td><td><code>PATCH /nlb/v1/listeners/&#123;id&#125;</code></td><td>async</td></tr>
+    <tr><td><code>Delete</code></td><td><code>DELETE /nlb/v1/listeners/&#123;id&#125;</code></td><td>async</td></tr>
+    <tr><td><code>ListOperations</code></td><td><code>GET /nlb/v1/listeners/&#123;id&#125;/operations</code></td><td>sync</td></tr>
+    <tr><td rowSpan="9"><code>TargetGroupService</code></td><td><code>Get</code></td><td><code>GET /nlb/v1/targetGroups/&#123;id&#125;</code></td><td>sync</td></tr>
+    <tr><td><code>List</code></td><td><code>GET /nlb/v1/targetGroups</code></td><td>sync</td></tr>
+    <tr><td><code>Create</code></td><td><code>POST /nlb/v1/targetGroups</code></td><td>async</td></tr>
+    <tr><td><code>Update</code></td><td><code>PATCH /nlb/v1/targetGroups/&#123;id&#125;</code></td><td>async</td></tr>
+    <tr><td><code>Delete</code></td><td><code>DELETE /nlb/v1/targetGroups/&#123;id&#125;</code></td><td>async</td></tr>
+    <tr><td><code>Move</code></td><td><code>POST /nlb/v1/targetGroups/&#123;id&#125;:move</code></td><td>async</td></tr>
+    <tr><td><code>AddTargets</code></td><td><code>POST /nlb/v1/targetGroups/&#123;id&#125;:addTargets</code></td><td>async</td></tr>
+    <tr><td><code>RemoveTargets</code></td><td><code>POST /nlb/v1/targetGroups/&#123;id&#125;:removeTargets</code></td><td>async</td></tr>
+    <tr><td><code>ListOperations</code></td><td><code>GET /nlb/v1/targetGroups/&#123;id&#125;/operations</code></td><td>sync</td></tr>
+  </tbody>
+</table>
+
+:::tip Дальше
+Конкретные поля, тела запросов, примеры и ресурс-специфичные ошибки — на страницах ресурсов:
+[NetworkLoadBalancer](/api/network-load-balancer), [Listener](/api/listener),
+[TargetGroup](/api/target-group). Async-модель — [Операции](/api/operations).
+:::

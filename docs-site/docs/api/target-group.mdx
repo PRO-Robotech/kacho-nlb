@@ -1,0 +1,229 @@
+---
+id: target-group
+sidebar_position: 4
+title: TargetGroup
+---
+
+import { ApiOperation } from '@site/src/components/commonBlocks/ApiOperation'
+import CodeBlock from '@theme/CodeBlock'
+import dedent from 'ts-dedent'
+
+# TargetGroup
+
+**TargetGroup** — пул L4-бэкендов с единым health-check. Это абстракция «куда балансировщик
+шлёт трафик»: приложение описывает набор конечных точек (`Target`) и правило проверки их
+здоровья, а балансировщик держит из ротации только здоровые. Одну группу можно привязать к
+нескольким [NetworkLoadBalancer](/api/network-load-balancer) (связь M:N), что позволяет
+переиспользовать один пул бэкендов между несколькими точками входа.
+
+Health-check живёт **на группе** (не на привязке): единый TCP/HTTP-чек на всю группу. Управлять
+таргетами через `Update` нельзя — для этого есть отдельные `AddTargets` / `RemoveTargets`, чтобы
+каждое изменение состава прошло через собственную операцию и двухфазный drain.
+
+## Поля
+
+<table>
+  <thead><tr><th>Поле</th><th>Тип</th><th>Изменяемость</th><th>Описание</th></tr></thead>
+  <tbody>
+    <tr><td><code>id</code></td><td>string</td><td>output-only</td><td>Серверный идентификатор (<code>tgr</code>-префикс)</td></tr>
+    <tr><td><code>projectId</code></td><td>string</td><td>immutable*</td><td>Проект-владелец. Меняется только через <code>:move</code></td></tr>
+    <tr><td><code>regionId</code></td><td>string</td><td>immutable</td><td>Регион группы</td></tr>
+    <tr><td><code>name</code></td><td>string</td><td>mutable</td><td>Имя</td></tr>
+    <tr><td><code>description</code></td><td>string</td><td>mutable</td><td>Описание (≤256)</td></tr>
+    <tr><td><code>labels</code></td><td>map&lt;string,string&gt;</td><td>mutable</td><td>Метки</td></tr>
+    <tr><td><code>healthCheck</code></td><td>HealthCheck</td><td>mutable</td><td>Единый health-check группы (обязателен на Create)</td></tr>
+    <tr><td><code>targets</code></td><td>Target[]</td><td>output-only**</td><td>Снимок таргетов; источник истины — дочерняя таблица, состав меняется через Add/RemoveTargets</td></tr>
+    <tr><td><code>deregistrationDelaySeconds</code></td><td>int32</td><td>mutable</td><td>Таймаут drain при удалении таргета (0–3600, дефолт 300)</td></tr>
+    <tr><td><code>slowStartSeconds</code></td><td>int32</td><td>mutable</td><td>Окно slow-start для новых таргетов (0–900, дефолт 0)</td></tr>
+    <tr><td><code>status</code></td><td>enum</td><td>output-only</td><td><code>ACTIVE</code> / <code>DELETING</code></td></tr>
+    <tr><td><code>createdAt</code></td><td>timestamp</td><td>output-only</td><td>Момент создания (RFC 3339, усечён до секунд)</td></tr>
+  </tbody>
+</table>
+
+<small>* меняется только через <code>Move</code>. ** на Create допускается inline-`targets`; далее состав — только Add/RemoveTargets.</small>
+
+### HealthCheck
+
+Единый чек группы: `name`, `interval`, `timeout`, `unhealthyThreshold` (2–10),
+`healthyThreshold` (2–10) и **ровно один** вариант проверки (`tcpOptions` **или**
+`httpOptions`).
+
+<table>
+  <thead><tr><th>Вариант</th><th>Поля</th></tr></thead>
+  <tbody>
+    <tr><td><code>tcpOptions</code></td><td><code>port</code> (1–65535)</td></tr>
+    <tr><td><code>httpOptions</code></td><td><code>port</code> (1–65535), <code>path</code> (по умолчанию <code>/</code>)</td></tr>
+  </tbody>
+</table>
+
+### Target — форма идентичности
+
+Таргет задаётся **ровно одной** из четырёх форм (`oneof identity`) плюс `weight` (0–1000; 0 —
+отключает трафик без удаления строки, drain-with-keepalive):
+
+<table>
+  <thead><tr><th>Форма</th><th>Поле</th><th>Что это</th></tr></thead>
+  <tbody>
+    <tr><td>Instance</td><td><code>instanceId</code></td><td>Compute-инстанс; IP основного NIC резолвится воркером</td></tr>
+    <tr><td>NIC</td><td><code>nicId</code></td><td>Конкретный vpc NIC; IP читается с него</td></tr>
+    <tr><td>In-cloud IP</td><td><code>ipRef: &#123; subnetId, address &#125;</code></td><td>Внутрицловый IP в границах подсети</td></tr>
+    <tr><td>External IP</td><td><code>externalIp: &#123; address, zoneId? &#125;</code></td><td>Внешний IP (bogon-адреса отклоняются на валидации)</td></tr>
+  </tbody>
+</table>
+
+## Методы
+
+Чтение (`Get` / `List` / `ListOperations`) — синхронное. Все мутации асинхронны и возвращают
+[`Operation`](/api/operations).
+
+### Get — получить группу
+
+<ApiOperation method="GET" endpoint="/nlb/v1/targetGroups/{id}">
+
+Возвращает группу по идентификатору (с inline-снимком таргетов и health-check).
+
+<CodeBlock language="json">
+  {dedent`
+    {
+      "id": "tgr...",
+      "projectId": "prj-1",
+      "regionId": "region-1",
+      "name": "web-backends",
+      "healthCheck": { "name": "tcp-80", "tcpOptions": { "port": 80 } },
+      "targets": [
+        { "ipRef": { "subnetId": "sub-1", "address": "10.0.0.11" }, "weight": 100 }
+      ],
+      "deregistrationDelaySeconds": 300,
+      "status": "ACTIVE",
+      "createdAt": "2026-06-24T10:00:00Z"
+    }
+  `}
+</CodeBlock>
+
+</ApiOperation>
+
+### List — список групп
+
+<ApiOperation method="GET" endpoint="/nlb/v1/targetGroups">
+
+Возвращает группы проекта (`projectId` обязателен). Результат фильтруется по доступу (viewer ∪
+`v_list`). `filter` поддерживает `name = "..."`.
+
+</ApiOperation>
+
+### Create — создать группу
+
+<ApiOperation method="POST" endpoint="/nlb/v1/targetGroups" async>
+
+Создаёт группу. `healthCheck` обязателен. На Create допускается inline-массив `targets`
+(каждый валидируется + резолвится воркером).
+
+<CodeBlock language="bash">
+  {dedent`
+    curl -X POST 'http://localhost:18080/nlb/v1/targetGroups' \\
+      -H 'Authorization: Bearer <JWT>' \\
+      -H 'Content-Type: application/json' \\
+      -d '{
+            "projectId": "prj-1",
+            "name": "web-backends",
+            "regionId": "region-1",
+            "healthCheck": {
+              "name": "http-ping",
+              "httpOptions": { "port": 8080, "path": "/ping" }
+            },
+            "deregistrationDelaySeconds": 300,
+            "targets": [
+              { "instanceId": "epd...", "weight": 100 }
+            ]
+          }'
+  `}
+</CodeBlock>
+
+</ApiOperation>
+
+### Update — изменить группу
+
+<ApiOperation method="PATCH" endpoint="/nlb/v1/targetGroups/{id}" async>
+
+Меняет `name`, `description`, `labels`, `healthCheck`, `deregistrationDelaySeconds`,
+`slowStartSeconds`. Замена состава `targets` на этом RPC **запрещена** — используйте
+`AddTargets` / `RemoveTargets`, чтобы каждое изменение прошло через свою операцию и
+idempotency-ключи.
+
+</ApiOperation>
+
+### Delete — удалить группу
+
+<ApiOperation method="DELETE" endpoint="/nlb/v1/targetGroups/{id}" async>
+
+Удаляет группу.
+
+</ApiOperation>
+
+### Move — перенести в другой проект
+
+<ApiOperation method="POST" endpoint="/nlb/v1/targetGroups/{id}:move" async>
+
+Переносит группу в другой проект. Блокируется, если группа привязана хотя бы к одному
+балансировщику (`FAILED_PRECONDITION`) — сначала detach.
+
+<CodeBlock language="bash">
+  {dedent`
+    curl -X POST 'http://localhost:18080/nlb/v1/targetGroups/tgr...:move' \\
+      -H 'Authorization: Bearer <JWT>' \\
+      -H 'Content-Type: application/json' \\
+      -d '{ "destinationProjectId": "prj-2" }'
+  `}
+</CodeBlock>
+
+</ApiOperation>
+
+### AddTargets / RemoveTargets
+
+<ApiOperation method="POST" endpoint="/nlb/v1/targetGroups/{id}:addTargets" async>
+
+Добавляет один или несколько таргетов (`targets` ≥ 1). Каждый проходит domain-валидацию и
+peer-resolve в воркере.
+
+<CodeBlock language="bash">
+  {dedent`
+    curl -X POST 'http://localhost:18080/nlb/v1/targetGroups/tgr...:addTargets' \\
+      -H 'Authorization: Bearer <JWT>' \\
+      -H 'Content-Type: application/json' \\
+      -d '{ "targets": [ { "nicId": "nic...", "weight": 50 } ] }'
+  `}
+</CodeBlock>
+
+</ApiOperation>
+
+<ApiOperation method="POST" endpoint="/nlb/v1/targetGroups/{id}:removeTargets" async>
+
+Удаляет таргеты (`targets` ≥ 1). Удаление двухфазное: таргет переводится в `DRAINING` и
+физически убирается после `deregistrationDelaySeconds`.
+
+</ApiOperation>
+
+### ListOperations — история операций
+
+<ApiOperation method="GET" endpoint="/nlb/v1/targetGroups/{id}/operations">
+
+Возвращает историю асинхронных операций группы (cursor-пагинация). Формат элемента —
+[`Operation`](/api/operations).
+
+</ApiOperation>
+
+## Ошибки и граничные случаи
+
+<table>
+  <thead><tr><th>Ситуация</th><th>Код</th><th>Поведение</th></tr></thead>
+  <tbody>
+    <tr><td>Get/Delete несуществующей группы</td><td><code>NOT_FOUND</code></td><td><code>"TargetGroup &lt;id&gt; not found"</code></td></tr>
+    <tr><td>Malformed id</td><td><code>INVALID_ARGUMENT</code></td><td><code>"invalid tgr id '&lt;X&gt;'"</code></td></tr>
+    <tr><td>Create без <code>healthCheck</code></td><td><code>INVALID_ARGUMENT</code></td><td>health-check обязателен</td></tr>
+    <tr><td>Оба / ни одного варианта health-check</td><td><code>INVALID_ARGUMENT</code></td><td>Ровно один: <code>tcpOptions</code> XOR <code>httpOptions</code></td></tr>
+    <tr><td>Таргет без ровно одной формы идентичности</td><td><code>INVALID_ARGUMENT</code></td><td>Ровно одно из instance/nic/ipRef/externalIp</td></tr>
+    <tr><td>External IP — bogon-адрес</td><td><code>INVALID_ARGUMENT</code></td><td>loopback / link-local / multicast / unspecified отклоняются</td></tr>
+    <tr><td>Move привязанной группы</td><td><code>FAILED_PRECONDITION</code></td><td><code>"is attached to N load balancer(s); detach before moving"</code></td></tr>
+    <tr><td>Замена <code>targets</code> через Update</td><td><code>INVALID_ARGUMENT</code></td><td>Использовать AddTargets / RemoveTargets</td></tr>
+  </tbody>
+</table>

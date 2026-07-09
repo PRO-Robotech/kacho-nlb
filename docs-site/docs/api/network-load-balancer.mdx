@@ -1,0 +1,301 @@
+---
+id: network-load-balancer
+sidebar_position: 2
+title: NetworkLoadBalancer
+---
+
+import { ApiOperation } from '@site/src/components/commonBlocks/ApiOperation'
+import CodeBlock from '@theme/CodeBlock'
+import dedent from 'ts-dedent'
+
+# NetworkLoadBalancer
+
+**NetworkLoadBalancer** — L4-балансировщик уровня региона. Это центральная абстракция сервиса:
+пользователь объявляет один **виртуальный адрес (VIP)**, на который приходит трафик, а
+платформа распределяет его на бэкенды из привязанных [TargetGroup](/api/target-group) через
+[Listener](/api/listener)'ы. Балансировщик закрывает задачу «дать сервису стабильную точку
+входа и раскидывать нагрузку, убирая нездоровые бэкенды из ротации».
+
+Балансировщик несёт **тип** (`EXTERNAL` / `INTERNAL`) и, для внутренних, **размещение**
+(`ZONAL` / `REGIONAL`). VIP задаётся **пофамильно** на Create через `VipSource` (v4/v6) и
+резолвится в связанный vpc `Address`; сам IP хранится в этом Address, здесь не дублируется.
+Подробнее о модели — [VIP и размещение](/architecture/vip-model).
+
+## Поля
+
+<table>
+  <thead><tr><th>Поле</th><th>Тип</th><th>Изменяемость</th><th>Описание</th></tr></thead>
+  <tbody>
+    <tr><td><code>id</code></td><td>string</td><td>output-only</td><td>Серверный идентификатор (<code>nlb</code>-префикс)</td></tr>
+    <tr><td><code>projectId</code></td><td>string</td><td>immutable*</td><td>Проект-владелец. Меняется только через <code>:move</code></td></tr>
+    <tr><td><code>regionId</code></td><td>string</td><td>immutable</td><td>Регион балансировщика (валидируется через kacho-geo)</td></tr>
+    <tr><td><code>name</code></td><td>string</td><td>mutable</td><td>Имя. Шаблон <code>[a-z][-a-z0-9]&#123;1,61&#125;[a-z0-9]</code></td></tr>
+    <tr><td><code>description</code></td><td>string</td><td>mutable</td><td>Описание (≤256)</td></tr>
+    <tr><td><code>labels</code></td><td>map&lt;string,string&gt;</td><td>mutable</td><td>Метки (≤64 пары)</td></tr>
+    <tr><td><code>type</code></td><td>enum</td><td>immutable</td><td><code>EXTERNAL</code> / <code>INTERNAL</code></td></tr>
+    <tr><td><code>placementType</code></td><td>enum</td><td>immutable</td><td>Только для INTERNAL: <code>ZONAL</code> / <code>REGIONAL</code>. Для EXTERNAL пуст</td></tr>
+    <tr><td><code>sessionAffinity</code></td><td>enum</td><td>mutable</td><td><code>FIVE_TUPLE</code> (дефолт) / <code>CLIENT_IP_ONLY</code></td></tr>
+    <tr><td><code>deletionProtection</code></td><td>bool</td><td>mutable</td><td>Запрет удаления, пока не снят</td></tr>
+    <tr><td><code>disabledAnnounceZones</code></td><td>string[]</td><td>mutable</td><td>Только для REGIONAL: зоны, из которых anycast-VIP не анонсируется (drain)</td></tr>
+    <tr><td><code>v4AddressId</code> / <code>v6AddressId</code></td><td>string</td><td>output-only</td><td>Связанный vpc Address (IPv4/IPv6), в который резолвится VIP. Пуст, пока <code>status=CREATING</code></td></tr>
+    <tr><td><code>status</code></td><td>enum</td><td>output-only</td><td>Жизненный цикл (см. ниже)</td></tr>
+    <tr><td><code>createdAt</code></td><td>timestamp</td><td>output-only</td><td>Момент создания (RFC 3339, усечён до секунд)</td></tr>
+  </tbody>
+</table>
+
+<small>* <code>projectId</code> меняется только специальной операцией <code>Move</code>, не через <code>Update</code>.</small>
+
+:::note VipSource — задаётся на Create
+`v4Source` / `v6Source` — источник VIP по семейству (хотя бы одно обязательно): `subnetId` ⟹
+авто-аллокация внутреннего Address из подсети (INTERNAL); `addressId` ⟹ линк существующего vpc
+Address (kind соответствует type); `public: {}` ⟹ платформенный public-адрес (EXTERNAL). После
+Create источник неизменяем; наружу выставляются output-only `v4AddressId` / `v6AddressId`.
+:::
+
+### Статусы
+
+<table>
+  <thead><tr><th>Статус</th><th>Значение</th></tr></thead>
+  <tbody>
+    <tr><td><code>CREATING</code></td><td>Создаётся; VIP ещё не привязан</td></tr>
+    <tr><td><code>STARTING</code></td><td>Запускается (после Start)</td></tr>
+    <tr><td><code>ACTIVE</code></td><td>Активен, трафик форвардится</td></tr>
+    <tr><td><code>STOPPING</code></td><td>Останавливается (после Stop)</td></tr>
+    <tr><td><code>STOPPED</code></td><td>Остановлен</td></tr>
+    <tr><td><code>DELETING</code></td><td>Удаляется</td></tr>
+    <tr><td><code>INACTIVE</code></td><td>Нет активных листенеров или привязанных групп; health-check'и не выполняются, трафик не форвардится</td></tr>
+  </tbody>
+</table>
+
+## Методы
+
+Чтение (`Get` / `List` / `GetTargetStates` / `ListOperations`) — синхронное. Все мутации
+асинхронны и возвращают [`Operation`](/api/operations).
+
+### Get — получить балансировщик
+
+<ApiOperation method="GET" endpoint="/nlb/v1/networkLoadBalancers/{id}">
+
+Возвращает балансировщик по идентификатору.
+
+<CodeBlock language="bash">
+  {dedent`
+    curl 'http://localhost:18080/nlb/v1/networkLoadBalancers/nlb...' \\
+      -H 'Authorization: Bearer <JWT>'
+  `}
+</CodeBlock>
+
+<CodeBlock language="json">
+  {dedent`
+    {
+      "id": "nlb...",
+      "projectId": "prj-1",
+      "regionId": "region-1",
+      "name": "web-lb",
+      "type": "INTERNAL",
+      "placementType": "ZONAL",
+      "sessionAffinity": "FIVE_TUPLE",
+      "status": "ACTIVE",
+      "v4AddressId": "adr...",
+      "createdAt": "2026-06-24T10:00:00Z"
+    }
+  `}
+</CodeBlock>
+
+</ApiOperation>
+
+### List — список балансировщиков
+
+<ApiOperation method="GET" endpoint="/nlb/v1/networkLoadBalancers">
+
+Возвращает балансировщики проекта (`projectId` обязателен) с cursor-пагинацией. Результат
+фильтруется по доступу (viewer ∪ `v_list`, per-object) — отдаётся только то, что видно
+вызывающему. `filter` поддерживает `name = "..."`.
+
+<CodeBlock language="bash">
+  {dedent`
+    curl 'http://localhost:18080/nlb/v1/networkLoadBalancers?projectId=prj-1&pageSize=50' \\
+      -H 'Authorization: Bearer <JWT>'
+  `}
+</CodeBlock>
+
+</ApiOperation>
+
+### Create — создать балансировщик
+
+<ApiOperation method="POST" endpoint="/nlb/v1/networkLoadBalancers" async>
+
+Создаёт балансировщик. `type` обязателен. Для INTERNAL `placementType` обязателен и явен
+(ZONAL|REGIONAL); для EXTERNAL — запрещён. Требуется хотя бы один `VipSource` (`v4Source` /
+`v6Source`). Ответ — `Operation`.
+
+<CodeBlock language="bash">
+  {dedent`
+    curl -X POST 'http://localhost:18080/nlb/v1/networkLoadBalancers' \\
+      -H 'Authorization: Bearer <JWT>' \\
+      -H 'Content-Type: application/json' \\
+      -d '{
+            "projectId": "prj-1",
+            "name": "web-lb",
+            "regionId": "region-1",
+            "type": "INTERNAL",
+            "placementType": "REGIONAL",
+            "sessionAffinity": "CLIENT_IP_ONLY",
+            "v4Source": { "subnetId": "sub-1" }
+          }'
+  `}
+</CodeBlock>
+
+</ApiOperation>
+
+### Update — изменить балансировщик
+
+<ApiOperation method="PATCH" endpoint="/nlb/v1/networkLoadBalancers/{id}" async>
+
+Меняет изменяемые поля (`name`, `description`, `labels`, `sessionAffinity`,
+`deletionProtection`, `disabledAnnounceZones`). Immutable-поля (`type`, `placementType`,
+`regionId`, источник и адреса VIP) в `updateMask` отклоняются по имени пути
+(`InvalidArgument`). Пустой mask → full-PATCH всех mutable-полей.
+
+<CodeBlock language="bash">
+  {dedent`
+    curl -X PATCH 'http://localhost:18080/nlb/v1/networkLoadBalancers/nlb...' \\
+      -H 'Authorization: Bearer <JWT>' \\
+      -H 'Content-Type: application/json' \\
+      -d '{ "updateMask": "sessionAffinity", "sessionAffinity": "FIVE_TUPLE" }'
+  `}
+</CodeBlock>
+
+</ApiOperation>
+
+### Delete — удалить балансировщик
+
+<ApiOperation method="DELETE" endpoint="/nlb/v1/networkLoadBalancers/{id}" async>
+
+Удаляет балансировщик. Блокируется, если включён `deletionProtection`
+(`FAILED_PRECONDITION`). Освобождает связанный vpc Address (если VIP был авто-аллоцирован).
+
+<CodeBlock language="bash">
+  {dedent`
+    curl -X DELETE 'http://localhost:18080/nlb/v1/networkLoadBalancers/nlb...' \\
+      -H 'Authorization: Bearer <JWT>'
+  `}
+</CodeBlock>
+
+</ApiOperation>
+
+### Start / Stop — запустить / остановить
+
+<ApiOperation method="POST" endpoint="/nlb/v1/networkLoadBalancers/{id}:start" async>
+
+Переводит балансировщик в активное состояние (`STARTING` → `ACTIVE`).
+
+</ApiOperation>
+
+<ApiOperation method="POST" endpoint="/nlb/v1/networkLoadBalancers/{id}:stop" async>
+
+Останавливает балансировщик (`STOPPING` → `STOPPED`): health-check'и и форвардинг
+приостанавливаются, ресурс сохраняется.
+
+</ApiOperation>
+
+### Move — перенести в другой проект
+
+<ApiOperation method="POST" endpoint="/nlb/v1/networkLoadBalancers/{id}:move" async>
+
+Переносит балансировщик в другой проект **того же региона**. Блокируется, если к нему привязана
+хотя бы одна TargetGroup (сначала detach). Дочерние листенеры перенацеливаются в той же
+worker-транзакции (denorm-sync `projectId`). Проверяется доступ и в исходном, и в целевом
+проекте.
+
+<CodeBlock language="bash">
+  {dedent`
+    curl -X POST 'http://localhost:18080/nlb/v1/networkLoadBalancers/nlb...:move' \\
+      -H 'Authorization: Bearer <JWT>' \\
+      -H 'Content-Type: application/json' \\
+      -d '{ "destinationProjectId": "prj-2" }'
+  `}
+</CodeBlock>
+
+</ApiOperation>
+
+### AttachTargetGroup / DetachTargetGroup
+
+<ApiOperation method="POST" endpoint="/nlb/v1/networkLoadBalancers/{id}:attachTargetGroup" async>
+
+Привязывает группу таргетов к балансировщику. Тело — **вложенное** (`attachedTargetGroup`).
+
+<CodeBlock language="bash">
+  {dedent`
+    curl -X POST 'http://localhost:18080/nlb/v1/networkLoadBalancers/nlb...:attachTargetGroup' \\
+      -H 'Authorization: Bearer <JWT>' \\
+      -H 'Content-Type: application/json' \\
+      -d '{ "attachedTargetGroup": { "targetGroupId": "tgr..." } }'
+  `}
+</CodeBlock>
+
+</ApiOperation>
+
+<ApiOperation method="POST" endpoint="/nlb/v1/networkLoadBalancers/{id}:detachTargetGroup" async>
+
+Отвязывает группу. Тело — **плоское** (`targetGroupId`). Обратите внимание на асимметрию форм
+attach (nested) vs detach (flat) — строить payload нужно по proto-форме каждого запроса.
+
+<CodeBlock language="bash">
+  {dedent`
+    curl -X POST 'http://localhost:18080/nlb/v1/networkLoadBalancers/nlb...:detachTargetGroup' \\
+      -H 'Authorization: Bearer <JWT>' \\
+      -H 'Content-Type: application/json' \\
+      -d '{ "targetGroupId": "tgr..." }'
+  `}
+</CodeBlock>
+
+</ApiOperation>
+
+### GetTargetStates — снимок здоровья таргетов
+
+<ApiOperation method="GET" endpoint="/nlb/v1/networkLoadBalancers/{id}/targetStates">
+
+Синхронный детерминированный снимок состояния таргетов балансировщика. Опциональный
+query-параметр `targetGroupId` ограничивает выборку одной группой. Это не хранимая сущность —
+значение вычисляется на запрос.
+
+<CodeBlock language="json">
+  {dedent`
+    {
+      "targetStates": [
+        { "subnetId": "sub-1", "address": "10.0.0.11", "status": "HEALTHY", "zoneShifted": false },
+        { "subnetId": "sub-1", "address": "10.0.0.12", "status": "UNHEALTHY", "zoneShifted": false }
+      ]
+    }
+  `}
+</CodeBlock>
+
+Статусы таргета: `INITIAL`, `HEALTHY`, `UNHEALTHY`, `DRAINING`, `INACTIVE`.
+
+</ApiOperation>
+
+### ListOperations — история операций
+
+<ApiOperation method="GET" endpoint="/nlb/v1/networkLoadBalancers/{id}/operations">
+
+Возвращает историю асинхронных операций балансировщика (cursor-пагинация). Формат элемента —
+[`Operation`](/api/operations).
+
+</ApiOperation>
+
+## Ошибки и граничные случаи
+
+<table>
+  <thead><tr><th>Ситуация</th><th>Код</th><th>Поведение</th></tr></thead>
+  <tbody>
+    <tr><td>Get/Delete несуществующего балансировщика</td><td><code>NOT_FOUND</code></td><td><code>"NetworkLoadBalancer &lt;id&gt; not found"</code></td></tr>
+    <tr><td>Malformed id</td><td><code>INVALID_ARGUMENT</code></td><td><code>"invalid nlb id '&lt;X&gt;'"</code> — первым стейтментом RPC</td></tr>
+    <tr><td><code>placementType</code> для EXTERNAL / отсутствует для INTERNAL</td><td><code>INVALID_ARGUMENT</code></td><td>placement обязателен и только для INTERNAL</td></tr>
+    <tr><td>Ни одного <code>VipSource</code></td><td><code>INVALID_ARGUMENT</code></td><td>Требуется хотя бы одно семейство (v4/v6)</td></tr>
+    <tr><td>Ссылка на несуществующий subnet / address / region</td><td><code>INVALID_ARGUMENT</code></td><td>Валидация через API владельца (vpc / geo)</td></tr>
+    <tr><td>Delete при включённом <code>deletionProtection</code></td><td><code>FAILED_PRECONDITION</code></td><td>Сначала снять защиту через Update</td></tr>
+    <tr><td>Move группы, привязанной к балансировщику</td><td><code>FAILED_PRECONDITION</code></td><td><code>"is attached to N load balancer(s); detach before moving"</code></td></tr>
+    <tr><td>peer (vpc/geo/iam) недоступен на мутации</td><td><code>UNAVAILABLE</code></td><td>fail-closed</td></tr>
+  </tbody>
+</table>

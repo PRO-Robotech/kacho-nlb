@@ -1,0 +1,188 @@
+---
+id: configuration
+sidebar_position: 2
+title: Конфигурация
+---
+
+import CodeBlock from '@theme/CodeBlock'
+import dedent from 'ts-dedent'
+
+# Конфигурация
+
+Kachō NLB конфигурируется YAML-файлом (`config.yaml`) с ENV-override. Любое поле переопределяется
+переменной окружения с префиксом **`KACHO_NLB_`** и разделителем вложенности `__` (двойное
+подчёркивание): `repository.postgres.url` → `KACHO_NLB_REPOSITORY__POSTGRES__URL`. Дефолты
+заданы в коде (`internal/apps/kacho/config/defaults.go`); большинство ключей опциональны.
+
+Полный пример — [`deploy/configmap-sample.yaml`](https://github.com/PRO-Robotech/kacho-nlb).
+Ниже — ключевые секции.
+
+## Режим (mode)
+
+<table>
+  <thead><tr><th>Значение</th><th>Поведение</th></tr></thead>
+  <tbody>
+    <tr><td><code>dev</code></td><td>Relaxed-валидация: TLS опционален, breakglass допустим, <code>sslmode=disable</code> в DSN разрешён</td></tr>
+    <tr><td><code>production</code></td><td>TLS обязателен, <code>authz.iam.addr</code> обязателен, breakglass запрещён, DSN обязан нести <code>sslmode=require</code>/<code>verify-ca</code>/<code>verify-full</code></td></tr>
+  </tbody>
+</table>
+
+ENV: `KACHO_NLB_MODE`. Единственный обязательный без дефолта параметр — DSN до БД (и
+`authz.iam.addr` в production).
+
+## Repository (PostgreSQL)
+
+<table>
+  <thead><tr><th>Ключ</th><th>По умолчанию</th><th>Описание</th></tr></thead>
+  <tbody>
+    <tr><td><code>repository.type</code></td><td><code>POSTGRES</code></td><td>Единственный поддерживаемый тип</td></tr>
+    <tr><td><code>repository.postgres.url</code></td><td><em>(обязателен)</em></td><td>DSN до <code>kacho_nlb</code>. Сюда же смотрит <code>cmd/migrator</code></td></tr>
+    <tr><td><code>repository.postgres.max-conns</code></td><td><code>0</code></td><td>Лимит pgx-пула (0 → дефолт pgxpool)</td></tr>
+    <tr><td><code>repository.postgres.conn-lifetime</code></td><td><code>0s</code></td><td>Время жизни соединения (0 → дефолт)</td></tr>
+    <tr><td><code>repository.postgres.slave-url</code></td><td><em>(пусто)</em></td><td>Опциональный DSN read-replica для read-tx (CQRS Reader)</td></tr>
+  </tbody>
+</table>
+
+:::note search_path
+Схема `kacho_nlb` прописывается в DSN через `search_path=kacho_nlb,public` — и для pgx-пула, и
+для миграций.
+:::
+
+## API-сервер
+
+<table>
+  <thead><tr><th>Ключ</th><th>По умолчанию</th><th>Описание</th></tr></thead>
+  <tbody>
+    <tr><td><code>api-server.endpoint</code></td><td><code>tcp://0.0.0.0:9090</code></td><td>Public listener (клиенты + UI через api-gateway)</td></tr>
+    <tr><td><code>api-server.internal-endpoint</code></td><td><code>tcp://0.0.0.0:9091</code></td><td>Cluster-internal listener (peer-сервисы)</td></tr>
+    <tr><td><code>api-server.graceful-shutdown</code></td><td><code>10s</code></td><td>Таймаут мягкой остановки</td></tr>
+    <tr><td><code>metrics.enable</code></td><td><code>true</code></td><td><code>/metrics</code> на <code>:9101</code></td></tr>
+    <tr><td><code>healthcheck.enable</code></td><td><code>true</code></td><td>Регистрация gRPC health-check</td></tr>
+  </tbody>
+</table>
+
+## ExtAPI — peer-клиенты
+
+Адреса соседних сервисов для валидации ссылок и авторизации. Для NLB основной канал — internal
+`:9091`.
+
+<table>
+  <thead><tr><th>Ключ</th><th>Назначение</th></tr></thead>
+  <tbody>
+    <tr><td><code>extapi.vpc.internal-addr</code></td><td>kacho-vpc :9091 — Address / Subnet / NIC (IPAM)</td></tr>
+    <tr><td><code>extapi.compute.internal-addr</code></td><td>kacho-compute :9091 — InstanceService.Get</td></tr>
+    <tr><td><code>extapi.iam.internal-addr</code></td><td>kacho-iam :9091 — ProjectService + InternalIAMService</td></tr>
+    <tr><td><code>extapi.def-dial-duration</code></td><td>Дефолтный таймаут дозвона (10s)</td></tr>
+  </tbody>
+</table>
+
+Ребро `nlb → kacho-geo` (RegionService.Get) конфигурируется аналогично; mTLS к каждому ребру
+задаётся отдельно (см. ниже).
+
+## Authz (per-RPC Check)
+
+<table>
+  <thead><tr><th>Ключ</th><th>По умолчанию</th><th>Описание</th></tr></thead>
+  <tbody>
+    <tr><td><code>authz.iam.addr</code></td><td><em>(обязателен в production)</em></td><td>Internal-адрес kacho-iam для Check</td></tr>
+    <tr><td><code>authz.iam.request-timeout</code></td><td><code>500ms</code></td><td>Per-request deadline к Check</td></tr>
+    <tr><td><code>authz.cache.enable</code> / <code>ttl</code> / <code>size</code></td><td><code>true</code> / <code>5s</code> / <code>10000</code></td><td>Positive-only LRU-кэш над Check</td></tr>
+    <tr><td><code>authz.list-filter.enabled</code></td><td><code>true</code></td><td>Per-object фильтрация List через ListObjects (read == enforce)</td></tr>
+    <tr><td><code>authz.list-filter.fail-open</code></td><td><code>false</code></td><td>iam недоступен → List → <code>UNAVAILABLE</code> (не нефильтрованный)</td></tr>
+    <tr><td><code>authz.trusted-forwarder-sans</code></td><td><code>[]</code></td><td>Allow-list cert-SAN, которым разрешено форвардить end-user principal. Обязан быть непустым при production + mTLS (обычно SAN api-gateway)</td></tr>
+    <tr><td><code>authz.breakglass</code></td><td><code>false</code></td><td>Dev-only аварийный обход; в production отвергается валидацией</td></tr>
+  </tbody>
+</table>
+
+### Secure by default
+
+По умолчанию (`mode: production`, `breakglass: false`) операции **без авторизации и mTLS
+запрещены**: per-RPC Check и mTLS на **обоих** listener'ах обязательны. Если адрес kacho-iam не
+задан или TLS не включён — конфиг не проходит валидацию и сервис не стартует. Это инвариант
+«AuthN + AuthZ везде» (internal `:9091` не освобождён).
+
+:::warning Единственный обход — breakglass
+`authz.breakglass: true` (dev-only) запускает сервис, пропуская per-RPC Check. Аварийный режим:
+применять только локально / при инциденте, никогда на рабочем стенде. В `mode: production`
+валидация отвергает `breakglass: true`.
+:::
+
+## Authn (transport TLS) и mTLS per-edge
+
+`authn.type` (`none` | `tls`) задаёт server-TLS публичного транспорта. Клиентские/серверные
+mTLS-credentials задаются **на каждое ребро отдельно** (без общего TLS-синглтона на процесс) —
+секция `mtls`:
+
+<table>
+  <thead><tr><th>Ребро (mtls.*)</th><th>Назначение</th></tr></thead>
+  <tbody>
+    <tr><td><code>server</code></td><td>Server-cert на public + internal listener'ах (RequireAndVerifyClientCert при enable)</td></tr>
+    <tr><td><code>iam-register</code></td><td>Client-cert на nlb→iam-internal (:9091): Check + RegisterResource</td></tr>
+    <tr><td><code>iam-project</code></td><td>Client-cert на nlb→iam public (:9090): ProjectService.Get</td></tr>
+    <tr><td><code>vpc</code> / <code>compute</code> / <code>geo</code></td><td>Client-cert на рёбрах к соответствующим сервисам</td></tr>
+  </tbody>
+</table>
+
+У каждой TLS-структуры есть флаг `enable` (дефолт `false` — insecure back-compat для dev). В
+production оба server-флага и клиентские рёбра должны быть включены.
+
+## Jobs (фоновые worker'ы)
+
+<table>
+  <thead><tr><th>Ключ</th><th>По умолчанию</th><th>Описание</th></tr></thead>
+  <tbody>
+    <tr><td><code>jobs.target-drain.interval</code></td><td><code>10s</code></td><td>Период drain-runner (двухфазное удаление таргетов)</td></tr>
+    <tr><td><code>jobs.free-ip.interval</code></td><td><code>30s</code></td><td>Период реконсайла застрявших ресурсов</td></tr>
+    <tr><td><code>jobs.free-ip.age-threshold</code></td><td><code>5m</code></td><td>Минимальный возраст строки, чтобы считать её «застрявшей»</td></tr>
+  </tbody>
+</table>
+
+## Пример YAML
+
+<CodeBlock language="yaml" title="config.yaml (production)">
+  {dedent`
+    mode: production
+
+    logger:
+      level: INFO
+
+    api-server:
+      endpoint: tcp://0.0.0.0:9090
+      internal-endpoint: tcp://0.0.0.0:9091
+      graceful-shutdown: 10s
+
+    repository:
+      type: POSTGRES
+      postgres:
+        url: postgres://kacho@pg.kacho.svc:5432/kacho_nlb?sslmode=verify-full&search_path=kacho_nlb,public
+
+    extapi:
+      vpc:      { internal-addr: kacho-vpc.kacho.svc:9091 }
+      compute:  { internal-addr: kacho-compute.kacho.svc:9091 }
+      iam:      { internal-addr: kacho-iam.kacho.svc:9091 }
+
+    authz:
+      iam:
+        addr: kacho-iam.kacho.svc:9091
+      list-filter:
+        enabled: true
+        fail-open: false
+      trusted-forwarder-sans:
+        - spiffe://kacho.cloud/ns/kacho-api-gateway/sa/kacho-api-gateway
+      breakglass: false
+
+    mtls:
+      server:       { enable: true }
+      iam-register: { enable: true }
+      iam-project:  { enable: true }
+      vpc:          { enable: true }
+      compute:      { enable: true }
+      geo:          { enable: true }
+  `}
+</CodeBlock>
+
+:::tip Локальный dev
+Для локального запуска достаточно `mode: dev` и валидного `repository.postgres.url`
+(`sslmode=disable` допустим). ENV-override любого поля — через `KACHO_NLB_<PATH>__<WITH>__<__>`.
+Сборка и миграции — в [Развёртывании](/install/deploy).
+:::
