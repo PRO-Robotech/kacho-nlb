@@ -44,7 +44,12 @@ func (f *LifecycleFeed) Open(ctx context.Context) (kacho.LifecycleConn, error) {
 		return nil, err
 	}
 	// Идентификатор канала — literal, не из user-input (защита от SQL-injection).
-	if _, err := conn.Exec(ctx, "LISTEN "+lifecycleListenChannel); err != nil {
+	// Тот же bounded-таймаут, что и на Connect: LISTEN на half-open/перегруженной
+	// сессии не должен вечно держать stream-слот + dedicated conn (self-DoS).
+	listenCtx, listenCancel := context.WithTimeout(ctx, lifecycleConnectTimeout)
+	_, err = conn.Exec(listenCtx, "LISTEN "+lifecycleListenChannel)
+	listenCancel()
+	if err != nil {
 		closeCtx, c := context.WithTimeout(context.Background(), 5*time.Second)
 		_ = conn.Close(closeCtx)
 		c()
