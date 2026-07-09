@@ -50,6 +50,46 @@ func TestMove_Happy(t *testing.T) {
 	assert.Equal(t, "project:prj-src", repo.fga[1].Intent.Tuples[0].SubjectID)
 }
 
+// TestMove_RegisterDstCarriesLabelsAndParent — regression: the register(dst)
+// FGA intent must mirror tgMirrorIntent semantics (Labels from the moved record +
+// ParentProjectID=dst), NOT reuse the bare tgUnregisterIntent (which drops both).
+// Previously Move emitted register(dst) with Labels=nil / ParentProjectID="",
+// wiping the kacho-iam resource_mirror row feeding the γ label/parent selector →
+// label-based grants and parent-scoped queries silently excluded the moved TG in
+// the destination project until an unrelated Update repaired the mirror.
+func TestMove_RegisterDstCarriesLabelsAndParent(t *testing.T) {
+	repo := newFakeRepo()
+	tg := makeTG("prj-src", "movable")
+	tg.Labels = domain.LabelsFromMap(map[string]string{"env": "prod"})
+	repo.seedTG(tg)
+	opsRepo := newFakeOpsRepo()
+	uc := NewMoveTargetGroupUseCase(repo, opsRepo, &fakeProjectClient{}, nil, nil)
+
+	op, err := uc.Execute(context.Background(), &lbv1.MoveTargetGroupRequest{
+		TargetGroupId:        string(tg.ID),
+		DestinationProjectId: "prj-dst",
+	})
+	require.NoError(t, err)
+	final := awaitOpDone(t, opsRepo, op.ID)
+	require.Nil(t, final.Error)
+	require.Len(t, repo.fga, 2)
+
+	// register(dst) must carry the mirror fields for the destination.
+	reg := repo.fga[0]
+	require.Equal(t, domain.FGAEventRegister, reg.EventType)
+	require.Equal(t, "prj-dst", reg.Intent.ParentProjectID,
+		"register(dst) must set ParentProjectID=dst for the γ parent selector")
+	require.Equal(t, map[string]string{"env": "prod"}, reg.Intent.Labels,
+		"register(dst) must carry the moved TG's labels for the γ label selector")
+
+	// unregister(src) stays bare (IAM uses only object+source_version on unregister).
+	unreg := repo.fga[1]
+	require.Equal(t, domain.FGAEventUnregister, unreg.EventType)
+	require.Equal(t, "project:prj-src", unreg.Intent.Tuples[0].SubjectID)
+	require.Empty(t, unreg.Intent.ParentProjectID)
+	require.Nil(t, unreg.Intent.Labels)
+}
+
 // Same-project destination → InvalidArgument с фиксированным текстом.
 func TestMove_SameProject_InvalidArg(t *testing.T) {
 	repo := newFakeRepo()
