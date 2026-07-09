@@ -227,18 +227,22 @@ type stuckLB struct {
 // изолируется (handleReleaseErr: bump updated_at), чтобы не head-of-line-
 // блокировать очередь; см. handleReleaseErr. Возвращает reconcileOutcome.
 //
-// Row-lock hold window (round-6 audit finding 1): releaseFamily вызывает
-// ClearReference/FreeIP (до 4 outbound vpc-звонков — v4+v6, каждый up to
+// Row-lock hold window (round-6 audit finding 1; magnitude уточнён round-9):
+// releaseFamily вызывает ClearReference/FreeIP (v4+v6, каждое семейство up to
 // two-step ClearReference→FreeIP) НА raw process-lifetime ctx этого reconciler'а
-// (без deadline). Каждый из этих клиентских методов теперь несёт свой
-// собственный context.WithTimeout(DefaultInternalAddressCallTimeout) внутри
-// (vpc.internalAddressClient.withCallTimeout) — зависший (не отвечающий) vpc-
-// peer больше не парковал бы эту горутину (и tx + row-lock) навсегда: худший
-// случай — row-lock держится ~4×DefaultInternalAddressCallTimeout, затем
-// releaseFamily возвращает DeadlineExceeded→domain.ErrUnavailable, tx
-// rollback'ится, строка остаётся на retry следующим тиком. Полный вынос
-// release-вызовов за границы транзакции — отдельный (более рискованный)
-// рефактор, не предпринят без детерминированного теста на его race-профиль.
+// (без deadline). Каждый gRPC-вызов клиента несёт свой собственный
+// context.WithTimeout(DefaultInternalAddressCallTimeout=5s) внутри
+// (vpc.internalAddressClient.withCallTimeout), НО FreeIP дополнительно дожидается
+// Delete-Operation через waitOperation, чей poll-цикл ограничен ОТДЕЛЬНЫМ
+// vpcOpPollTimeout=15s на raw ctx (не withCallTimeout) — см. waitOperation в
+// internal_address_client.go. Поэтому зависший/медленный vpc-peer больше не
+// парковал бы эту горутину (и tx + row-lock) навсегда, но worst-case hold шире
+// одного per-call timeout: ≈ 2×(ClearReference 5s + FreeIP[Delete 5s + poll 15s])
+// ≈ 50s (v4+v6), затем releaseFamily возвращает DeadlineExceeded→
+// domain.ErrUnavailable, tx rollback'ится, строка остаётся на retry следующим
+// тиком. Полный вынос release-вызовов за границы транзакции — отдельный (более
+// рискованный) рефактор, не предпринят без детерминированного теста на его
+// race-профиль.
 func (r *FreeIPRunner) reconcileOne(ctx context.Context) (reconcileOutcome, error) {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
