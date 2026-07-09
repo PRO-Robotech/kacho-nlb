@@ -219,15 +219,16 @@ func runServe(configPath string) error {
 	// здесь (drainer/backstop-ресурсы + bootGate.SetConnected как side-effect), но
 	// запускаются errgroup'ом перед Serve. vipOriginGate нужен для readiness ниже.
 	background, vipOriginGate, err := assembleBackgroundWorkers(ctx, backgroundDeps{
-		pool:       pool,
-		repo:       repo,
-		lroRec:     lroRec,
-		outboxRec:  outboxRec,
-		bootGate:   bootGate,
-		authzCache: authzCache,
-		peers:      peers,
-		cfg:        cfg,
-		logger:     logger,
+		pool:            pool,
+		repo:            repo,
+		lroRec:          lroRec,
+		outboxRec:       outboxRec,
+		bootGate:        bootGate,
+		authzCache:      authzCache,
+		peers:           peers,
+		cfg:             cfg,
+		logger:          logger,
+		freeIPPoisonObs: metricsAdapter.IncFreeIPPoisoned,
 	})
 	if err != nil {
 		return err

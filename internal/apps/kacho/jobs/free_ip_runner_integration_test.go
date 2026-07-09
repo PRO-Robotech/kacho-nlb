@@ -21,6 +21,8 @@ package jobs
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -45,7 +47,8 @@ type fakeReleaser struct {
 	clearCalls  []string
 	freeErr     error
 	clearErr    error
-	onFirstFree func() // coordination-hook (multi-replica): держит lock пока B тикает
+	errByAddr   map[string]error // per-address override (poison-row tests); nil → no override
+	onFirstFree func()           // coordination-hook (multi-replica): держит lock пока B тикает
 	firstFired  bool
 }
 
@@ -78,6 +81,9 @@ func (f *fakeReleaser) FreeIP(_ context.Context, addressID string) error {
 	}
 	f.freeCalls = append(f.freeCalls, addressID)
 	err := f.freeErr
+	if e, ok := f.errByAddr[addressID]; ok {
+		err = e
+	}
 	f.mu.Unlock()
 	if hook != nil {
 		hook()
@@ -89,6 +95,9 @@ func (f *fakeReleaser) ClearReference(_ context.Context, addressID string) error
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.clearCalls = append(f.clearCalls, addressID)
+	if e, ok := f.errByAddr[addressID]; ok {
+		return e
+	}
 	return f.clearErr
 }
 
@@ -160,6 +169,29 @@ func countFGAUnregister(t testing.TB, ctx context.Context, pool *pgxpool.Pool, r
 		 WHERE event_type='fga.unregister' AND resource_id=$1
 	`, resourceID).Scan(&n))
 	return n
+}
+
+// lbExists — присутствует ли строка LB с данным id.
+func lbExists(t testing.TB, ctx context.Context, pool *pgxpool.Pool, id string) bool {
+	t.Helper()
+	var n int
+	require.NoError(t, pool.QueryRow(ctx,
+		`SELECT count(*) FROM kacho_nlb.load_balancers WHERE id=$1`, id).Scan(&n))
+	return n == 1
+}
+
+// lbStuckEligible — попала бы строка id под selectStuckSQL при данном пороге
+// (updated_at < now()-threshold). Bump updated_at=now() выводит её из выборки.
+func lbStuckEligible(t testing.TB, ctx context.Context, pool *pgxpool.Pool, id string, threshold time.Duration) bool {
+	t.Helper()
+	var eligible bool
+	require.NoError(t, pool.QueryRow(ctx, `
+		SELECT count(*) = 1 FROM kacho_nlb.load_balancers
+		 WHERE id = $1
+		   AND status IN ('DELETING','CREATING')
+		   AND updated_at < now() - make_interval(secs => $2::double precision)
+	`, id, threshold.Seconds()).Scan(&eligible))
+	return eligible
 }
 
 // =============================================================================
@@ -397,6 +429,92 @@ func TestFreeIP_MultiReplica(t *testing.T) {
 	assert.Equal(t, 1, results[0]+results[1], "exactly one replica reconciled the row")
 	assert.Len(t, rel.frees(), 1, "FreeIP called exactly once (no double free)")
 	assert.Equal(t, 0, countLoadBalancers(t, ctx, pool), "row deleted exactly once")
+}
+
+// =============================================================================
+// Poison-row isolation — permanent release failure must not head-of-line-block.
+// =============================================================================
+
+// TestFreeIP_PoisonRowDoesNotBlockQueue — застрявший LB, чей release VIP падает
+// PERMANENT-ошибкой (ErrInvalidArg — напр. stray referrer / malformed address_id),
+// не должен head-of-line-блокировать весь reconciler. selectStuckSQL берёт
+// старейшую строку первой; до фикса reconcileOne возвращал ошибку → reconcileOnce
+// прерывал весь тик → та же ядовитая строка переизбиралась каждый тик, и НИ ОДНА
+// другая застрявшая LB не реконсилилась (unbounded VIP-leak за одной строкой).
+// После фикса: ядовитая строка изолируется (bump updated_at → тонет в хвост
+// очереди и выпадает из age-порога), тик продолжается и реконсилит здоровую LB.
+func TestFreeIP_PoisonRowDoesNotBlockQueue(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test")
+	}
+	ctx := context.Background()
+	dsn := setupTestDB(t)
+	pool, err := coredb.NewPool(ctx, dsn)
+	require.NoError(t, err)
+	defer pool.Close()
+
+	// Poison — старейшая (updated_at раньше) → selectStuckSQL берёт её первой.
+	const poisonAddr = "adr00000POISONVIP001"
+	poisonID, _ := insertStuckLB(t, ctx, pool, domain.LBStatusDeleting, "linked", poisonAddr, "", "", 20*time.Minute)
+	// Healthy — младше poison, но всё ещё старше age-порога.
+	const healthyAddr = "adr0000HEALTHYVIP001"
+	healthyID, _ := insertStuckLB(t, ctx, pool, domain.LBStatusDeleting, "linked", healthyAddr, "", "", 10*time.Minute)
+
+	var poisoned []string
+	rel := &fakeReleaser{errByAddr: map[string]error{
+		poisonAddr: fmt.Errorf("%w: address %s not found", domain.ErrInvalidArg, poisonAddr),
+	}}
+	r := NewFreeIPRunner(pool, rel, observability.NewSlogger(discardWriter{}), time.Second, time.Minute,
+		WithPoisonObserver(func(id string) { poisoned = append(poisoned, id) }))
+
+	n, err := r.reconcileOnce(ctx)
+	require.NoError(t, err, "poison row must not surface as a tick error")
+	assert.Equal(t, 1, n, "healthy LB reconciled despite poison at head of queue")
+
+	// Healthy row released + deleted.
+	assert.False(t, lbExists(t, ctx, pool, healthyID), "healthy LB deleted")
+	assert.Contains(t, rel.clears(), healthyAddr, "healthy VIP released")
+
+	// Poison row isolated: preserved, updated_at bumped out of stuck-eligibility.
+	assert.True(t, lbExists(t, ctx, pool, poisonID), "poison LB preserved (VIP not lost)")
+	assert.False(t, lbStuckEligible(t, ctx, pool, poisonID, time.Minute),
+		"poison LB updated_at bumped → no longer re-selected first (back-off)")
+	assert.Equal(t, []string{poisonID}, poisoned, "poison observer fired once for the poison LB")
+}
+
+// TestFreeIP_TransientReleaseErrorLeavesRowForRetry — транзиентная release-ошибка
+// (ErrUnavailable — vpc-peer недоступен) НЕ ядовитая: строка НЕ изолируется, а
+// остаётся с нетронутым updated_at → self-heal на следующем тике при
+// восстановлении peer'а. reconcileOnce возвращает ошибку (abort tick).
+func TestFreeIP_TransientReleaseErrorLeavesRowForRetry(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test")
+	}
+	ctx := context.Background()
+	dsn := setupTestDB(t)
+	pool, err := coredb.NewPool(ctx, dsn)
+	require.NoError(t, err)
+	defer pool.Close()
+
+	const addr = "adr00000TRANSIENT001"
+	lbID, _ := insertStuckLB(t, ctx, pool, domain.LBStatusDeleting, "linked", addr, "", "", 10*time.Minute)
+
+	var poisoned []string
+	rel := &fakeReleaser{errByAddr: map[string]error{
+		addr: fmt.Errorf("%w: vpc clear address reference %s", domain.ErrUnavailable, addr),
+	}}
+	r := NewFreeIPRunner(pool, rel, observability.NewSlogger(discardWriter{}), time.Second, time.Minute,
+		WithPoisonObserver(func(id string) { poisoned = append(poisoned, id) }))
+
+	n, err := r.reconcileOnce(ctx)
+	require.Error(t, err, "transient release error aborts the tick (retry next tick)")
+	assert.True(t, errors.Is(err, domain.ErrUnavailable), "error preserves transient sentinel")
+	assert.Equal(t, 0, n)
+
+	assert.True(t, lbExists(t, ctx, pool, lbID), "row preserved for retry")
+	assert.True(t, lbStuckEligible(t, ctx, pool, lbID, time.Minute),
+		"transient failure leaves updated_at untouched → row still stuck-eligible (fast retry)")
+	assert.Empty(t, poisoned, "transient failure must NOT be treated as poison")
 }
 
 // =============================================================================

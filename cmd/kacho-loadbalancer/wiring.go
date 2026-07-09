@@ -158,6 +158,9 @@ type backgroundDeps struct {
 	peers      *peerClients
 	cfg        *config.Config
 	logger     *slog.Logger
+	// freeIPPoisonObs — poison-observer free-ip reconciler'а (nil-safe): каждый
+	// раз при изоляции ядовитой строки инкрементит free_ip_poisoned-метрику.
+	freeIPPoisonObs func()
 }
 
 // assembleBackgroundWorkers строит полный набор фоновых loop'ов (LRO-reconciler,
@@ -185,8 +188,13 @@ func assembleBackgroundWorkers(ctx context.Context, d backgroundDeps) ([]bgWorke
 	// free_ip_runner: reconcile застрявших листенеров (multi-replica-safe). Требует
 	// vpc internal-address client (release) — иначе не стартует (иначе утечка VIP).
 	if d.peers.InternalAddress != nil {
+		var freeIPOpts []jobs.FreeIPOption
+		if d.freeIPPoisonObs != nil {
+			// Каждая изолированная ядовитая строка бампит free_ip_poisoned_total.
+			freeIPOpts = append(freeIPOpts, jobs.WithPoisonObserver(func(string) { d.freeIPPoisonObs() }))
+		}
 		freeIPRunner := jobs.NewFreeIPRunner(d.pool, d.peers.InternalAddress, d.logger,
-			d.cfg.Jobs.FreeIP.Interval, d.cfg.Jobs.FreeIP.AgeThreshold)
+			d.cfg.Jobs.FreeIP.Interval, d.cfg.Jobs.FreeIP.AgeThreshold, freeIPOpts...)
 		background = append(background, bgWorker{"free-ip-runner", freeIPRunner.Run})
 	} else {
 		d.logger.Warn("free_ip_runner_disabled — no vpc internal-address client; stuck-listener VIP reconcile inactive")
