@@ -38,7 +38,7 @@ func lbUnregisterIntent(id, projectID string) domain.FGARegisterIntent {
 //
 // Sync prechecks:
 //   - lb.DeletionProtection=true → FailedPrecondition (фиксированный текст);
-//   - HasListeners > 0           → FailedPrecondition "has N listener(s); delete first";
+//   - HasListeners > 0           → FailedPrecondition "has listener(s); delete first";
 //   - HasAttachedTargetGroups>0  → FailedPrecondition "has attached target group(s); detach first".
 //
 // Worker: Writer-TX → Delete (FK 23503 backstop → ErrFailedPrecondition) +
@@ -90,13 +90,11 @@ func (u *DeleteLoadBalancerUseCase) Execute(
 		return nil, mapDomainErr(err)
 	}
 	if hasListeners {
-		// Count via List (page size 1) → just say "has listener(s)".
-		listeners, _, err := rd.Listeners().ListByLB(ctx, id, kachorepo.Pagination{PageSize: 1000})
-		if err != nil {
-			return nil, mapDomainErr(err)
-		}
+		// HasListeners (EXISTS) уже подтвердил наличие детей — не тянем полный
+		// список ради счётчика (лишний fetch + silent-cap на >1000). Generic-текст
+		// совпадает с repo-level backstop (load_balancer_repo.go).
 		return nil, status.Errorf(codes.FailedPrecondition,
-			"NetworkLoadBalancer %s has %d listener(s); delete first", id, len(listeners))
+			"NetworkLoadBalancer %s has listener(s); delete first", id)
 	}
 	hasTG, err := rd.LoadBalancers().HasAttachedTargetGroups(ctx, id)
 	if err != nil {
