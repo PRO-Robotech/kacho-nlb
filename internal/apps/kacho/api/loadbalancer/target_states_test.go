@@ -72,6 +72,31 @@ func TestGetTargetStates_DeniesCrossProjectTargetGroup(t *testing.T) {
 	require.Equal(t, codes.FailedPrecondition, status.Code(err))
 }
 
+// TestGetTargetStates_CrossProjectUnauthorized_NoProjectOracle — object-scoped
+// authz (checkTargetGroupViewer) must run BEFORE the project-mismatch branch:
+// an unauthorized caller passing a victim TG from another project must get a
+// generic PermissionDenied that reveals nothing, NOT the FailedPrecondition
+// "project mismatch: ... TargetGroup is in project prj-b" oracle (which both
+// confirms the TG exists and leaks its owning project). Locks the observable
+// message, not only the gRPC code (security.md #3 object-scoped authz +
+// existence-hiding).
+func TestGetTargetStates_CrossProjectUnauthorized_NoProjectOracle(t *testing.T) {
+	t.Parallel()
+	repo := newFakeRepo()
+	lbID := seedLB(t, repo, "prj-a", "edge")
+	tgID := seedTG(t, repo, "prj-b", "ru-central1", "tg") // victim TG in another project
+	chk := &fakeCheckClient{allowed: false}               // caller not authorized on the TG
+	uc := NewGetTargetStatesUseCase(repo, chk)
+
+	_, err := uc.Execute(ctxWithUser("usr_attacker"), &lbv1.GetTargetStatesRequest{
+		NetworkLoadBalancerId: lbID, TargetGroupId: tgID,
+	})
+	require.Equal(t, codes.PermissionDenied, status.Code(err))
+	require.NotContains(t, status.Convert(err).Message(), "prj-b",
+		"must not leak the victim TG's owning project id")
+	require.Equal(t, 1, chk.calls, "authz Check must run before the project-mismatch branch")
+}
+
 // TestGetTargetStates_DeniesUnauthorizedSameProjectTargetGroup — same-project
 // TG is not automatically viewable: a narrowly-scoped custom grant on the LB
 // (without project-editor ⇒ TG-viewer cascade) must still be refused.

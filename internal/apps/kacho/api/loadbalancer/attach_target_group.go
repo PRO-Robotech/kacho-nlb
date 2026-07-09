@@ -90,6 +90,17 @@ func (u *AttachTargetGroupUseCase) Execute(
 	if err != nil {
 		return nil, mapDomainErr(err)
 	}
+	// Target-group authorization (CWE-863): interceptor gated the LB only; the
+	// caller must ALSO hold `viewer` on the TG object it is wiring in, else a
+	// narrow custom v_update grant on the LB could attach a TG the caller has no
+	// authorization over. Runs FIRST — before the region/project-mismatch
+	// branches — so an unauthorized caller passing a cross-project (or
+	// cross-region) TG gets a generic PermissionDenied rather than a mismatch
+	// message that leaks the victim TG's owning project/region and confirms its
+	// existence (existence-oracle). Shared with GetTargetStates — see tg_authz.go.
+	if err := checkTargetGroupViewer(ctx, u.checkClient, tgID); err != nil {
+		return nil, err
+	}
 	if string(lb.RegionID) != string(tg.RegionID) {
 		return nil, status.Errorf(codes.FailedPrecondition,
 			"region mismatch: NetworkLoadBalancer is in region %s, TargetGroup is in region %s",
@@ -99,15 +110,6 @@ func (u *AttachTargetGroupUseCase) Execute(
 		return nil, status.Errorf(codes.FailedPrecondition,
 			"project mismatch: NetworkLoadBalancer is in project %s, TargetGroup is in project %s",
 			lb.ProjectID, tg.ProjectID)
-	}
-
-	// Target-group authorization (CWE-863): interceptor gated
-	// the LB only; the caller must ALSO hold `viewer` on the TG object it is
-	// wiring in, else a narrow custom v_update grant on the LB could attach a TG
-	// the caller has no authorization over. Shared with GetTargetStates — see
-	// tg_authz.go.
-	if err := checkTargetGroupViewer(ctx, u.checkClient, tgID); err != nil {
-		return nil, err
 	}
 
 	op, err := operations.NewFromContext(ctx,

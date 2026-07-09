@@ -141,6 +141,31 @@ func TestAttach_DeniesUnauthorizedTargetGroup(t *testing.T) {
 	require.Equal(t, "lb_target_group:"+tgID, chk.gotObject)
 }
 
+// TestAttach_CrossProjectUnauthorized_NoProjectOracle — object-scoped authz
+// (checkTargetGroupViewer) must run BEFORE the region/project-mismatch branches:
+// an unauthorized caller passing a victim TG from another project must get a
+// generic PermissionDenied that reveals nothing, NOT the FailedPrecondition
+// "project mismatch: ... TargetGroup is in project prj-b" oracle. Locks the
+// observable message, not only the gRPC code (security.md #3 + existence-hiding).
+func TestAttach_CrossProjectUnauthorized_NoProjectOracle(t *testing.T) {
+	t.Parallel()
+	repo := newFakeRepo()
+	lbID := seedLB(t, repo, "prj-a", "edge")
+	tgID := seedTG(t, repo, "prj-b", "ru-central1", "tg") // victim TG in another project
+	chk := &fakeCheckClient{allowed: false}
+	uc := NewAttachTargetGroupUseCase(repo, newFakeOpsRepo(), chk, slog.Default())
+
+	_, err := uc.Execute(ctxWithUser("usr_attacker"), &lbv1.AttachNetworkLoadBalancerTargetGroupRequest{
+		NetworkLoadBalancerId: lbID,
+		AttachedTargetGroup:   &lbv1.AttachedTargetGroup{TargetGroupId: tgID},
+	})
+	require.Equal(t, codes.PermissionDenied, status.Code(err))
+	require.NotContains(t, status.Convert(err).Message(), "prj-b",
+		"must not leak the victim TG's owning project id")
+	require.NotContains(t, repo.pivot, lbID+"/"+tgID)
+	require.Equal(t, 1, chk.calls, "authz Check must run before the project-mismatch branch")
+}
+
 // TestAttach_AllowsAuthorizedTargetGroup — a caller with viewer on the TG passes
 // the handler-side gate and the attach proceeds.
 func TestAttach_AllowsAuthorizedTargetGroup(t *testing.T) {

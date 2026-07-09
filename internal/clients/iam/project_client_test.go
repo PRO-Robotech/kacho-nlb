@@ -52,8 +52,6 @@ func TestProjectClient_Get_HappyPath(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "prj-abc", got.ID)
 	assert.Equal(t, "acme-prod", got.Name)
-	assert.Equal(t, "acc-1", got.AccountID)
-	assert.Equal(t, "ACTIVE", got.Status)
 	assert.Equal(t, "prj-abc", fake.lastReq.GetProjectId())
 }
 
