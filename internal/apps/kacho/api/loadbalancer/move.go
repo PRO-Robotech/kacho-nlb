@@ -203,8 +203,13 @@ func (u *MoveLoadBalancerUseCase) doMove(ctx context.Context, id, srcProject, ds
 		return nil, mapDomainErr(err)
 	}
 	// project-rewrite as register(dst) + unregister(src) in the SAME tx.
+	// register(dst) must mirror lbMirrorIntent semantics for the destination
+	// (Labels from the moved record + ParentProjectID=dst) so the kacho-iam
+	// resource_mirror feeding the γ label/parent selector is re-created intact;
+	// the bare lbUnregisterIntent drops both. unregister(src) below stays bare
+	// (IAM uses only object+source_version on unregister).
 	if err := w.FGARegisterOutbox().Emit(ctx, domain.FGAEventRegister,
-		lbUnregisterIntent(id, dstProject)); err != nil {
+		lbMirrorIntent(moved)); err != nil {
 		return nil, mapDomainErr(err)
 	}
 	if err := w.FGARegisterOutbox().Emit(ctx, domain.FGAEventUnregister,
