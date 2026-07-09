@@ -110,8 +110,8 @@ func (c *checkClient) Check(ctx context.Context, subjectID, relation, object str
 		return false, fmt.Errorf("%w: object is empty", domain.ErrInvalidArg)
 	}
 
-	// follow-up: outgoing ctx wrap with auth.PropagateOutgoing
-	// so iam-side UnaryPrincipalExtract sees real caller (not SystemPrincipal).
+	// Wrap outgoing ctx so iam-side UnaryPrincipalExtract sees the real caller
+	// (not SystemPrincipal).
 	ctx = auth.PropagateOutgoing(ctx)
 
 	// Per-call deadline — bounds the ENTIRE retry.OnUnavailable operation
