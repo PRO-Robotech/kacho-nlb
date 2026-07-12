@@ -14,6 +14,27 @@ import (
 	"github.com/PRO-Robotech/kacho-nlb/internal/domain"
 )
 
+// subnetRegionMatches — region-coherence: регион подсети совпадает с регионом LB
+// (placement-coherence). subnet.RegionID — denormalised mirror, заполняемый
+// adapter'ом (REGIONAL → region_id; ZONAL → zone→region резолв через geo). Пустой
+// RegionID (mirror не заполнен — только в back-compat без zone-resolver'а) →
+// проверка пропускается: в проде adapter всегда заполняет его либо fail-closed
+// Unavailable. Возвращает true при совпадении/пропуске.
+func subnetRegionMatches(sn *vpcclient.Subnet, lbRegion domain.RegionID) bool {
+	return sn.RegionID == "" || sn.RegionID == string(lbRegion)
+}
+
+// subnetRegionCoherent — региональная проверка для caller-supplied subnet_id
+// (descriptive текст — форма запроса, не oracle). Несовпадение → InvalidArgument
+// со стабильным контракт-текстом (data-integrity.md §Placement-coherence).
+func subnetRegionCoherent(sn *vpcclient.Subnet, lbRegion domain.RegionID) error {
+	if !subnetRegionMatches(sn, lbRegion) {
+		return status.Error(codes.InvalidArgument,
+			"load balancer vip subnet must be in the same region as the load balancer")
+	}
+	return nil
+}
+
 // subnetPlacementMatches — placement подсети (vpc) == placement LB (domain).
 func subnetPlacementMatches(subnetPlacement string, lbPlacement domain.PlacementType) bool {
 	switch lbPlacement {

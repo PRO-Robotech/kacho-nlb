@@ -192,6 +192,27 @@ func (u *CreateLoadBalancerUseCase) resolveSources(ctx context.Context, lb domai
 				"dualstack load balancer families must resolve to the same network")
 		}
 	}
+	// dualstack same-zone (INTERNAL ZONAL): derived zone семейств должен совпасть
+	// (placement-coherence). Дополнительна к same-network: одна Network может
+	// нести ZONAL-подсети разных зон. REGIONAL/anycast исключён by construction —
+	// его подсети zone_id не несут (fs.zoneID пусто → пропуск). single-family —
+	// сравнивать не с чем.
+	if lb.PlacementType == domain.PlacementZonal {
+		var zone string
+		for _, fs := range specs {
+			if fs.zoneID == "" {
+				continue
+			}
+			if zone == "" {
+				zone = fs.zoneID
+				continue
+			}
+			if fs.zoneID != zone {
+				return status.Error(codes.InvalidArgument,
+					"dualstack load balancer families must resolve to the same zone")
+			}
+		}
+	}
 	return nil
 }
 
@@ -210,7 +231,14 @@ func (u *CreateLoadBalancerUseCase) resolveOneSource(ctx context.Context, lb dom
 			return status.Error(codes.InvalidArgument,
 				"subnet placement does not match load balancer placement")
 		}
+		// region-coherence: caller-supplied subnet_id → descriptive текст (форма
+		// запроса, не oracle). subnet.RegionID — denormalised mirror (REGIONAL →
+		// region_id; ZONAL → zone→region резолв в adapter'е).
+		if err := subnetRegionCoherent(sn, lb.RegionID); err != nil {
+			return err
+		}
 		fs.networkID = sn.NetworkID
+		fs.zoneID = sn.ZoneID
 		return nil
 	case srcPublicAuto:
 		return nil // EXTERNAL public — сети нет; underlying-зона деривится в worker'е
@@ -255,7 +283,14 @@ func (u *CreateLoadBalancerUseCase) resolveLinkedAddress(ctx context.Context, lb
 		if !subnetPlacementMatches(sn.PlacementType, lb.PlacementType) {
 			return status.Error(codes.InvalidArgument, "Illegal argument addressId")
 		}
+		// region-coherence: linked address_id → generic текст (анти-oracle, не
+		// подтверждаем placement чужого адреса), в отличие от descriptive-текста
+		// caller-supplied subnet_id (resolveOneSource).
+		if !subnetRegionMatches(sn, lb.RegionID) {
+			return status.Error(codes.InvalidArgument, "Illegal argument addressId")
+		}
 		fs.networkID = sn.NetworkID
+		fs.zoneID = sn.ZoneID
 	}
 	return nil
 }

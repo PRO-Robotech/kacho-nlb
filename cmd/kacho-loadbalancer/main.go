@@ -662,7 +662,15 @@ func dialPeers(
 
 	// kacho-vpc — public (Address/Subnet/NIC/Operation) + internal (InternalAddressService).
 	if vpcPublicConn != nil {
-		peers.Subnet = vpcclient.NewSubnetClient(vpcPublicConn)
+		// Subnet-adapter несёт zone→region резолвер (geo) для заполнения
+		// denormalised Subnet.RegionID у ZONAL-подсети — placement-coherence
+		// region-precheck (ребро nlb→geo). geoConn nil → nil resolver → RegionID
+		// ZONAL пуст (region-precheck пропускается, REGIONAL всё равно заполняется).
+		var zoneRegion vpcclient.ZoneRegionResolver
+		if geoConn != nil {
+			zoneRegion = geoclient.NewZoneRegionClient(geoConn)
+		}
+		peers.Subnet = vpcclient.NewSubnetClientWithZoneRegion(vpcPublicConn, zoneRegion)
 		peers.NetworkInterface = vpcclient.NewNetworkInterfaceClient(vpcPublicConn)
 		peers.Address = vpcclient.NewAddressClient(vpcPublicConn)
 	}
