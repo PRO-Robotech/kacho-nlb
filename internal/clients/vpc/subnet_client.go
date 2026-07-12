@@ -27,15 +27,17 @@ const DefaultSubnetGetTimeout = 5 * time.Second
 // Subnet — projection ресурса kacho-vpc.Subnet, ограниченная полями
 // необходимыми consumer'ам NLB (Listener.subnet_id / Target.ip_ref validation).
 //
-// RegionID — нет на vpc.Subnet (Subnet привязан к ZoneId; Region резолвится
-// дополнительным geo.ZoneService.Get у NLB); поле оставлено в
-// projection как denormalised mirror (заполняется consumer'ом, не adapter'ом).
+// RegionID — denormalised mirror региона подсети, заполняемый adapter'ом для
+// placement-coherence region-precheck: REGIONAL-подсеть несёт region_id напрямую
+// (`vpc.Subnet.region_id`); ZONAL-подсеть — регион резолвится zone→region через
+// geo.v1.ZoneService.Get (ZoneRegionResolver, ребро nlb→geo). Пусто, если adapter
+// построен без zone-resolver'а (back-compat) — тогда region-precheck пропускается.
 type Subnet struct {
 	ID            string
 	ProjectID     string
 	NetworkID     string
 	ZoneID        string
-	RegionID      string // denormalised mirror; adapter оставляет пустым
+	RegionID      string // denormalised mirror; см. doc выше (adapter заполняет)
 	PlacementType string // "REGIONAL" | "ZONAL" | "" (см. SubnetPlacementRegional)
 	V4CIDRBlocks  []string
 	V6CIDRBlocks  []string
@@ -45,6 +47,15 @@ type Subnet struct {
 // подсети (anycast-префикс, анонсируется active-active из здоровых зон региона).
 // VIP LoadBalancer'а аллоцируется ТОЛЬКО из такой подсети.
 const SubnetPlacementRegional = "REGIONAL"
+
+// ZoneRegionResolver — узкий port zone→region резолва (geo.v1.ZoneService.Get →
+// `Zone.region_id`). Subnet-adapter использует его для заполнения denormalised
+// Subnet.RegionID у ZONAL-подсети. Инжектируется в composition root; nil →
+// RegionID у ZONAL-подсети остаётся пустым (region-precheck пропускается —
+// back-compat). Concrete `*geo.ZoneRegionClient` удовлетворяет структурно.
+type ZoneRegionResolver interface {
+	RegionOfZone(ctx context.Context, zoneID string) (string, error)
+}
 
 // SubnetClient — port-интерфейс для service-слоя.
 type SubnetClient interface {
@@ -59,12 +70,14 @@ type SubnetClient interface {
 
 // subnetClient — реализация SubnetClient через gRPC.
 type subnetClient struct {
-	cli     vpcpb.SubnetServiceClient
-	timeout time.Duration
+	cli        vpcpb.SubnetServiceClient
+	timeout    time.Duration
+	zoneRegion ZoneRegionResolver // nil → RegionID у ZONAL-подсети остаётся пустым
 }
 
 // NewSubnetClient оборачивает grpc-conn в typed adapter. conn — `clients.Build`.
-// Per-call timeout — DefaultSubnetGetTimeout.
+// Per-call timeout — DefaultSubnetGetTimeout. Без zone-resolver'а: RegionID
+// заполняется только для REGIONAL-подсети (из region_id); ZONAL остаётся пустым.
 func NewSubnetClient(conn grpc.ClientConnInterface) SubnetClient {
 	return NewSubnetClientWithTimeout(conn, DefaultSubnetGetTimeout)
 }
@@ -76,6 +89,21 @@ func NewSubnetClientWithTimeout(conn grpc.ClientConnInterface, timeout time.Dura
 		return nil
 	}
 	return &subnetClient{cli: vpcpb.NewSubnetServiceClient(conn), timeout: resolveSubnetTimeout(timeout)}
+}
+
+// NewSubnetClientWithZoneRegion — adapter с zone→region резолвером: заполняет
+// denormalised Subnet.RegionID для ZONAL-подсети (zone→region через geo).
+// resolver nil → поведение как у NewSubnetClient (ZONAL RegionID пуст). Per-call
+// timeout — DefaultSubnetGetTimeout.
+func NewSubnetClientWithZoneRegion(conn grpc.ClientConnInterface, resolver ZoneRegionResolver) SubnetClient {
+	if conn == nil {
+		return nil
+	}
+	return &subnetClient{
+		cli:        vpcpb.NewSubnetServiceClient(conn),
+		timeout:    resolveSubnetTimeout(DefaultSubnetGetTimeout),
+		zoneRegion: resolver,
+	}
 }
 
 // NewSubnetClientFromStub — конструктор для тестов: принимает stub.
@@ -122,15 +150,42 @@ func (c *subnetClient) Get(ctx context.Context, subnetID string) (*Subnet, error
 		return nil, mapSubnetErr(subnetID, err)
 	}
 
+	// RegionID (denormalised mirror) — заполняется для placement-coherence
+	// region-precheck: REGIONAL несёт region_id напрямую; ZONAL — zone→region
+	// резолв через geo (fail-closed: geo недоступен → ошибка, не пустой RegionID).
+	regionID, err := c.resolveRegion(ctx, resp)
+	if err != nil {
+		return nil, err
+	}
+
 	return &Subnet{
 		ID:            resp.GetId(),
 		ProjectID:     resp.GetProjectId(),
 		NetworkID:     resp.GetNetworkId(),
 		ZoneID:        resp.GetZoneId(),
+		RegionID:      regionID,
 		PlacementType: resp.GetPlacementType().String(),
 		V4CIDRBlocks:  append([]string(nil), resp.GetV4CidrBlocks()...),
 		V6CIDRBlocks:  append([]string(nil), resp.GetV6CidrBlocks()...),
 	}, nil
+}
+
+// resolveRegion — регион подсети для denormalised Subnet.RegionID: REGIONAL несёт
+// region_id напрямую (geo не нужен); ZONAL — резолв zone→region через geo
+// (ZoneRegionResolver). Без resolver'а ZONAL RegionID пуст (back-compat).
+// UNSPECIFIED/прочее → пусто.
+func (c *subnetClient) resolveRegion(ctx context.Context, resp *vpcpb.Subnet) (string, error) {
+	switch resp.GetPlacementType() {
+	case vpcpb.SubnetPlacementType_REGIONAL:
+		return resp.GetRegionId(), nil
+	case vpcpb.SubnetPlacementType_ZONAL:
+		if c.zoneRegion == nil || resp.GetZoneId() == "" {
+			return "", nil
+		}
+		return c.zoneRegion.RegionOfZone(ctx, resp.GetZoneId())
+	default:
+		return "", nil
+	}
 }
 
 // mapSubnetErr транслирует gRPC-status в domain-sentinel-ошибки.

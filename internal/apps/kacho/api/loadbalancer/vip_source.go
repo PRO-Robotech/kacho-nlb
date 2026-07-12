@@ -33,6 +33,11 @@ type familyVIPSpec struct {
 	// linked-адреса. Пусто для EXTERNAL/public (сети нет). Используется для
 	// dualstack same-network инварианта.
 	networkID string
+	// zoneID — derived зона семейства (INTERNAL ZONAL): zone_id резолвнутой подсети
+	// (auto либо подсеть linked-адреса). Пусто для REGIONAL/anycast (подсеть
+	// zone_id не несёт) и EXTERNAL/public. Используется для dualstack same-zone
+	// инварианта (placement-coherence: обе VIP-семьи ZONAL LB в ОДНОЙ зоне).
+	zoneID string
 }
 
 // resolvePlacement — placement_type ↔ type coupling. INTERNAL требует явный
