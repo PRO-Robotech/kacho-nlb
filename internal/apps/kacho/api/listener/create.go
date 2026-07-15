@@ -85,12 +85,23 @@ func (u *CreateUseCase) Run(ctx context.Context, req *lbv1.CreateListenerRequest
 	if err != nil {
 		return nil, err
 	}
+	// Port/target_port are int64 on the wire; guard int32 overflow before the
+	// narrowing so an out-of-range value can't alias onto a valid port and bypass
+	// LbPort.Validate (api-conventions malformed-input discipline; gosec G115).
+	port, err := domain.LbPortFromProto(req.GetPort())
+	if err != nil {
+		return nil, err
+	}
+	targetPort, err := domain.LbPortFromProto(req.GetTargetPort())
+	if err != nil {
+		return nil, err
+	}
 	listener := domain.NewListener(
 		lb.LoadBalancer,
 		name,
 		domain.LbProto(req.GetProtocol().String()),
-		domain.LbPort(req.GetPort()),
-		domain.LbPort(req.GetTargetPort()),
+		port,
+		targetPort,
 		listenerIPVersion(lb.LoadBalancer),
 	)
 	listener.Description = domain.LbDescription(req.GetDescription())

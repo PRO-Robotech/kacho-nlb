@@ -19,28 +19,46 @@ import (
 // internal/dto/type2pb/health_check.go).
 //
 // Возвращает zero-value HealthCheck если pb==nil — caller'у тогда лучше отдать
-// ошибку «health_check is required» вверх.
-func healthCheckFromPb(pb *lbv1.HealthCheck) domain.HealthCheck {
+// ошибку «health_check is required» вверх. Threshold/port поля int64 на wire;
+// сужение в int32 guard'ится (domain.*FromProto) — иначе overflow-значение
+// молча алиасит на валидный остаток и обходит HealthCheck.Validate (gosec G115).
+func healthCheckFromPb(pb *lbv1.HealthCheck) (domain.HealthCheck, error) {
 	if pb == nil {
-		return domain.HealthCheck{}
+		return domain.HealthCheck{}, nil
+	}
+	unhealthy, err := domain.HealthThresholdFromProto("unhealthy_threshold", pb.GetUnhealthyThreshold())
+	if err != nil {
+		return domain.HealthCheck{}, err
+	}
+	healthy, err := domain.HealthThresholdFromProto("healthy_threshold", pb.GetHealthyThreshold())
+	if err != nil {
+		return domain.HealthCheck{}, err
 	}
 	hc := domain.HealthCheck{
 		Name:               domain.LbName(pb.GetName()),
 		Interval:           domain.LbDuration(pb.GetInterval().AsDuration()),
 		Timeout:            domain.LbDuration(pb.GetTimeout().AsDuration()),
-		UnhealthyThreshold: int32(pb.GetUnhealthyThreshold()),
-		HealthyThreshold:   int32(pb.GetHealthyThreshold()),
+		UnhealthyThreshold: unhealthy,
+		HealthyThreshold:   healthy,
 	}
 	switch v := pb.GetOptions().(type) {
 	case *lbv1.HealthCheck_TcpOptions_:
-		hc.TCP = &domain.HealthCheckTCP{Port: domain.LbPort(v.TcpOptions.GetPort())}
+		port, err := domain.LbPortFromProto(v.TcpOptions.GetPort())
+		if err != nil {
+			return domain.HealthCheck{}, err
+		}
+		hc.TCP = &domain.HealthCheckTCP{Port: port}
 	case *lbv1.HealthCheck_HttpOptions_:
+		port, err := domain.LbPortFromProto(v.HttpOptions.GetPort())
+		if err != nil {
+			return domain.HealthCheck{}, err
+		}
 		hc.HTTP = &domain.HealthCheckHTTP{
-			Port: domain.LbPort(v.HttpOptions.GetPort()),
+			Port: port,
 			Path: v.HttpOptions.GetPath(),
 		}
 	}
-	return hc
+	return hc, nil
 }
 
 // targetFromPb — конвертер proto Target → domain Target. 4-way identity oneof.
