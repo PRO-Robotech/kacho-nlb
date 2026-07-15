@@ -1,6 +1,6 @@
 module github.com/PRO-Robotech/kacho-nlb
 
-go 1.26.4
+go 1.26.5
 
 require (
 	github.com/H-BF/corlib v1.2.31-dev
