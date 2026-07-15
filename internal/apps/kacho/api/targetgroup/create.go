@@ -90,7 +90,11 @@ func (u *CreateTargetGroupUseCase) Execute(
 		domain.LbDescription(req.GetDescription()),
 		domain.LabelsFromMap(req.GetLabels()),
 	)
-	tg.HealthCheck = healthCheckFromPb(req.GetHealthCheck())
+	hc, err := healthCheckFromPb(req.GetHealthCheck())
+	if err != nil {
+		return nil, mapDomainErr(err)
+	}
+	tg.HealthCheck = hc
 	tg.Targets = targetsFromPb(req.GetTargets())
 	// Defaults via builder уже выставлены — override только если caller прислал
 	// non-zero значение (proto numeric zero === «не задано»).

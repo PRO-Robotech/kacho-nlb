@@ -94,7 +94,10 @@ func (u *UpdateTargetGroupUseCase) Execute(
 		return nil, mapDomainErr(err)
 	}
 
-	updated := applyUpdateMaskTG(cur.TargetGroup, req, mask)
+	updated, err := applyUpdateMaskTG(cur.TargetGroup, req, mask)
+	if err != nil {
+		return nil, mapDomainErr(err)
+	}
 	if err := updated.Validate(); err != nil {
 		return nil, mapDomainErr(err)
 	}
@@ -177,7 +180,7 @@ func (u *UpdateTargetGroupUseCase) doUpdate(ctx context.Context, tg domain.Targe
 // (по конвенции Kachō; explicit immutable field в mask уже отлавливается выше).
 func applyUpdateMaskTG(
 	cur domain.TargetGroup, req *lbv1.UpdateTargetGroupRequest, mask []string,
-) domain.TargetGroup {
+) (domain.TargetGroup, error) {
 	apply := func(field string) bool {
 		if len(mask) == 0 {
 			return true
@@ -200,7 +203,11 @@ func applyUpdateMaskTG(
 		out.Labels = domain.LabelsFromMap(req.GetLabels())
 	}
 	if apply("health_check") && req.GetHealthCheck() != nil {
-		out.HealthCheck = healthCheckFromPb(req.GetHealthCheck())
+		hc, err := healthCheckFromPb(req.GetHealthCheck())
+		if err != nil {
+			return domain.TargetGroup{}, err
+		}
+		out.HealthCheck = hc
 	}
 	if apply("deregistration_delay_seconds") {
 		out.DeregistrationDelaySeconds = req.GetDeregistrationDelaySeconds()
@@ -208,5 +215,5 @@ func applyUpdateMaskTG(
 	if apply("slow_start_seconds") {
 		out.SlowStartSeconds = req.GetSlowStartSeconds()
 	}
-	return out
+	return out, nil
 }

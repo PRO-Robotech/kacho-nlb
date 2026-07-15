@@ -123,6 +123,35 @@ func TestCreate_Thresholds_OutOfBounds(t *testing.T) {
 	require.Contains(t, fieldViolationsText(err), "unhealthy_threshold must be in range [2, 10]")
 }
 
+// TestCreate_ThresholdOverflowRejected — proto threshold это int64; значение,
+// переполняющее int32 (2^32+5), голым приведением усеклось бы до валидного 5 и
+// обошло бы HealthCheck.Validate ([2,10]). Guard обязан отвергнуть его до сужения.
+// Verifies code-scanning gosec G115 alerts #27/#28 (helpers.go:31/32).
+func TestCreate_ThresholdOverflowRejected(t *testing.T) {
+	repo := newFakeRepo()
+	uc := mkUC(repo, newFakeOpsRepo())
+	req := mkCreateReq("prj-acme", "ru-central1", "ovf-thr")
+	req.HealthCheck.UnhealthyThreshold = int64(1)<<32 + 5 // int32-narrows to 5 (in [2,10])
+	_, err := uc.Execute(context.Background(), req)
+	require.Equal(t, codes.InvalidArgument, status.Code(err))
+	require.Contains(t, fieldViolationsText(err), "unhealthy_threshold must be in range [2, 10]")
+}
+
+// TestCreate_HealthCheckPortOverflowRejected — тот же guard на health_check port
+// (int64). 2^32+8080 усеклось бы до валидного 8080. Verifies gosec G115 alerts
+// #25/#26 (helpers.go:36/39).
+func TestCreate_HealthCheckPortOverflowRejected(t *testing.T) {
+	repo := newFakeRepo()
+	uc := mkUC(repo, newFakeOpsRepo())
+	req := mkCreateReq("prj-acme", "ru-central1", "ovf-hcport")
+	req.HealthCheck.Options = &lbv1.HealthCheck_HttpOptions_{
+		HttpOptions: &lbv1.HealthCheck_HttpOptions{Port: int64(1)<<32 + 8080, Path: "/healthz"},
+	}
+	_, err := uc.Execute(context.Background(), req)
+	require.Equal(t, codes.InvalidArgument, status.Code(err))
+	require.Contains(t, fieldViolationsText(err), "port must be in range [1, 65535]")
+}
+
 // deregistration_delay out-of-bounds.
 func TestCreate_DeregDelay_OutOfBounds(t *testing.T) {
 	repo := newFakeRepo()
